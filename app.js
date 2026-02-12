@@ -225,9 +225,23 @@ async function listFiles() {
     const openBtn = document.createElement("button");
     openBtn.textContent = "Open Map";
     openBtn.onclick = async () => {
-      const { data } = sb.storage.from(BUCKET).getPublicUrl(routeName);
-      const r = await fetch(data.publicUrl);
-      processExcelBuffer(await r.arrayBuffer());
+  const { data } = sb.storage.from(BUCKET).getPublicUrl(routeName);
+  const r = await fetch(data.publicUrl);
+  processExcelBuffer(await r.arrayBuffer());
+
+  // Load summary if it exists
+  if (summaryName) {
+    const { data: sData } = sb.storage.from(BUCKET).getPublicUrl(summaryName);
+    const sr = await fetch(sData.publicUrl);
+
+    const wb = XLSX.read(await sr.arrayBuffer(), { type: "array" });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+    showRouteSummary(rows);
+  } else {
+    document.getElementById("routeSummary").textContent = "No summary available";
+  }
+};
+
 loadSummaryFor(routeName);
 
     };
@@ -368,8 +382,7 @@ function showRouteSummary(rows) {
 }
 
 
-async function loadSummaryFor(fileName) {
-  const summaryName = fileName.replace(".xlsx", "_summary.xlsx");
+
 
   const { data } = sb.storage.from(BUCKET).getPublicUrl(summaryName);
 
