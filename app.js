@@ -12,11 +12,12 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 function normalizeName(name) {
   return name
     .toLowerCase()
-    .replace("route summary", "")
-    .replace(/\s+/g, "")
     .replace(".xlsx", "")
+    .split("routesummary")[0]   // keep everything BEFORE "RouteSummary"
+    .replace(/[_\s.-]/g, "")    // ignore spaces, _, ., -
     .trim();
 }
+
 
 
 
@@ -370,7 +371,7 @@ async function loadSummaryFor(routeFileName) {
   const normalizedRoute = normalizeName(routeFileName);
 
   const summary = data.find(f =>
-    f.name.toLowerCase().includes("route summary") &&
+    f.name.toLowerCase().includes("routesummary") &&
     normalizeName(f.name) === normalizedRoute
   );
 
@@ -379,18 +380,15 @@ async function loadSummaryFor(routeFileName) {
     return;
   }
 
-  try {
-    const { data: urlData } = sb.storage.from(BUCKET).getPublicUrl(summary.name);
-    const r = await fetch(urlData.publicUrl);
+  const { data: urlData } = sb.storage.from(BUCKET).getPublicUrl(summary.name);
+  const r = await fetch(urlData.publicUrl);
 
-    const wb = XLSX.read(new Uint8Array(await r.arrayBuffer()), { type: "array" });
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+  const wb = XLSX.read(new Uint8Array(await r.arrayBuffer()), { type: "array" });
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
 
-    showRouteSummary(rows);
-  } catch {
-    document.getElementById("routeSummary").textContent = "No summary available";
-  }
+  showRouteSummary(rows);
 }
+
 
 
 // Start app
