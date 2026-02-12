@@ -330,32 +330,58 @@ function showRouteSummary(rows) {
   const box = document.getElementById("routeSummary");
   box.innerHTML = "";
 
-  if (!rows.length) {
+  if (!rows || !rows.length) {
     box.textContent = "No summary data found";
     return;
   }
 
-  const sample = rows[0];
+  // ===== CREATE TABLE =====
+  const table = document.createElement("table");
+  table.style.width = "100%";
+  table.style.borderCollapse = "collapse";
+  table.style.fontSize = "13px";
 
-  const routeCol = findColumn(sample, ["route"]);
-  const stopsCol = findColumn(sample, ["stop", "seq", "count"]);
-  const distCol  = findColumn(sample, ["dist", "mile"]);
-  const timeCol  = findColumn(sample, ["time", "hour", "total"]);
+  const thead = document.createElement("thead");
+  const tbody = document.createElement("tbody");
 
-  rows.forEach(r => {
-    const div = document.createElement("div");
-    div.style.marginBottom = "10px";
+  // ===== GET ALL COLUMN NAMES (dynamic) =====
+  const columns = Object.keys(rows[0]);
 
-    div.innerHTML = `
-      <strong>${routeCol ? `Route ${r[routeCol]}` : "Route"}</strong><br>
-      Stops: ${stopsCol ? r[stopsCol] : "-"}<br>
-      Distance: ${distCol ? r[distCol] : "-"}<br>
-      Total Time: ${timeCol ? r[timeCol] : "-"}
-    `;
+  // ===== HEADER ROW =====
+  const headerRow = document.createElement("tr");
 
-    box.appendChild(div);
+  columns.forEach(col => {
+    const th = document.createElement("th");
+    th.textContent = col;
+    th.style.borderBottom = "1px solid #555";
+    th.style.padding = "6px";
+    th.style.textAlign = "left";
+    th.style.background = "#1e1e1e";
+    headerRow.appendChild(th);
   });
+
+  thead.appendChild(headerRow);
+
+  // ===== DATA ROWS =====
+  rows.forEach(r => {
+    const tr = document.createElement("tr");
+
+    columns.forEach(col => {
+      const td = document.createElement("td");
+      td.textContent = r[col] ?? "";
+      td.style.padding = "6px";
+      td.style.borderBottom = "1px solid #333";
+      tr.appendChild(td);
+    });
+
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(thead);
+  table.appendChild(tbody);
+  box.appendChild(table);
 }
+
 
 
 // Load matching summary file
