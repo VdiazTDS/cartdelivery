@@ -221,53 +221,33 @@ async function listFiles() {
 
     const li = document.createElement("li");
 
-    // OPEN MAP
+    // OPEN MAP BUTTON
     const openBtn = document.createElement("button");
     openBtn.textContent = "Open Map";
+
     openBtn.onclick = async () => {
-  const { data } = sb.storage.from(BUCKET).getPublicUrl(routeName);
-  const r = await fetch(data.publicUrl);
-  processExcelBuffer(await r.arrayBuffer());
+      const { data } = sb.storage.from(BUCKET).getPublicUrl(routeName);
+      const r = await fetch(data.publicUrl);
+      processExcelBuffer(await r.arrayBuffer());
 
-  // Load summary if it exists
-  if (summaryName) {
-    const { data: sData } = sb.storage.from(BUCKET).getPublicUrl(summaryName);
-    const sr = await fetch(sData.publicUrl);
-
-    const wb = XLSX.read(await sr.arrayBuffer(), { type: "array" });
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-    showRouteSummary(rows);
-  } else {
-    document.getElementById("routeSummary").textContent = "No summary available";
-  }
-};
-
-loadSummaryFor(routeName);
-
+      // Load matching summary if it exists
+      loadSummaryFor(routeName);
     };
 
     li.appendChild(openBtn);
 
-    // OPEN SUMMARY (if exists)
+    // SUMMARY BUTTON (optional)
     if (summaryName) {
       const summaryBtn = document.createElement("button");
       summaryBtn.textContent = "Summary";
       summaryBtn.style.marginLeft = "5px";
 
-      summaryBtn.onclick = async () => {
-        const { data } = sb.storage.from(BUCKET).getPublicUrl(summaryName);
-        const r = await fetch(data.publicUrl);
-
-        const wb = XLSX.read(await r.arrayBuffer(), { type: "array" });
-        const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-
-        showRouteSummary(rows);
-      };
+      summaryBtn.onclick = () => loadSummaryFor(routeName);
 
       li.appendChild(summaryBtn);
     }
 
-    // DELETE (removes both if present)
+    // DELETE BUTTON
     const delBtn = document.createElement("button");
     delBtn.textContent = "Delete";
     delBtn.style.marginLeft = "5px";
@@ -286,6 +266,7 @@ loadSummaryFor(routeName);
     ul.appendChild(li);
   });
 }
+
 
 
 // ================= UPLOAD =================
@@ -357,6 +338,34 @@ function showRouteSummary(rows) {
     box.textContent = "No summary data found";
     return;
   }
+async function loadSummaryFor(routeFileName) {
+  const { data, error } = await sb.storage.from(BUCKET).list();
+  if (error) return;
+
+  const normalizedRoute = normalizeName(routeFileName);
+
+  const summary = data.find(f =>
+    f.name.toLowerCase().includes("route summary") &&
+    normalizeName(f.name) === normalizedRoute
+  );
+
+  if (!summary) {
+    document.getElementById("routeSummary").textContent = "No summary available";
+    return;
+  }
+
+  try {
+    const { data: urlData } = sb.storage.from(BUCKET).getPublicUrl(summary.name);
+    const r = await fetch(urlData.publicUrl);
+
+    const wb = XLSX.read(new Uint8Array(await r.arrayBuffer()), { type: "array" });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+
+    showRouteSummary(rows);
+  } catch {
+    document.getElementById("routeSummary").textContent = "No summary available";
+  }
+}
 
   // Detect columns from first row
   const sample = rows[0];
