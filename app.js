@@ -138,23 +138,7 @@ if (clearBtn) {
   };
 }
 
-  // Remove any drawn polygons
-  drawnLayer.clearLayers();
-
-  // Reset all marker colors
-  Object.entries(routeDayGroups).forEach(([key, group]) => {
-    const sym = symbolMap[key];
-
-    group.layers.forEach(marker => {
-      marker.setStyle?.({ color: sym.color, fillColor: sym.color });
-    });
-  });
-
-  // Reset counter
-  document.getElementById("selectionCount").textContent = 0;
-};
-
-
+ 
 
 
 
