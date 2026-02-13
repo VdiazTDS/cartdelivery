@@ -669,3 +669,26 @@ header p {
   z-index: 1000;
 }
 
+/* RIGHT SIDEBAR COLLAPSE */
+#selectionBox {
+  transition: right 0.25s ease;
+}
+
+/* collapsed state */
+#selectionBox.collapsed {
+  right: -180px; /* hides panel but leaves toggle visible */
+}
+
+/* toggle button */
+.sidebar-toggle-right {
+  position: absolute;
+  left: -28px;
+  top: 10px;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: #2c2c2c;
+  color: white;
+  cursor: pointer;
+  border-radius: 6px 0 0 6px;
+}
