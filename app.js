@@ -746,7 +746,46 @@ if (toggleBtn) {
       win.document.close();
     };
   }
+//======
 
+// ===== RESET MAP BUTTON =====
+const resetBtn = document.getElementById("resetMapBtn");
+
+resetBtn.addEventListener("click", () => {
+  if (!map) return;
+
+  // Reset zoom & center
+  map.setView([39.5, -98.35], 4); // USA default — change if needed
+
+  // Clear polygon selection if it exists
+  if (drawnItems) {
+    drawnItems.clearLayers();
+  }
+
+  // Unselect all stop markers
+  selectedStops.clear();
+
+  // Reset marker colors
+  allMarkers.forEach(marker => {
+    marker.setStyle?.({ color: "#3388ff", fillColor: "#3388ff" });
+  });
+
+  // Reset counter UI
+  const countEl = document.getElementById("selectionCount");
+  if (countEl) countEl.textContent = "0";
+});
+
+  
+
+
+
+
+
+  
   // ===== INITIAL DATA LOAD =====
+
+
+
+  
   listFiles();
 }
