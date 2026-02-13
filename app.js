@@ -321,16 +321,12 @@ async function uploadFile(file) {
 
 
 // ================= ROUTE SUMMARY DISPLAY =================
-function findColumn(row, keywords) {
-  return Object.keys(row).find(k =>
-    keywords.some(word => k.toLowerCase().includes(word))
-  );
-}
-
-
-  function showRouteSummary(rows, worksheet) {
+function showRouteSummary(rows, worksheet) {
   const tableBox = document.getElementById("routeSummaryTable");
-  if (!tableBox) return;
+  const panel = document.getElementById("bottomSummary");
+  const btn = document.getElementById("summaryToggleBtn");
+
+  if (!tableBox || !panel || !btn) return;
 
   tableBox.innerHTML = "";
 
@@ -371,9 +367,11 @@ function findColumn(row, keywords) {
   table.appendChild(thead);
   table.appendChild(tbody);
   tableBox.appendChild(table);
-}
 
-  
+  // ✅ AUTO-OPEN THE SUMMARY PANEL
+  panel.classList.remove("collapsed");
+  btn.textContent = "▼";
+}
 
 
 
