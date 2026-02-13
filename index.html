@@ -85,24 +85,26 @@
 
 
 <!-- ===== BOTTOM ROUTE SUMMARY PANEL ===== -->
-<div class="bottom-summary-header">
+<div id="bottomSummary" class="bottom-summary collapsed">
 
-  <button id="popoutSummaryBtn" class="modern-btn">
-    ⧉ Open in New Window
-  </button>
+  <div class="bottom-summary-header">
 
-  <span class="summary-title">Route Summary</span>
+    <button id="popoutSummaryBtn" class="modern-btn">
+      ⧉ Open in New Window
+    </button>
 
-  <button id="summaryToggleBtn" class="collapse-btn">▲</button>
+    <span class="summary-title">Route Summary</span>
 
-</div>
+    <button id="summaryToggleBtn" class="collapse-btn">▲</button>
 
+  </div>
 
   <div id="routeSummaryTable" class="bottom-summary-content">
     No summary loaded
   </div>
 
 </div>
+
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
