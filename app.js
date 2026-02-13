@@ -747,48 +747,54 @@ if (toggleBtn) {
     };
   }
 //======
-
-// ===== RESET MAP BUTTON (FULL HARD RESET) =====
+// ===== RESET MAP BUTTON (TRUE HARD RESET FOR THIS APP) =====
 const resetBtn = document.getElementById("resetMapBtn");
 
-resetBtn.addEventListener("click", () => {
-  if (!map) return;
+if (resetBtn) {
+  resetBtn.addEventListener("click", () => {
 
-  // 1. Reset map view
-  map.setView([39.5, -98.35], 4); // change center if needed
+    // 1. Reset map view
+    map.setView([39.5, -98.35], 4);
 
-  // 2. Clear drawn polygon
-  if (drawnItems) {
-    drawnItems.clearLayers();
-  }
+    // 2. Clear drawn polygon
+    drawnLayer.clearLayers();
 
-  // 3. Remove ALL markers from map
-  if (allMarkers && allMarkers.length) {
-    allMarkers.forEach(marker => map.removeLayer(marker));
-    allMarkers = [];
-  }
+    // 3. Remove ALL markers from map
+    Object.values(routeDayGroups).forEach(group => {
+      group.layers.forEach(marker => map.removeLayer(marker));
+    });
 
-  // 4. Clear selected stops
-  if (selectedStops) {
-    selectedStops.clear();
-  }
+    // 4. Clear stored marker groups & symbols
+    Object.keys(routeDayGroups).forEach(k => delete routeDayGroups[k]);
+    Object.keys(symbolMap).forEach(k => delete symbolMap[k]);
 
-  // 5. Reset counter UI
-  const countEl = document.getElementById("selectionCount");
-  if (countEl) countEl.textContent = "0";
+    // 5. Reset counters & stats
+    document.getElementById("selectionCount").textContent = "0";
+    document.getElementById("statsList").innerHTML = "";
 
-  // 6. Clear route/day checkboxes (optional but recommended)
-  document.querySelectorAll("#routeCheckboxes input, #dayCheckboxes input")
-    .forEach(cb => cb.checked = false);
+    // 6. Clear route/day checkbox UI
+    document.getElementById("routeCheckboxes").innerHTML = "";
+    buildDayCheckboxes();
 
-  // 7. Clear statistics panel
-  const stats = document.getElementById("statsList");
-  if (stats) stats.innerHTML = "";
+    // 7. Reset bounds tracker
+    globalBounds = L.latLngBounds();
 
-  // 8. Clear bottom summary table
-  const summary = document.getElementById("routeSummaryTable");
-  if (summary) summary.innerHTML = "No summary loaded";
-});
+    // 8. Clear bottom summary
+    const summary = document.getElementById("routeSummaryTable");
+    if (summary) summary.innerHTML = "No summary loaded";
+
+    // 9. Collapse summary panel
+    const panel = document.getElementById("bottomSummary");
+    const btn = document.getElementById("summaryToggleBtn");
+    if (panel && btn) {
+      panel.classList.add("collapsed");
+      panel.style.height = "40px";
+      btn.textContent = "▲";
+    }
+  });
+}
+
+
 
 
   
