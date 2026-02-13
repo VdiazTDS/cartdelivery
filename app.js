@@ -490,15 +490,11 @@ function initApp() {
     });
   }
 //========
-
+//close summary panel
 document.getElementById("closeSummary").onclick = () => {
   document.getElementById("summaryPanel").classList.add("hidden");
 };
 
-
-
   
   // ===== INITIAL DATA LOAD =====
   listFiles();
-}
-
