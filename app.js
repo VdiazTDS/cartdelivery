@@ -29,8 +29,9 @@ function normalizeName(name) {
   return name
     .toLowerCase()
     .replace(".xlsx", "")
-    .split("routesummary")[0]   // keep everything BEFORE "RouteSummary"
-    .replace(/[_\s.-]/g, "")    // ignore spaces, _, ., -
+    .replace("route summary", "")   // handles "Route Summary"
+    .replace("routesummary", "")    // handles "RouteSummary"
+    .replace(/[_\s.-]/g, "")        // ignore spaces, _, ., -
     .trim();
 }
 
