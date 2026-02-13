@@ -13,6 +13,12 @@
   <link rel="stylesheet" href="style.css" />
 
   <link rel="icon" href="favicon.ico" />
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw/dist/leaflet.draw.css" />
+  <script src="https://unpkg.com/leaflet-draw/dist/leaflet.draw.js"></script>
+
+
+  
 </head>
 
 <body>
@@ -76,11 +82,20 @@
       <option value="streets">Streets</option>
       <option value="satellite">Satellite</option>
     </select>
+
+
+    
   </aside>
 
    <main class="map-container">
     <div id="map"></div>
   </main>
+
+  
+<div id="selectionBox">
+  <strong>Selected Stops:</strong>
+  <span id="selectionCount">0</span>
+</div>
 
 </div> <!-- end app-container -->
 <!-- ===== BOTTOM ROUTE SUMMARY PANEL ===== -->
