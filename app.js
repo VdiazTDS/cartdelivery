@@ -451,6 +451,45 @@ function toggleSummary() {
 
 function initApp() {
 
+
+// ===== FILE UPLOAD (DRAG + CLICK) =====
+const dropZone = document.getElementById("dropZone");
+
+// create hidden file input dynamically (so no HTML change needed)
+let fileInput = document.getElementById("fileInput");
+if (!fileInput) {
+  fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept = ".xlsx,.xls,.csv";
+  fileInput.id = "fileInput";
+  fileInput.hidden = true;
+  document.body.appendChild(fileInput);
+}
+
+// CLICK → open picker
+dropZone.addEventListener("click", () => fileInput.click());
+
+// FILE SELECTED
+fileInput.addEventListener("change", e => {
+  const file = e.target.files[0];
+  if (file) uploadFile(file);
+});
+
+// PREVENT browser opening file on drop
+["dragenter", "dragover", "dragleave", "drop"].forEach(evt => {
+  dropZone.addEventListener(evt, e => e.preventDefault());
+});
+
+// DROP → upload
+dropZone.addEventListener("drop", e => {
+  const file = e.dataTransfer.files[0];
+  if (file) uploadFile(file);
+});
+
+
+
+
+  
   // ===== BASE MAP DROPDOWN =====
   const baseSelect = document.getElementById("baseMapSelect");
   if (baseSelect) {
