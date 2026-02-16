@@ -582,17 +582,21 @@ function toggleSummary() {
 function initApp() {
 
 // ===== RIGHT SIDEBAR TOGGLE =====
+
+// ===== RIGHT SIDEBAR TOGGLE =====
 const selectionBox = document.getElementById("selectionBox");
 const toggleSelectionBtn = document.getElementById("toggleSelectionBtn");
+const clearBtn = document.getElementById("clearSelectionBtn");
 
+// Toggle sidebar open/closed
 if (selectionBox && toggleSelectionBtn) {
   toggleSelectionBtn.onclick = () => {
     const collapsed = selectionBox.classList.toggle("collapsed");
+    toggleSelectionBtn.textContent = collapsed ? "❮" : "❯";
+  };
+}
 
-//=== clear selection button
-
-    const clearBtn = document.getElementById("clearSelectionBtn");
-
+// Clear selection button (ALWAYS ACTIVE)
 if (clearBtn) {
   clearBtn.onclick = () => {
     drawnLayer.clearLayers();
@@ -605,16 +609,6 @@ if (clearBtn) {
     });
 
     document.getElementById("selectionCount").textContent = 0;
-  };
-}
-
-
-
-
-    
-
-    // flip arrow direction
-    toggleSelectionBtn.textContent = collapsed ? "❮" : "❯";
   };
 }
 
