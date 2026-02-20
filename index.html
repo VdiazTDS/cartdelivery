@@ -23,14 +23,39 @@
 
 
 <header>
-  <h1>TDS-PAK Cart Delivery</h1>
-  <p>Periodically export a backend Excel backup (top-left download button).</p>
-  <button id="mobileMenuBtn">☰ Menu</button>
-  
 
+ <div class="header-top">
+
+  <button id="downloadFullExcelBtn" class="download-btn" title="Download Full Excel">
+    ⬇
+  </button>
+
+  <h1>TDS-PAK Cart Delivery</h1>
+
+  <label class="theme-toggle">
+    <input type="checkbox" id="sunModeToggle">
+    ☀ Sun Mode
+  </label>
+
+</div>
+
+
+
+  <p>Periodically export a backend Excel backup (top-left download button)</p>
+
+  <div class="mobile-header-buttons">
+    <button id="hardRefreshBtn" class="primary-btn">⟳ Refresh</button>
+    <button id="mobileMenuBtn">☰ Menu</button>
+    <button id="locateMeBtn" class="primary-btn">📍</button>
+    <button id="completeStopsBtnMobile" class="primary-btn">✔</button>
+  </div>
 
 </header>
 
+
+  
+  <!-- MOBILE DARK OVERLAY -->
+  <div class="mobile-overlay" id="mobileOverlay"></div>
 <div class="app-container">
   
 <button id="toggleSidebarBtn" class="sidebar-toggle">❮</button>
@@ -44,28 +69,79 @@
       <ul id="savedFiles"></ul>
     </div>
 
-    <div class="filter-group">
-      <div class="filter-header">
-        <strong>Routes</strong>
-        <div>
-          <button class="mini-btn" id="routesAll">All</button>
-          <button class="mini-btn" id="routesNone">None</button>
-        </div>
-      </div>
-      <div id="routeCheckboxes"></div>
+
+    
+<div class="filter-group">
+  <strong>Delivered</strong>
+  <div id="deliveredControls"></div>
+</div>
+
+<div class="filter-group">
+  <div class="filter-header">
+    <strong>Route + Day Layers</strong>
+    <div>
+      <button class="mini-btn" id="routeDayAll">All</button>
+      <button class="mini-btn" id="routeDayNone">None</button>
+    </div>
+  </div>
+
+  <div id="routeDayLayers"></div>
+</div>
+
+
+    
+  <div class="filter-group">
+
+  <div class="filter-header collapsible-header" id="routesToggle">
+    <div class="routes-title">
+      <span class="arrow">▶</span>
+      <strong>Routes</strong>
     </div>
 
+    <div class="routes-buttons">
+      <button class="mini-btn" id="routesAll">All</button>
+      <button class="mini-btn" id="routesNone">None</button>
+    </div>
+  </div>
+
+  <div id="routesContent" class="collapsible-content collapsed">
+    <div id="routeCheckboxes"></div>
+  </div>
+
+</div>
+
+
+
+    
     <div class="filter-group">
-      <div class="filter-header">
-        <strong>Days</strong>
-        <div>
-          <button class="mini-btn" id="daysAll">All</button>
-          <button class="mini-btn" id="daysNone">None</button>
-        </div>
-      </div>
-      <div id="dayCheckboxes"></div>
+      
+       <div class="filter-header collapsible-header" id="daysToggle">
+    <div class="days-title">
+      <span class="arrow">▶</span>
+      <strong>Days</strong>
     </div>
 
+    <div class="days-buttons">
+      <button class="mini-btn" id="daysAll">All</button>
+      <button class="mini-btn" id="daysNone">None</button>
+    </div>
+  </div>
+
+  <div id="daysContent" class="collapsible-content collapsed">
+    <div id="dayCheckboxes"></div>
+  </div>
+      
+    </div>
+
+
+    
+
+
+
+
+
+
+    
     <div class="filter-group">
       <strong>Statistics</strong>
       <ul id="statsList"></ul>
@@ -101,7 +177,26 @@
   <button id="clearSelectionBtn" class="primary-btn">
     Clear Selection
   </button>
+  
+  <div id="desktopLocateContainer"></div>
+  
+  <button id="completeStopsBtn" class="primary-btn">
+  Complete Stops
+</button>
 
+<label style="margin-left:15px; font-size:14px;">
+  <input type="checkbox" id="streetLabelToggle">
+  Street Labels
+</label>
+
+  
+   <button id="undoDeliveredBtn" class="primary-btn undo-btn">
+  Undo Delivered
+</button>
+
+
+
+  
 </div>
 
 
@@ -147,8 +242,21 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/leaflet-pip@1.1.0/leaflet-pip.min.js"></script>
+<div id="downloadConfirmModal" class="modal">
+  <div class="modal-content">
+    <h3>Download Excel File</h3>
+    <p>Are you sure you want to download the full Excel file?</p>
+    <div class="modal-actions">
+      <button id="cancelDownload">Cancel</button>
+      <button id="confirmDownload">Download</button>
+    </div>
+  </div>
+</div>
 
 <script src="app.js" defer></script>
+<!-- MOBILE Selected Stops Button -->
+<button id="mobileSelectionBtn">Selected: 0</button>
 
 
 </body>
