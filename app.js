@@ -21,11 +21,9 @@ window.streetLabelsEnabled = true;
 const DELETE_PASSWORD = "Austin1";  // ← change to whatever you want
 
 
-
-
-document.addEventListener("DOMContentLoaded", initApp);
-
-
+document.addEventListener("DOMContentLoaded", () => {
+  initApp();
+  document.addEventListener("DOMContentLoaded", initApp);
 // ================= SUN MODE TOGGLE =================
 
 const sunToggle = document.getElementById("sunModeToggle");
