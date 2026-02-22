@@ -1571,17 +1571,20 @@ body.sun-mode .filter-header {
 
 /* ================= MODAL BASE ================= */
 .modal {
-  display: none;
+  display: none;              /* hidden by default */
   position: fixed;
   inset: 0;
-
   background: rgba(0,0,0,0.6);
 
-  display: flex;
   justify-content: center;
   align-items: center;
 
-  z-index: 10000; /* Higher than sidebar (3000) */
+  z-index: 10000;
+}
+
+/* Only show when active */
+.modal.show {
+  display: flex;
 }
 
 /* ================= MODAL CONTENT ================= */
