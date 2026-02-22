@@ -278,13 +278,15 @@ const map = L.map("map").setView([0, 0], 2);
 const canvasRenderer = L.canvas({ padding: 0.5 });
 
 
-// Base map layers
+// ===== BASE MAP LAYERS =====
 const baseMaps = {
   streets: L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"),
   satellite: L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
   )
-  // ===== SATELLITE STREET NAME OVERLAY (LIGHTWEIGHT) =====
+};
+
+// ===== SATELLITE STREET NAME OVERLAY (LIGHTWEIGHT) =====
 const satelliteLabelsLayer = L.tileLayer(
   "https://tiles.stadiamaps.com/tiles/alidade_smooth_labels/{z}/{x}/{y}{r}.png",
   {
@@ -293,7 +295,7 @@ const satelliteLabelsLayer = L.tileLayer(
     updateWhenIdle: true,
     keepBuffer: 2
   }
-};
+);
 //======
 
 // ================= POLYGON SELECT =================
