@@ -295,7 +295,7 @@ const baseMaps = {
       maxNativeZoom: 19
     }
   )
-
+};
 // ===== SATELLITE STREET NAME OVERLAY (LIGHTWEIGHT) =====
 const satelliteLabelsLayer = L.tileLayer(
   "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
@@ -304,7 +304,7 @@ const satelliteLabelsLayer = L.tileLayer(
     maxNativeZoom: 19,
     opacity: 0.9
   }
-);==
+);
 
 // ================= POLYGON SELECT =================
 
