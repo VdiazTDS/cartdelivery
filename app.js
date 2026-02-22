@@ -1829,19 +1829,23 @@ if (currentBase === "satellite") {
       }
 
      // ---- STREET LABEL LOGIC (MOBILE SAFE) ----
+// ---- STREET LABEL LOGIC (HARD TOGGLE CONTROL) ----
 if (layer._hasStreetLabel) {
+
+  // 🚫 If toggle is OFF, force close and skip
+  if (!window.streetLabelsEnabled) {
+    layer.closeTooltip();
+    return;
+  }
 
   const bounds = map.getBounds();
   const isVisible = bounds.contains(layer.getLatLng());
 
-  // HARD LIMIT to prevent mobile overload
   const MAX_LABELS = 150;
-
   if (!window._labelCount) window._labelCount = 0;
 
   if (
-   currentZoom >= maxZoom - 2 &&
-    window.streetLabelsEnabled &&
+    currentZoom >= maxZoom - 2 &&
     map.hasLayer(layer) &&
     isVisible &&
     window._labelCount < MAX_LABELS
