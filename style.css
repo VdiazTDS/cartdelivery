@@ -1315,6 +1315,15 @@ header {
   transform: translateY(-50%);
 }
 
+/* Desktop: place map controls a little higher */
+@media (min-width: 901px) {
+  .leaflet-top.leaflet-left {
+    top: 10px !important;
+    left: 10px !important;
+    transform: none;
+  }
+}
+
 @media (max-width: 768px) {
   body {
     overflow: hidden;
