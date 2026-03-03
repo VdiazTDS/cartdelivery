@@ -30,7 +30,17 @@
     ⬇
   </button>
 
-  <h1>TDS-PAK Cart Del.</h1>
+  <div class="title-with-tools">
+    <h1>TDS-PAK Cart Del.</h1>
+    <div class="header-tools">
+      <button id="toolsMenuBtn" class="tools-menu-btn" aria-expanded="false" aria-haspopup="true">
+        Other Apps
+      </button>
+      <div id="toolsMenuDropdown" class="tools-menu-dropdown">
+        <div id="toolsMenuList" class="tools-menu-list"></div>
+      </div>
+    </div>
+  </div>
 
   <label class="theme-toggle">
     <input type="checkbox" id="sunModeToggle">
@@ -63,7 +73,10 @@
 
     <div id="dropZone">📄 Drag & drop Excel file or click to upload</div>
     <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" hidden>
-    <div id="currentFileDisplay" class="current-file-display">Current file: None</div>
+    <div id="currentFileDisplay" class="current-file-display">
+      <span class="current-file-label">Current file</span>
+      <span id="currentFileName" class="current-file-name">None</span>
+    </div>
     <!-- NEW: Saved files -->
     <div class="filter-group">
   <button id="openFileManagerBtn" class="primary-btn file-manager-btn">
@@ -172,6 +185,8 @@
 
 
     <button id="resetMapBtn" class="primary-btn">Reset Map</button>
+    <div class="sidebar-scroll-spacer" aria-hidden="true"></div>
+    <div class="sidebar-scroll-spacer" aria-hidden="true"></div>
 
 
 
@@ -188,7 +203,6 @@
 <!-- RIGHT SIDEBAR -->
 <div id="selectionBox">
 
-  <button id="toggleSelectionBtn" class="sidebar-toggle-right">❯</button>
 
   <strong>Selected Stops:</strong>
   <span id="selectionCount">0</span>
@@ -221,6 +235,8 @@
 
 
 
+
+<button id="toggleSelectionBtn" class="sidebar-toggle-right">❯</button>
 
 </div> <!-- end app-container -->
 <!-- ===== BOTTOM ROUTE SUMMARY PANEL ===== -->

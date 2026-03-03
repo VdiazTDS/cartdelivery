@@ -16,6 +16,54 @@ window._currentFilePath = null;
 
 window.streetLabelsEnabled = false;
 
+// Header tools menu links.
+// Replace "#" with your real URLs and add more entries as needed.
+const HEADER_TOOL_LINKS = [
+  { label: "Sales-Polygon-Viewer", href: "#" },
+  { label: "Cart Delivery App", href: "#" },
+  { label: "Solution Reviewer", href: "#" }
+];
+
+function setupHeaderToolsMenu() {
+  const menuBtn = document.getElementById("toolsMenuBtn");
+  const menuDropdown = document.getElementById("toolsMenuDropdown");
+  const menuList = document.getElementById("toolsMenuList");
+
+  if (!menuBtn || !menuDropdown || !menuList) return;
+
+  menuList.innerHTML = "";
+
+  HEADER_TOOL_LINKS.forEach(tool => {
+    const link = document.createElement("a");
+    link.className = "tools-menu-item";
+    link.textContent = tool.label;
+    link.href = tool.href || "#";
+
+    if (!tool.href || tool.href === "#") {
+      link.addEventListener("click", e => e.preventDefault());
+    }
+
+    menuList.appendChild(link);
+  });
+
+  const closeMenu = () => {
+    menuDropdown.classList.remove("open");
+    menuBtn.setAttribute("aria-expanded", "false");
+  };
+
+  menuBtn.addEventListener("click", e => {
+    e.stopPropagation();
+    const isOpen = menuDropdown.classList.toggle("open");
+    menuBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  });
+
+  menuDropdown.addEventListener("click", e => e.stopPropagation());
+  document.addEventListener("click", closeMenu);
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape") closeMenu();
+  });
+}
+
 //======
 // 🔐 Delete protection password I know this is not secure, I just wanted to make it harder for ppl to accidentally delete files. You can change or remove this as needed.
 const DELETE_PASSWORD = "Austin1";  // ← change to whatever you want
@@ -45,6 +93,8 @@ if (sunToggle) {
     }
   });
 }
+
+setupHeaderToolsMenu();
 
   });
 /* ⭐ Ensures mobile buttons move AFTER full page load */
@@ -277,8 +327,16 @@ function getDownloadBaseName(filePath) {
 
 function setCurrentFileDisplay(filePath) {
   const label = document.getElementById("currentFileDisplay");
+  const name = document.getElementById("currentFileName");
+  const displayName = filePath || "None";
   if (!label) return;
-  label.textContent = `Current file: ${filePath || "None"}`;
+
+  if (name) {
+    name.textContent = displayName;
+    return;
+  }
+
+  label.textContent = `Current file: ${displayName}`;
 }
 
 setCurrentFileDisplay(window._currentFilePath);
@@ -1372,6 +1430,7 @@ function initApp() { //begining of initApp======================================
 const selectionBox = document.getElementById("selectionBox");
 const toggleSelectionBtn = document.getElementById("toggleSelectionBtn");
 const clearBtn = document.getElementById("clearSelectionBtn");
+const pageHeader = document.querySelector("header");
 
 // ===== COMPLETE STOPS BUTTON =====
 const completeBtnDesktop = document.getElementById("completeStopsBtn");
@@ -1386,6 +1445,26 @@ if (selectionBox && toggleSelectionBtn) {
     toggleSelectionBtn.textContent = collapsed ? "❮" : "❯";
   };
 }
+
+function syncSelectionBoxTop() {
+  if (!selectionBox || !pageHeader) return;
+  const headerHeight = Math.ceil(pageHeader.getBoundingClientRect().height);
+  if (window.innerWidth <= 900) {
+    selectionBox.style.top = "";
+    selectionBox.style.maxHeight = "";
+    if (toggleSelectionBtn) toggleSelectionBtn.style.top = "";
+    return;
+  }
+
+  // Keep sidebar fully below sticky header on desktop.
+  const topOffset = headerHeight + 8;
+  selectionBox.style.top = `${topOffset}px`;
+  selectionBox.style.maxHeight = `calc(100vh - ${topOffset + 12}px)`;
+  if (toggleSelectionBtn) toggleSelectionBtn.style.top = `${topOffset + 8}px`;
+}
+
+syncSelectionBoxTop();
+window.addEventListener("resize", syncSelectionBoxTop);
 
 // Clear selection button (ALWAYS ACTIVE)
 if (clearBtn) {

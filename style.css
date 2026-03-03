@@ -1,4 +1,10 @@
 /* ================= GLOBAL ================= */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   font-family: 'Roboto', sans-serif;
   margin: 0;
@@ -44,6 +50,7 @@ header p {
   flex-direction: column;
   gap: 10px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   border-right: 1px solid #333;
 
   color: #eee; /* 🔥 ADD THIS LINE */
@@ -71,11 +78,35 @@ header p {
 }
 
 #currentFileDisplay {
-  background: #1e1e1e;
-  border: 1px solid #333;
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #2f3b4a;
+  background: linear-gradient(145deg, #1b2430 0%, #151b24 100%);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+
+.current-file-label {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8fc5ff;
+  background: rgba(66, 165, 245, 0.14);
+}
+
+.current-file-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f6fbff;
+  line-height: 1.35;
   word-break: break-word;
 }
 
@@ -140,6 +171,11 @@ header p {
   background: #64b5f6;
 }
 
+.sidebar-scroll-spacer {
+  height: 480px;
+  pointer-events: none;
+}
+
 
 /* ================= SAVED FILES LIST ================= */
 #savedFiles {
@@ -189,6 +225,22 @@ header p {
 #map {
   width: 100%;
   height: 100%;
+}
+
+/* Keep attribution visible (license-compliant) but less distracting */
+.leaflet-control-attribution {
+  font-size: 3px !important;
+  line-height: 1;
+  padding: 0 !important;
+  opacity: 0.25;
+  letter-spacing: -0.1px;
+  background: rgba(18, 18, 18, 0.35) !important;
+  pointer-events: none;
+}
+
+.leaflet-control-attribution a {
+  color: inherit !important;
+  pointer-events: auto;
 }
 
 /* ===== Modern mobile menu button ===== */
@@ -452,6 +504,12 @@ header p {
   order: 2;        /* keeps it left */
 }
 
+@media (min-width: 901px) {
+  #summaryToggleBtn {
+    margin-right: 16px;
+  }
+}
+
 
 
 
@@ -473,11 +531,14 @@ header p {
 
   background: #1e1e1e;
   border-left: 1px solid #333;
+  border-radius: 12px 0 0 12px;
 
   padding: 12px 16px;
 
   transition: transform 0.25s ease;
   z-index: 500;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* Collapsed state — slide fully off screen */
@@ -487,9 +548,10 @@ header p {
 
 /* Toggle button (attached to sidebar edge) */
 .sidebar-toggle-right {
-  position: absolute;
-  left: -28px;          /* keeps it glued to sidebar */
-  top: 12px;
+  position: fixed;
+  right: 0;
+  left: auto;
+  top: calc(70px + env(safe-area-inset-top) + 8px);
 
   width: 28px;
   height: 28px;
@@ -509,13 +571,11 @@ header p {
   z-index: 600;
 }
 
-/* When sidebar is collapsed, keep toggle visible at screen edge */
-#selectionBox.collapsed .sidebar-toggle-right {
-  left: -28px;
-}
-
 @media (min-width: 901px) {
   #selectionBox {
+    position: fixed;
+    top: calc(70px + env(safe-area-inset-top));
+    right: 0;
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -552,6 +612,12 @@ header p {
     gap: 8px;
     margin: 0;
     font-size: 14px;
+  }
+}
+
+@media (max-width: 900px) {
+  .sidebar-toggle-right {
+    display: none !important;
   }
 }
 
@@ -631,6 +697,7 @@ header p {
   height: 250px;
   background: #1e1e1e;
   border-top: 2px solid #333;
+  border-radius: 14px 14px 0 0;
 
   display: flex;
   flex-direction: column;
@@ -923,6 +990,106 @@ header {
     overflow-y: auto;
   }
 
+}
+
+/* ===== SUN MODE CONTRAST FIXES (FINAL OVERRIDES) ===== */
+body.sun-mode .search-results {
+  background: #ffffff !important;
+  border-color: #d7e1ea !important;
+}
+
+body.sun-mode .search-results-header {
+  color: #0f1a26 !important;
+}
+
+body.sun-mode .search-result-item {
+  background: #eef3f8 !important;
+  color: #0f1a26 !important;
+}
+
+body.sun-mode .search-result-item:hover {
+  background: #e2ebf4 !important;
+}
+
+body.sun-mode #mapSearchInput {
+  background: #ffffff !important;
+  border-color: #ccd8e5 !important;
+  color: #0f1a26 !important;
+}
+
+body.sun-mode .modal-content,
+body.sun-mode .loading-card {
+  background: #ffffff !important;
+  color: #0f1a26 !important;
+}
+
+body.sun-mode .file-list button,
+body.sun-mode #savedFiles button {
+  background: #ffffff !important;
+  color: #0f1a26 !important;
+  border: 1px solid #ccd8e5 !important;
+}
+
+body.sun-mode .open-btn {
+  background-color: #2a93ff !important;
+  color: #ffffff !important;
+  border-color: #2a93ff !important;
+}
+
+body.sun-mode .delete-btn {
+  background-color: #c62828 !important;
+  color: #ffffff !important;
+  border-color: #c62828 !important;
+}
+
+/* ===== SUN MODE CONTRAST FIXES ===== */
+body.sun-mode .search-results {
+  background: #ffffff !important;
+  border-color: #d7e1ea !important;
+}
+
+body.sun-mode .search-results-header {
+  color: #0f1a26 !important;
+}
+
+body.sun-mode .search-result-item {
+  background: #eef3f8 !important;
+  color: #0f1a26 !important;
+}
+
+body.sun-mode .search-result-item:hover {
+  background: #e2ebf4 !important;
+}
+
+body.sun-mode #mapSearchInput {
+  background: #ffffff !important;
+  border-color: #ccd8e5 !important;
+  color: #0f1a26 !important;
+}
+
+body.sun-mode .modal-content,
+body.sun-mode .loading-card {
+  background: #ffffff !important;
+  color: #0f1a26 !important;
+}
+
+body.sun-mode .file-list button,
+body.sun-mode #savedFiles button {
+  background: #ffffff !important;
+  color: #0f1a26 !important;
+  border: 1px solid #ccd8e5 !important;
+}
+
+body.sun-mode .open-btn {
+  background-color: #2a93ff !important;
+  color: #ffffff !important;
+  border-color: #2a93ff !important;
+}
+
+body.sun-mode .delete-btn {
+  background-color: #c62828 !important;
+  color: #ffffff !important;
+  border-color: #c62828 !important;
 }
 
   .sidebar.open {
@@ -1470,6 +1637,10 @@ body.sun-mode header {
   border-bottom: 1px solid #ccc;
 }
 
+body.sun-mode header h1 {
+  color: #111 !important;
+}
+
 /* Buttons */
 body.sun-mode button {
   background: #ffffff;
@@ -1548,8 +1719,36 @@ body.sun-mode .filter-header {
 }
 
 body.sun-mode #currentFileDisplay {
-  background: #ffffff;
-  border-color: #dddddd;
+  border-color: #d5e2ef;
+  background: linear-gradient(145deg, #ffffff 0%, #f3f8ff 100%);
+  box-shadow: 0 4px 12px rgba(20, 40, 60, 0.08);
+}
+
+body.sun-mode .tools-menu-btn {
+  background: #ffffff !important;
+  border-color: #ccd8e5 !important;
+  color: #13273f !important;
+}
+
+body.sun-mode .tools-menu-dropdown {
+  background: #ffffff !important;
+  border-color: #d5e2ef !important;
+  box-shadow: 0 10px 24px rgba(20, 40, 60, 0.12);
+}
+
+body.sun-mode .tools-menu-item {
+  background: #f4f8fd !important;
+  border-color: #d8e3ef !important;
+  color: #152a42 !important;
+}
+
+body.sun-mode .current-file-label {
+  color: #0d5ca8 !important;
+  background: rgba(66, 165, 245, 0.16);
+}
+
+body.sun-mode .current-file-name {
+  color: #0f1722 !important;
 }
 
 /* ================= SUN MODE – SIDEBAR FIX ================= */
@@ -1588,6 +1787,71 @@ body.sun-mode .filter-header {
   align-items: center;
   justify-content: center;
   position: relative;
+}
+
+.title-with-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-tools {
+  position: relative;
+}
+
+.tools-menu-btn {
+  border: 1px solid #3a4654;
+  background: #1a2430;
+  color: #eaf3ff;
+  border-radius: 10px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tools-menu-btn:hover {
+  background: #223244;
+}
+
+.tools-menu-dropdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 240px;
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px solid #2f3b4a;
+  background: #151c25;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.42);
+  z-index: 6000;
+}
+
+.tools-menu-dropdown.open {
+  display: block;
+}
+
+.tools-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tools-menu-item {
+  display: block;
+  text-decoration: none;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #f2f7ff;
+  background: #1e2a38;
+  border: 1px solid #2b3a4b;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tools-menu-item:hover {
+  background: #2a3a4d;
 }
 
 /* Download button on far left */
@@ -1885,4 +2149,54 @@ body.sun-mode .filter-header {
     border-radius: 14px;
   }
 
+}
+
+/* ===== SUN MODE CONTRAST FIXES (FINAL OVERRIDES) ===== */
+body.sun-mode .search-results {
+  background: #ffffff !important;
+  border-color: #d7e1ea !important;
+}
+
+body.sun-mode .search-results-header {
+  color: #0f1a26 !important;
+}
+
+body.sun-mode .search-result-item {
+  background: #eef3f8 !important;
+  color: #0f1a26 !important;
+}
+
+body.sun-mode .search-result-item:hover {
+  background: #e2ebf4 !important;
+}
+
+body.sun-mode #mapSearchInput {
+  background: #ffffff !important;
+  border-color: #ccd8e5 !important;
+  color: #0f1a26 !important;
+}
+
+body.sun-mode .modal-content,
+body.sun-mode .loading-card {
+  background: #ffffff !important;
+  color: #0f1a26 !important;
+}
+
+body.sun-mode .file-list button,
+body.sun-mode #savedFiles button {
+  background: #ffffff !important;
+  color: #0f1a26 !important;
+  border: 1px solid #ccd8e5 !important;
+}
+
+body.sun-mode .open-btn {
+  background-color: #2a93ff !important;
+  color: #ffffff !important;
+  border-color: #2a93ff !important;
+}
+
+body.sun-mode .delete-btn {
+  background-color: #c62828 !important;
+  color: #ffffff !important;
+  border-color: #c62828 !important;
 }
