@@ -60,6 +60,11 @@ header p {
   color: #ffffff;
 }
 
+.dropzone-top-spacer {
+  height: 80px;
+  pointer-events: none;
+}
+
 
 /* ================= UPLOAD BOX ================= */
 #dropZone {
@@ -285,37 +290,60 @@ header p {
 .sidebar-toggle {
   position: fixed;            /* stay in same place on screen */
   top: 50%;
-  left: 320px;
+  left: 341px;                /* flush with sidebar edge */
   transform: translateY(-50%);
-  width: 26px;
-  height: 72px;
+  width: 34px;
+  height: 84px;
 
-  background: #2a2a2a;
-  color: #eee;
-  border: 1px solid #444;
+  background: linear-gradient(180deg, #1f1f1f 0%, #181818 100%);
+  color: #dfe8f2;
+  border: 1px solid #333;
   border-left: none;
-  border-radius: 0 10px 10px 0;
+  border-radius: 0 14px 14px 0;
 
   display: flex;
   align-items: center;
   justify-content: center;
 
-  font-size: 16px;
-  font-weight: bold;
+  font-size: 18px;
+  font-weight: 700;
   cursor: pointer;
 
   z-index: 2000;              /* ABOVE Leaflet map */
   touch-action: manipulation; /* allow taps */
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.32), inset 1px 0 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(2px);
+  transition: transform 0.2s ease, background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sidebar-toggle::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-right: 2.5px solid currentColor;
+  border-bottom: 2.5px solid currentColor;
+  transform: rotate(135deg);
+  margin-left: 4px;
 }
 
 .sidebar-toggle:hover {
-  background: #42a5f5;
-  color: #000;
+  background: linear-gradient(180deg, #2a2a2a 0%, #212121 100%);
+  color: #ffffff;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.38), inset 1px 0 0 rgba(255, 255, 255, 0.08);
+}
+
+.sidebar-toggle:active {
+  transform: translateY(-50%) scale(0.97);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
 }
 
 /* Move to screen edge when collapsed */
 .app-container.collapsed .sidebar-toggle {
-  left: 0;
+  left: 0;                    /* flush to left page edge when closed */
+  border-left: 1px solid #3d5872;
+  border-right: none;
+  border-radius: 14px 0 0 14px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.42);
 }
 
 /* Rotate arrow when sidebar is collapsed */
@@ -1040,6 +1068,20 @@ body.sun-mode .delete-btn {
   background-color: #c62828 !important;
   color: #ffffff !important;
   border-color: #c62828 !important;
+}
+
+/* ===== SUN MODE: FORCE WHITE TEXT FOR SPECIFIC CONTROLS ===== */
+body.sun-mode #openFileManagerBtn,
+body.sun-mode #resetMapBtn {
+  background: #111111 !important;
+  color: #ffffff !important;
+  border-color: #111111 !important;
+}
+
+body.sun-mode #dropZone {
+  background: #1f1f1f !important;
+  color: #ffffff !important;
+  border-color: #4a4a4a !important;
 }
 
 /* ===== SUN MODE CONTRAST FIXES ===== */

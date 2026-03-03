@@ -1559,12 +1559,17 @@ if (baseSelect) {
   const appContainer = document.querySelector(".app-container");
 
   if (toggleSidebarBtn && sidebar && appContainer) {
+    toggleSidebarBtn.setAttribute(
+      "aria-expanded",
+      appContainer.classList.contains("collapsed") ? "false" : "true"
+    );
+
     toggleSidebarBtn.addEventListener("click", () => {
       appContainer.classList.toggle("collapsed");
-
-      toggleSidebarBtn.textContent =
-        appContainer.classList.contains("collapsed") ? "▶" : "◀";
-
+      toggleSidebarBtn.setAttribute(
+        "aria-expanded",
+        appContainer.classList.contains("collapsed") ? "false" : "true"
+      );
       setTimeout(() => map.invalidateSize(), 200);
     });
   }

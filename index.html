@@ -68,9 +68,12 @@
   <div class="mobile-overlay" id="mobileOverlay"></div>
 <div class="app-container">
   
-<button id="toggleSidebarBtn" class="sidebar-toggle">❮</button>
+<button id="toggleSidebarBtn" class="sidebar-toggle" aria-label="Toggle left sidebar"></button>
   <aside class="sidebar">
 
+    <div class="dropzone-top-spacer" aria-hidden="true"></div>
+    <div class="dropzone-top-spacer" aria-hidden="true"></div>
+    <div class="dropzone-top-spacer" aria-hidden="true"></div>
     <div id="dropZone">📄 Drag & drop Excel file or click to upload</div>
     <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" hidden>
     <div id="currentFileDisplay" class="current-file-display">
