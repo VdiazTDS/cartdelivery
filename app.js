@@ -282,7 +282,7 @@ const hardRefreshBtn = document.getElementById("hardRefreshBtn");
 if (hardRefreshBtn) {
   let refreshArmed = false;
 
-  hardRefreshBtn.addEventListener("click", () => {
+  hardRefreshBtn.addEventListener("click", async () => {
 
     // Mobile double-tap protection
     if (window.innerWidth <= 900) {
@@ -299,13 +299,30 @@ if (hardRefreshBtn) {
       }
     }
 
-    // Clear cache storage if supported
-    if ("caches" in window) {
-      caches.keys().then(names => names.forEach(n => caches.delete(n)));
+    // Desktop confirmation
+    if (window.innerWidth > 900) {
+      const confirmed = confirm(
+        "Refresh App will clear this app's local cached files and reload the page with fresh data. Continue?"
+      );
+      if (!confirmed) return;
     }
 
-    // True hard reload (no cache)
-    window.location.href = window.location.pathname + "?v=" + Date.now();
+    // Clear cache storage if supported
+    if ("caches" in window) {
+      const names = await caches.keys();
+      await Promise.all(names.map(n => caches.delete(n)));
+    }
+
+    // Unregister service workers so they cannot serve stale assets
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+
+    // True hard reload (cache-busting URL)
+    const url = new URL(window.location.href);
+    url.searchParams.set("_cb", String(Date.now()));
+    window.location.replace(url.toString());
   });
 }
 
