@@ -418,7 +418,9 @@ const satelliteLabelsLayer = L.tileLayer(
 let drawnLayer = new L.FeatureGroup();
 map.addLayer(drawnLayer);
 const individuallySelectedMarkers = new Set();
+const individuallyDeselectedMarkers = new Set();
 const highlightedMarkers = new Set();
+let mobileStopSelectionMode = false;
 
 const drawControl = new L.Control.Draw({
   draw: {
@@ -507,13 +509,152 @@ function createSelectionTester() {
 }
 
 function isStopSelected(marker, selectionTester = createSelectionTester()) {
+  if (!map.hasLayer(marker)) return false;
   if (individuallySelectedMarkers.has(marker)) return true;
+  if (individuallyDeselectedMarkers.has(marker)) return false;
   const base = marker._base;
   const latlng = base && Number.isFinite(base.lat) && Number.isFinite(base.lon)
     ? L.latLng(base.lat, base.lon)
     : getLayerLatLng(marker);
-  return Boolean(map.hasLayer(marker) && latlng && selectionTester(latlng));
+  return Boolean(latlng && selectionTester(latlng));
 }
+
+function toggleIndividualStopSelection(marker) {
+  const wasSelected = isStopSelected(marker);
+  const selectionTester = createSelectionTester();
+  const base = marker._base;
+  const latlng = base && Number.isFinite(base.lat) && Number.isFinite(base.lon)
+    ? L.latLng(base.lat, base.lon)
+    : getLayerLatLng(marker);
+  if (wasSelected) {
+    individuallySelectedMarkers.delete(marker);
+    if (drawnLayer.getLayers()[0] && latlng && selectionTester(latlng)) {
+      individuallyDeselectedMarkers.add(marker);
+    } else {
+      individuallyDeselectedMarkers.delete(marker);
+    }
+  } else {
+    individuallyDeselectedMarkers.delete(marker);
+    individuallySelectedMarkers.add(marker);
+  }
+}
+
+function getNearbyVisibleStops(latlng) {
+  const tapPoint = map.latLngToContainerPoint(latlng);
+  const nearby = [];
+
+  Object.entries(routeDayGroups).forEach(([key, group]) => {
+    group.layers.forEach(marker => {
+      if (!map.hasLayer(marker)) return;
+      const base = marker._base;
+      const markerLatLng = base && Number.isFinite(base.lat) && Number.isFinite(base.lon)
+        ? L.latLng(base.lat, base.lon)
+        : getLayerLatLng(marker);
+      if (!markerLatLng) return;
+
+      const point = map.latLngToContainerPoint(markerLatLng);
+      const distance = tapPoint.distanceTo(point);
+      const hitRadius = Math.max(32, (marker.getRadius?.() || 0) + 20);
+      if (distance <= hitRadius) nearby.push({ marker, key, distance });
+    });
+  });
+
+  return nearby.sort((a, b) => a.distance - b.distance);
+}
+
+function formatStopAddress(row) {
+  return [
+    row["CSADR#"] || "",
+    row["CSSDIR"] || "",
+    row["CSSTRT"] || "",
+    row["CSSFUX"] || ""
+  ].join(" ").replace(/\s+/g, " ").trim() || "Address not available";
+}
+
+function showNearbyStopPicker(stops) {
+  const picker = document.getElementById("mobileStopPicker");
+  const list = document.getElementById("mobileStopPickerList");
+  const message = document.getElementById("mobileStopPickerMessage");
+  list.replaceChildren();
+  message.textContent = `${stops.length} nearby stops. Choose the exact address:`;
+
+  stops.forEach(({ marker, key, distance }) => {
+    const row = marker._rowRef || {};
+    const button = document.createElement("button");
+    button.className = "mobile-stop-choice";
+    button.type = "button";
+
+    const address = document.createElement("span");
+    address.className = "mobile-stop-choice-address";
+    address.textContent = formatStopAddress(row);
+
+    const detail = document.createElement("span");
+    detail.className = "mobile-stop-choice-detail";
+    const status = String(row.del_status || "").trim().toLowerCase() === "delivered"
+      ? "Delivered"
+      : (dayName(Number(row.NEWDAY)) || `Day ${row.NEWDAY || key.split("|")[1]}`);
+    const bin = row.BINNO ? ` · Bin ${row.BINNO}` : "";
+    detail.textContent = `Route ${row.NEWROUTE || key.split("|")[0]} · ${status}${bin} · ${Math.round(distance)} px away`;
+
+    const selectionState = document.createElement("span");
+    selectionState.className = "mobile-stop-choice-state";
+    const selected = isStopSelected(marker);
+    button.classList.toggle("selected", selected);
+    selectionState.textContent = selected ? "Selected · tap to deselect" : "Tap to select";
+
+    button.append(address, detail, selectionState);
+    button.addEventListener("click", () => {
+      toggleIndividualStopSelection(marker);
+      picker.hidden = true;
+      updateSelectionCount();
+      updateUndoButtonState();
+    });
+    list.appendChild(button);
+  });
+
+  picker.hidden = false;
+}
+
+function handleMobileStopTap(latlng) {
+  const nearby = getNearbyVisibleStops(latlng);
+  if (!nearby.length) {
+    document.getElementById("mobileStopPicker").hidden = true;
+    return;
+  }
+
+  if (nearby.length > 1 && nearby[1].distance - nearby[0].distance < 12) {
+    showNearbyStopPicker(nearby);
+    return;
+  }
+
+  const marker = nearby[0].marker;
+  toggleIndividualStopSelection(marker);
+  document.getElementById("mobileStopPicker").hidden = true;
+  updateSelectionCount();
+  updateUndoButtonState();
+}
+
+map.on("click", event => {
+  if (event.layer) return;
+  if (mobileStopSelectionMode && window.innerWidth <= 900) {
+    handleMobileStopTap(event.latlng);
+  }
+});
+
+map.on("popupopen", event => {
+  if (mobileStopSelectionMode && window.innerWidth <= 900) {
+    map.closePopup(event.popup);
+    requestAnimationFrame(() => {
+      if (mobileStopSelectionMode && window.innerWidth <= 900) map.closePopup();
+    });
+  }
+});
+
+map.on("tooltipopen", event => {
+  if (mobileStopSelectionMode && window.innerWidth <= 900) {
+    map.closeTooltip(event.tooltip);
+  }
+});
 
 function restoreMarkerStyle(marker, key) {
   const isDelivered = String(marker._rowRef?.del_status || "").trim().toLowerCase() === "delivered";
@@ -544,7 +685,8 @@ function updateSelectionCount() {
         highlightedMarkers.add(marker);
       }
     });
-    document.getElementById("selectionCount").textContent = individuallySelectedMarkers.size;
+    const visibleSelected = [...individuallySelectedMarkers].filter(marker => map.hasLayer(marker)).length;
+    document.getElementById("selectionCount").textContent = visibleSelected;
     return;
   }
 
@@ -589,6 +731,7 @@ function highlightSelectedMarker(marker) {
 // ===== WHEN POLYGON IS DRAWN =====
 map.on(L.Draw.Event.CREATED, e => {
   drawnLayer.clearLayers();
+  individuallyDeselectedMarkers.clear();
   drawnLayer.addLayer(e.layer);
   updateSelectionCount();
   updateUndoButtonState();   // 🔥 ADD THIS
@@ -600,6 +743,7 @@ map.on(L.Draw.Event.EDITED, () => {
 });
 
 map.on(L.Draw.Event.DELETED, () => {
+  individuallyDeselectedMarkers.clear();
   updateSelectionCount();
   updateUndoButtonState();
 });
@@ -1167,6 +1311,7 @@ function processExcelBuffer(buffer) {
   Object.values(routeDayGroups).forEach(g => g.layers.forEach(l => map.removeLayer(l)));
   drawnLayer.clearLayers();
   individuallySelectedMarkers.clear();
+  individuallyDeselectedMarkers.clear();
   highlightedMarkers.clear();
   Object.keys(routeDayGroups).forEach(k => delete routeDayGroups[k]);
   Object.keys(symbolMap).forEach(k => delete symbolMap[k]);
@@ -1244,12 +1389,15 @@ if (labelText) {
 
     // 🔥 CRITICAL: link marker to Excel row
     marker._rowRef = row;
-    marker.on("click", () => {
-      if (individuallySelectedMarkers.has(marker)) {
-        individuallySelectedMarkers.delete(marker);
-      } else {
-        individuallySelectedMarkers.add(marker);
+    marker.on("click", event => {
+      if (mobileStopSelectionMode && window.innerWidth <= 900) {
+        L.DomEvent.stop(event.originalEvent || event);
+        map.closePopup();
+        handleMobileStopTap(event.latlng || marker.getLatLng());
+        return;
       }
+
+      toggleIndividualStopSelection(marker);
       updateSelectionCount();
       updateUndoButtonState();
     });
@@ -1854,6 +2002,7 @@ clearBtn.onclick = () => {
   // Remove polygon
   drawnLayer.clearLayers();
   individuallySelectedMarkers.clear();
+  individuallyDeselectedMarkers.clear();
 
   // 🔥 Force counter refresh everywhere (desktop + mobile)
   updateSelectionCount();
@@ -2004,9 +2153,36 @@ const mobileSelBtn = document.getElementById("mobileSelectionBtn");
 
 
 if (mobileSelBtn && selectionBox) {
+  function setMobileStopSelectionMode(isActive) {
+    mobileStopSelectionMode = isActive;
+    document.body.classList.toggle("mobile-stop-selection-mode", isActive);
+    mobileSelBtn.classList.toggle("selection-mode", isActive);
+    document.getElementById("mobileStopPicker").hidden = true;
+    if (isActive) map.closePopup();
+    if (isActive) selectionBox.classList.remove("show");
+    updateSelectionCount();
+  }
 
   mobileSelBtn.addEventListener("click", () => {
-    selectionBox.classList.toggle("show");
+    const selectedCount = Number(document.getElementById("selectionCount").textContent);
+    if (mobileStopSelectionMode) {
+      setMobileStopSelectionMode(false);
+      if (selectedCount) selectionBox.classList.add("show");
+      return;
+    }
+
+    if (selectionBox.classList.contains("show")) {
+      selectionBox.classList.remove("show");
+    } else if (selectedCount) {
+      selectionBox.classList.add("show");
+      return;
+    }
+
+    setMobileStopSelectionMode(true);
+  });
+
+  document.getElementById("mobileStopPickerClose").addEventListener("click", () => {
+    document.getElementById("mobileStopPicker").hidden = true;
   });
 
   // keep count synced
@@ -2014,9 +2190,22 @@ if (mobileSelBtn && selectionBox) {
   updateSelectionCount = function () {
     originalUpdate();
     const count = Number(document.getElementById("selectionCount").textContent);
-    mobileSelBtn.textContent = `Selected: ${count}`;
-    mobileSelBtn.setAttribute("aria-label", count ? `${count} stops selected` : "Select stops on the map");
-    mobileSelBtn.title = "Open selection actions. Tap a stop or use a map tool to select an area.";
+    mobileSelBtn.textContent = mobileStopSelectionMode
+      ? `Done · ${count}`
+      : count
+        ? `Selected: ${count}`
+        : "Select Stops";
+    mobileSelBtn.setAttribute(
+      "aria-label",
+      mobileStopSelectionMode
+        ? `Finish selecting ${count} stops`
+        : count
+          ? `Open actions for ${count} selected stops`
+          : "Start tap selection for closely spaced stops"
+    );
+    mobileSelBtn.title = mobileStopSelectionMode
+      ? "Tap stops on the map, then tap here when finished."
+      : "Start precise tap selection, or open actions for selected stops.";
   };
   updateSelectionCount();
 }
@@ -2842,6 +3031,7 @@ if (resetBtn) {
     // 2. Clear drawn polygon
     drawnLayer.clearLayers();
     individuallySelectedMarkers.clear();
+    individuallyDeselectedMarkers.clear();
     highlightedMarkers.clear();
 
     // 3. Remove ALL markers from map
@@ -3356,6 +3546,7 @@ if (!saved) {
 // 🔥 remove selection polygon after completion
 drawnLayer.clearLayers();
 individuallySelectedMarkers.clear();
+individuallyDeselectedMarkers.clear();
   // Save current checkbox states
 document.querySelectorAll("#routeDayLayers input[type='checkbox']")
   .forEach(cb => {
@@ -3476,6 +3667,7 @@ if (drawnLayer) {
   drawnLayer.clearLayers();
 }
 individuallySelectedMarkers.clear();
+individuallyDeselectedMarkers.clear();
 
 // 🔥 Recalculate selection state + restore styling
 updateSelectionCount();

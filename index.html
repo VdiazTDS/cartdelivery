@@ -357,6 +357,17 @@
 <!-- MOBILE Selected Stops Button -->
 <button id="mobileSelectionBtn" aria-label="0 stops selected; open selection actions">Selected: 0</button>
 
+<section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
+  <div class="mobile-stop-picker-header">
+    <div>
+      <strong id="mobileStopPickerTitle">Choose a stop</strong>
+      <p id="mobileStopPickerMessage"></p>
+    </div>
+    <button id="mobileStopPickerClose" type="button" aria-label="Close nearby stops">×</button>
+  </div>
+  <div id="mobileStopPickerList" class="mobile-stop-picker-list"></div>
+</section>
+
 <!-- ===== FILE LOADING OVERLAY ===== -->
 <div id="loadingOverlay" class="hidden">
   <div class="loading-card">

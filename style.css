@@ -395,6 +395,10 @@ header p {
 }
 
 /* SHOW ONLY ON REAL MOBILE WIDTHS */
+#mobileSelectionBtn {
+  display: none;
+}
+
 @media (max-width: 900px) {
   #mobileMenuBtn {
     display: inline-block;
@@ -1032,6 +1036,7 @@ header p {
   /* Small floating open button */
   #mobileSelectionBtn {
     position: fixed;
+    display: block;
     right: 14px;
     bottom: 90px;
 
@@ -3851,5 +3856,154 @@ body.sun-mode .dropzone-browse {
     padding: 0 16px;
     font-size: 15px;
     touch-action: manipulation;
+  }
+
+  #mobileSelectionBtn.selection-mode {
+    background: #00c853;
+    color: #071d10;
+    box-shadow: 0 0 0 3px rgba(0, 200, 83, 0.28), 0 4px 12px rgba(0, 0, 0, 0.4);
+  }
+
+  .mobile-stop-picker {
+    position: fixed;
+    z-index: 3100;
+    left: 10px;
+    right: 10px;
+    bottom: calc(148px + env(safe-area-inset-bottom));
+    max-height: min(38dvh, 340px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid #49647d;
+    border-radius: 14px;
+    background: #17222e;
+    color: #f2f7fc;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.48);
+  }
+
+  .mobile-stop-picker[hidden] {
+    display: none !important;
+  }
+
+  .mobile-stop-picker-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px 8px;
+    border-bottom: 1px solid #34485b;
+  }
+
+  .mobile-stop-picker-header strong {
+    font-size: 15px;
+  }
+
+  .mobile-stop-picker-header p {
+    margin: 3px 0 0;
+    font-size: 12px;
+    color: #b8c8d8;
+  }
+
+  #mobileStopPickerClose {
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
+    border: 1px solid #49647d;
+    border-radius: 10px;
+    background: #26394b;
+    color: #ffffff;
+    font-size: 24px;
+    line-height: 1;
+  }
+
+  .mobile-stop-picker-list {
+    overflow-y: auto;
+    padding: 6px 10px 10px;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  .mobile-stop-choice {
+    display: flex;
+    width: 100%;
+    min-height: 58px;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 3px;
+    margin: 4px 0;
+    padding: 8px 10px;
+    border: 1px solid #40566c;
+    border-radius: 10px;
+    background: #202f3e;
+    color: #f2f7fc;
+    text-align: left;
+    touch-action: manipulation;
+  }
+
+  .mobile-stop-choice:active {
+    border-color: #42a5f5;
+    background: #2b4560;
+  }
+
+  .mobile-stop-choice.selected {
+    border-color: #c89f31;
+    background: #3a3322;
+  }
+
+  .mobile-stop-choice-address {
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .mobile-stop-choice-detail {
+    font-size: 11px;
+    color: #bdccda;
+  }
+
+  .mobile-stop-choice-state {
+    font-size: 11px;
+    font-weight: 700;
+    color: #87c6ff;
+  }
+
+  .mobile-stop-choice.selected .mobile-stop-choice-state {
+    color: #ffd75e;
+  }
+
+  body.sun-mode .mobile-stop-picker {
+    border-color: #bfd3e6;
+    background: #ffffff;
+    color: #16324d;
+  }
+
+  body.sun-mode .mobile-stop-picker-header {
+    border-bottom-color: #d3e0ed;
+  }
+
+  body.sun-mode .mobile-stop-picker-header p,
+  body.sun-mode .mobile-stop-choice-detail {
+    color: #4b6680;
+  }
+
+  body.sun-mode #mobileStopPickerClose,
+  body.sun-mode .mobile-stop-choice {
+    border-color: #cbdced;
+    background: #f3f8fd;
+    color: #16324d;
+  }
+
+  body.sun-mode .mobile-stop-choice:active {
+    border-color: #80b6e6;
+    background: #e6f2fd;
+  }
+
+  body.sun-mode .mobile-stop-choice.selected {
+    border-color: #d6b55b;
+    background: #fff9e8;
+  }
+
+  body.sun-mode .mobile-stop-choice.selected .mobile-stop-choice-state {
+    color: #8a6500;
   }
 }
