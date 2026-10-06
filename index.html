@@ -60,7 +60,7 @@
     <button id="hardRefreshBtn" class="primary-btn" title="Reload app data and clear cached view">Refresh App</button>
     <button id="mobileMenuBtn">☰ Menu</button>
     <button id="locateMeBtn" class="primary-btn">📍</button>
-    <button id="completeStopsBtnMobile" class="primary-btn">✔</button>
+    <button id="completeStopsBtnMobile" class="primary-btn" title="Mark selected stops as delivered" aria-label="Mark selected stops as delivered">✔</button>
   </div>
 
 </header>
@@ -351,7 +351,7 @@
 
 <script src="app.js" defer></script>
 <!-- MOBILE Selected Stops Button -->
-<button id="mobileSelectionBtn">Selected: 0</button>
+<button id="mobileSelectionBtn" aria-label="0 stops selected; open selection actions">Selected: 0</button>
 
 <!-- ===== FILE LOADING OVERLAY ===== -->
 <div id="loadingOverlay" class="hidden">
@@ -362,6 +362,5 @@
 </div>
 </body>
 </html>
-
 
 

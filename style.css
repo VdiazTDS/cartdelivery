@@ -3696,3 +3696,42 @@ body.sun-mode .dropzone-browse {
     font-size: 10px !important;
   }
 }
+
+@media (max-width: 900px) {
+  #map .leaflet-top.leaflet-left {
+    top: 8px !important;
+    left: 8px !important;
+    transform: none !important;
+  }
+
+  #map .leaflet-control-zoom a,
+  #map .leaflet-draw-toolbar a {
+    width: 44px;
+    height: 44px;
+    line-height: 44px;
+    touch-action: manipulation;
+  }
+
+  #map .leaflet-draw-draw-polygon {
+    background-position: -22px 6px, -22px 6px;
+  }
+
+  #map .leaflet-draw-draw-rectangle {
+    background-position: -53px 6px, -53px 6px;
+  }
+
+  #map .leaflet-draw-edit-edit {
+    background-position: -203px 6px, -203px 6px;
+  }
+
+  #map .leaflet-draw-edit-remove {
+    background-position: -233px 5px, -233px 5px;
+  }
+
+  #mobileSelectionBtn {
+    min-height: 48px;
+    padding: 0 16px;
+    font-size: 15px;
+    touch-action: manipulation;
+  }
+}

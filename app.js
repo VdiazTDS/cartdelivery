@@ -417,6 +417,8 @@ const satelliteLabelsLayer = L.tileLayer(
 // ================= POLYGON SELECT =================
 let drawnLayer = new L.FeatureGroup();
 map.addLayer(drawnLayer);
+const individuallySelectedMarkers = new Set();
+const highlightedMarkers = new Set();
 
 const drawControl = new L.Control.Draw({
   draw: {
@@ -433,35 +435,148 @@ const drawControl = new L.Control.Draw({
 map.addControl(drawControl);
 
 // ===== SELECTION COUNT FUNCTION (GLOBAL & CORRECT) =====
+function pointIsInsideRing(point, ring) {
+  let inside = false;
+  const pointOnSegment = (a, b) => {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const lengthSquared = dx * dx + dy * dy;
+    const fraction = lengthSquared === 0
+      ? 0
+      : Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared));
+    const nearestX = a.x + fraction * dx;
+    const nearestY = a.y + fraction * dy;
+    return Math.hypot(point.x - nearestX, point.y - nearestY) <= 2;
+  };
+
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const a = ring[j];
+    const b = ring[i];
+    if (pointOnSegment(a, b)) return true;
+
+    const crosses = (a.y > point.y) !== (b.y > point.y) &&
+      point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x;
+    if (crosses) inside = !inside;
+  }
+
+  return inside;
+}
+
+function createSelectionTester() {
+  const selection = drawnLayer.getLayers()[0];
+  if (!selection) return () => false;
+
+  const rings = [];
+  const collectRings = value => {
+    if (!Array.isArray(value)) return;
+    if (value.length >= 3 && value[0] && Number.isFinite(value[0].lat) && Number.isFinite(value[0].lng)) {
+      rings.push(value);
+      return;
+    }
+    value.forEach(collectRings);
+  };
+  collectRings(selection.getLatLngs());
+
+  if (!rings.length) return () => false;
+  const projectedRings = rings.map(ring => ring.map(latlng => map.latLngToLayerPoint(latlng)));
+  const outerRing = projectedRings[0];
+  const extent = outerRing.reduce((bounds, point) => ({
+    minX: Math.min(bounds.minX, point.x),
+    maxX: Math.max(bounds.maxX, point.x),
+    minY: Math.min(bounds.minY, point.y),
+    maxY: Math.max(bounds.maxY, point.y)
+  }), {
+    minX: Infinity,
+    maxX: -Infinity,
+    minY: Infinity,
+    maxY: -Infinity
+  });
+  return latlng => {
+    const point = map.latLngToLayerPoint(latlng);
+    if (
+      point.x < extent.minX - 2 ||
+      point.x > extent.maxX + 2 ||
+      point.y < extent.minY - 2 ||
+      point.y > extent.maxY + 2
+    ) {
+      return false;
+    }
+    return pointIsInsideRing(point, projectedRings[0]) &&
+      !projectedRings.slice(1).some(ring => pointIsInsideRing(point, ring));
+  };
+}
+
+function isStopSelected(marker, selectionTester = createSelectionTester()) {
+  if (individuallySelectedMarkers.has(marker)) return true;
+  const base = marker._base;
+  const latlng = base && Number.isFinite(base.lat) && Number.isFinite(base.lon)
+    ? L.latLng(base.lat, base.lon)
+    : getLayerLatLng(marker);
+  return Boolean(map.hasLayer(marker) && latlng && selectionTester(latlng));
+}
+
+function restoreMarkerStyle(marker, key) {
+  const isDelivered = String(marker._rowRef?.del_status || "").trim().toLowerCase() === "delivered";
+  const color = isDelivered ? "#00FF00" : (symbolMap[key]?.color || marker._base?.symbol?.color);
+  if (color) {
+    marker.setStyle?.({
+      color,
+      fillColor: color,
+      fillOpacity: isDelivered ? 1 : 0.95,
+      opacity: 1,
+      weight: 1
+    });
+  }
+}
+
 function updateSelectionCount() {
-const polygon = drawnLayer.getLayers()[0];
-let count = 0;
+  const selection = drawnLayer.getLayers()[0];
+  if (!selection) {
+    highlightedMarkers.forEach(marker => {
+      if (!individuallySelectedMarkers.has(marker)) {
+        restoreMarkerStyle(marker, "");
+        highlightedMarkers.delete(marker);
+      }
+    });
+    individuallySelectedMarkers.forEach(marker => {
+      if (!highlightedMarkers.has(marker)) {
+        highlightSelectedMarker(marker);
+        highlightedMarkers.add(marker);
+      }
+    });
+    document.getElementById("selectionCount").textContent = individuallySelectedMarkers.size;
+    return;
+  }
 
-Object.entries(routeDayGroups).forEach(([key, group]) => {
- group.layers.forEach(marker => {
-   const base = marker._base;
-   if (!base) return;
+  const selected = new Set();
+  const selectionTester = createSelectionTester();
 
-   const latlng = L.latLng(base.lat, base.lon);
+  Object.entries(routeDayGroups).forEach(([key, group]) => {
+    group.layers.forEach(marker => {
+      if (isStopSelected(marker, selectionTester)) {
+        selected.add(marker);
+        if (!highlightedMarkers.has(marker)) {
+          highlightSelectedMarker(marker);
+          highlightedMarkers.add(marker);
+        }
+      } else if (highlightedMarkers.has(marker)) {
+        restoreMarkerStyle(marker, key);
+        highlightedMarkers.delete(marker);
+      }
+    });
+  });
 
-   if (
-     polygon &&
-     polygon.getBounds().contains(latlng) &&
-     map.hasLayer(marker)
-   ) {
-     // highlight selected marker
-     marker.setStyle?.({ color: "#ffff00", fillColor: "#ffff00" });
+  document.getElementById("selectionCount").textContent = selected.size;
+}
 
-     count++; // ✅ only counting here
-   } else {
-     // restore original color
-     const sym = symbolMap[key];
-     marker.setStyle?.({ color: sym.color, fillColor: sym.color });
-   }
- });
-});
-
-document.getElementById("selectionCount").textContent = count;
+function highlightSelectedMarker(marker) {
+  marker.setStyle?.({
+    color: "#ffd54a",
+    fillColor: "#ffd54a",
+    fillOpacity: 1,
+    opacity: 1,
+    weight: 3
+  });
 }
 
 
@@ -477,6 +592,16 @@ map.on(L.Draw.Event.CREATED, e => {
   drawnLayer.addLayer(e.layer);
   updateSelectionCount();
   updateUndoButtonState();   // 🔥 ADD THIS
+});
+
+map.on(L.Draw.Event.EDITED, () => {
+  updateSelectionCount();
+  updateUndoButtonState();
+});
+
+map.on(L.Draw.Event.DELETED, () => {
+  updateSelectionCount();
+  updateUndoButtonState();
 });
 
 // Default map
@@ -637,7 +762,13 @@ function getSymbol(key) {
     [Infinity, 6]
   ];
 
-  return steps.find(([max]) => z <= max)[1];
+  const size = steps.find(([max]) => z <= max)[1];
+  if (!window.matchMedia("(max-width: 900px)").matches) return size;
+  if (z >= 15) return Math.max(size, 8);
+  if (z >= 13) return Math.max(size, 6);
+  if (z >= 11) return Math.max(size, 4);
+  if (z >= 8) return Math.max(size, 3);
+  return size;
 }
 
 
@@ -835,6 +966,8 @@ function applyFilters() {
     group.layers.forEach(l => show ? l.addTo(map) : map.removeLayer(l));
   });
 
+  updateSelectionCount();
+  updateUndoButtonState();
   updateStats();
 }
 
@@ -958,6 +1091,8 @@ if (layerVisibilityState.hasOwnProperty(key)) {
     }
   });
 
+  updateSelectionCount();
+  updateUndoButtonState();
 });
 
 
@@ -1030,6 +1165,9 @@ function processExcelBuffer(buffer) {
 
   // Clear previous map data
   Object.values(routeDayGroups).forEach(g => g.layers.forEach(l => map.removeLayer(l)));
+  drawnLayer.clearLayers();
+  individuallySelectedMarkers.clear();
+  highlightedMarkers.clear();
   Object.keys(routeDayGroups).forEach(k => delete routeDayGroups[k]);
   Object.keys(symbolMap).forEach(k => delete symbolMap[k]);
   symbolIndex = 0;
@@ -1106,6 +1244,15 @@ if (labelText) {
 
     // 🔥 CRITICAL: link marker to Excel row
     marker._rowRef = row;
+    marker.on("click", () => {
+      if (individuallySelectedMarkers.has(marker)) {
+        individuallySelectedMarkers.delete(marker);
+      } else {
+        individuallySelectedMarkers.add(marker);
+      }
+      updateSelectionCount();
+      updateUndoButtonState();
+    });
 
   // ✅ Bright green delivered styling (SAFE + NORMALIZED)
 if (status === "delivered") {
@@ -1541,34 +1688,18 @@ function updateUndoButtonState() {
   const undoBtn = document.getElementById("undoDeliveredBtn");
   if (!undoBtn) return;
 
-  const polygon = drawnLayer.getLayers()[0];
-  if (!polygon) {
-    undoBtn.classList.remove("pulse");
-    return;
-  }
-
-  let hasDeliveredInSelection = false;
-
-  Object.entries(routeDayGroups).forEach(([key, group]) => {
-
-    if (!key.endsWith("|Delivered")) return;
-
-    group.layers.forEach(marker => {
-
-      if (!map.hasLayer(marker)) return;
-
-      const pos = marker.getLatLng();
-
-      if (
-        polygon.getBounds().contains(pos) &&
-        marker._rowRef &&
-        String(marker._rowRef.del_status || "").trim().toLowerCase() === "delivered"
-      ) {
-        hasDeliveredInSelection = true;
-      }
-
-    });
-  });
+  const hasPolygon = Boolean(drawnLayer.getLayers()[0]);
+  const selectionTester = createSelectionTester();
+  const candidates = hasPolygon
+    ? Object.entries(routeDayGroups)
+      .filter(([key]) => key.endsWith("|Delivered"))
+      .flatMap(([, group]) => group.layers)
+    : [...individuallySelectedMarkers];
+  const hasDeliveredInSelection = candidates.some(marker =>
+    marker._rowRef &&
+    String(marker._rowRef.del_status || "").trim().toLowerCase() === "delivered" &&
+    isStopSelected(marker, selectionTester)
+  );
 
   if (hasDeliveredInSelection) {
     undoBtn.classList.add("pulse");
@@ -1631,23 +1762,13 @@ window.addEventListener("resize", syncSelectionBoxTop);
 
 // Clear selection button (ALWAYS ACTIVE)
 if (clearBtn) {
-  clearBtn.onclick = () => {
-    // Remove polygon
-    drawnLayer.clearLayers();
+clearBtn.onclick = () => {
+  // Remove polygon
+  drawnLayer.clearLayers();
+  individuallySelectedMarkers.clear();
 
-    
-
-
-    // Restore original marker colors
-    Object.entries(routeDayGroups).forEach(([key, group]) => {
-      const sym = symbolMap[key];
-      group.layers.forEach(marker => {
-        marker.setStyle?.({ color: sym.color, fillColor: sym.color });
-      });
-    });
-
-    // 🔥 Force counter refresh everywhere (desktop + mobile)
-    updateSelectionCount();
+  // 🔥 Force counter refresh everywhere (desktop + mobile)
+  updateSelectionCount();
     updateUndoButtonState();
   };
 }
@@ -1804,9 +1925,12 @@ if (mobileSelBtn && selectionBox) {
   const originalUpdate = updateSelectionCount;
   updateSelectionCount = function () {
     originalUpdate();
-    mobileSelBtn.textContent =
-      "Selected: " + document.getElementById("selectionCount").textContent;
+    const count = Number(document.getElementById("selectionCount").textContent);
+    mobileSelBtn.textContent = `Selected: ${count}`;
+    mobileSelBtn.setAttribute("aria-label", count ? `${count} stops selected` : "Select stops on the map");
+    mobileSelBtn.title = "Open selection actions. Tap a stop or use a map tool to select an area.";
   };
+  updateSelectionCount();
 }
 
 
@@ -2629,6 +2753,8 @@ if (resetBtn) {
 
     // 2. Clear drawn polygon
     drawnLayer.clearLayers();
+    individuallySelectedMarkers.clear();
+    highlightedMarkers.clear();
 
     // 3. Remove ALL markers from map
     Object.values(routeDayGroups).forEach(group => {
@@ -2638,6 +2764,7 @@ if (resetBtn) {
     // 4. Clear stored marker groups & symbols
     Object.keys(routeDayGroups).forEach(k => delete routeDayGroups[k]);
     Object.keys(symbolMap).forEach(k => delete symbolMap[k]);
+    updateSelectionCount();
 
     // 5. Reset counters & stats
     document.getElementById("selectionCount").textContent = "0";
@@ -3071,8 +3198,13 @@ async function completeStops() {
   }
 
   const polygon = drawnLayer.getLayers()[0];
-  if (!polygon) {
-    alert("Draw a selection first.");
+  const selectionTester = createSelectionTester();
+  const selectedCount = Object.values(routeDayGroups)
+    .flatMap(group => group.layers)
+    .filter(marker => isStopSelected(marker, selectionTester))
+    .length;
+  if (!polygon && selectedCount === 0) {
+    alert("Tap stops to select them, or draw an area around multiple stops.");
     return;
   }
 
@@ -3080,18 +3212,14 @@ async function completeStops() {
  
 
 
-  // find markers inside polygon
-  // 🔥 ONLY process NON-Delivered layers
+  // Complete the visible selected stops, whether selected by tapping or drawing an area.
 Object.entries(routeDayGroups).forEach(([key, group]) => {
 
   if (key.endsWith("|Delivered")) return;
-  if (!layerVisibilityState[key]) return; // 🔥 ONLY active layer
 
   group.layers.slice().forEach(marker => {
 
-    const pos = marker.getLatLng();
-
-    if (polygon.getBounds().contains(pos) && marker._rowRef) {
+    if (isStopSelected(marker, selectionTester) && marker._rowRef) {
 
       const row = marker._rowRef;
 
@@ -3124,7 +3252,7 @@ Object.entries(routeDayGroups).forEach(([key, group]) => {
 
 
   if (completedCount === 0) {
-    alert("No stops inside selection.");
+    alert("No selected stops to complete.");
     return;
   }
 
@@ -3138,6 +3266,7 @@ if (!saved) {
 
 // 🔥 remove selection polygon after completion
 drawnLayer.clearLayers();
+individuallySelectedMarkers.clear();
   // Save current checkbox states
 document.querySelectorAll("#routeDayLayers input[type='checkbox']")
   .forEach(cb => {
@@ -3171,7 +3300,7 @@ alert(`${completedCount} stop(s) marked Delivered and saved.`);
 ////////undo delivered stops
 async function undoDelivered() {
 
-  const confirmed = confirm("Are you sure you want to undo Delivered stops inside the selected area?");
+  const confirmed = confirm("Are you sure you want to undo the selected Delivered stops?");
   if (!confirmed) return;
 
   if (!window._currentRows || !window._currentWorkbook || !window._currentFilePath) {
@@ -3181,8 +3310,13 @@ async function undoDelivered() {
 
 
   const polygon = drawnLayer.getLayers()[0];
-  if (!polygon) {
-    alert("Draw a selection first.");
+  const selectionTester = createSelectionTester();
+  const selectedCount = Object.values(routeDayGroups)
+    .flatMap(group => group.layers)
+    .filter(marker => isStopSelected(marker, selectionTester))
+    .length;
+  if (!polygon && selectedCount === 0) {
+    alert("Tap Delivered stops to select them, or draw an area around multiple stops.");
     return;
   }
 
@@ -3195,11 +3329,9 @@ async function undoDelivered() {
 
     group.layers.slice().forEach(marker => {
 
-      const pos = marker.getLatLng();
-
       // must be inside selection AND actually marked Delivered
       if (
-        polygon.getBounds().contains(pos) &&
+        isStopSelected(marker, selectionTester) &&
         marker._rowRef &&
         String(marker._rowRef.del_status || "").trim().toLowerCase() === "delivered"
       ) {
@@ -3237,7 +3369,7 @@ undoCount++;
   });
 
   if (undoCount === 0) {
-    alert("No Delivered stops inside selection.");
+    alert("No selected Delivered stops to restore.");
     return;
   }
 
@@ -3254,6 +3386,7 @@ if (!saved) {
 if (drawnLayer) {
   drawnLayer.clearLayers();
 }
+individuallySelectedMarkers.clear();
 
 // 🔥 Recalculate selection state + restore styling
 updateSelectionCount();
