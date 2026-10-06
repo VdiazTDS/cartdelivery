@@ -317,9 +317,13 @@ header p {
 
 #savedFiles li {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
+  gap: 4px 8px;
+  margin-bottom: 10px;
+  padding: 8px;
+  border: 1px solid #34485b;
+  border-radius: 10px;
 }
 
 #savedFiles button {
@@ -3247,6 +3251,85 @@ body.sun-mode .file-manager-btn.attention {
   color: #c8d6e4;
 }
 
+.saved-file-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #34485b;
+}
+
+.saved-file-tab {
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: #c8d6e4;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.saved-file-tab.active {
+  border-bottom-color: #42a5f5;
+  color: #ffffff;
+}
+
+.saved-files-empty {
+  margin: 12px 0;
+  color: #aebdcb;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.saved-file-name {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #e7f1fb;
+  font-weight: 600;
+}
+
+.file-list .saved-file-organize-btn {
+  background: #26394b;
+  border: 1px solid #45617b;
+  color: #dceeff;
+}
+
+.file-list .saved-file-organize-btn[aria-pressed="true"] {
+  background: #1e6846;
+  border-color: #31865f;
+  color: #ffffff;
+}
+
+body.sun-mode .saved-file-tabs {
+  border-bottom-color: #d2e0ee;
+}
+
+body.sun-mode .saved-file-tab {
+  color: #35516d;
+}
+
+body.sun-mode .saved-file-tab.active {
+  color: #16324d;
+}
+
+body.sun-mode .saved-files-empty,
+body.sun-mode .saved-file-name {
+  color: #28445f;
+}
+
+body.sun-mode .file-list .saved-file-organize-btn {
+  background: #edf5fc;
+  border-color: #bfd4e8;
+  color: #16324d;
+}
+
+body.sun-mode .file-list .saved-file-organize-btn[aria-pressed="true"] {
+  background: #e4f5ec;
+  border-color: #9acdb0;
+  color: #185d38;
+}
+
 body.sun-mode .saved-files-modal-help {
   color: #35516d;
 }
@@ -3389,11 +3472,17 @@ body.sun-mode .saved-files-modal-help {
 
 
 
-.file-list > div {
+.file-list > div,
+.file-list > li {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
+  gap: 4px 8px;
   margin-bottom: 12px;
+  padding: 8px;
+  border: 1px solid #34485b;
+  border-radius: 10px;
 }
 
 .file-list .file-actions {
@@ -3404,6 +3493,35 @@ body.sun-mode .saved-files-modal-help {
 .file-list .file-actions button {
   width: 110px;
   height: 38px;
+}
+
+@media (max-width: 600px) {
+  #fileManagerModal {
+    align-items: flex-end;
+    padding: 8px;
+    box-sizing: border-box;
+  }
+
+  #fileManagerModal .modal-content {
+    width: 100%;
+    max-width: none;
+    max-height: min(78dvh, 720px);
+    padding: 16px;
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+    border-radius: 16px;
+  }
+
+  #fileManagerModal .file-list > div,
+  #fileManagerModal .file-list > li {
+    justify-content: flex-start;
+  }
+
+  #fileManagerModal .file-list button {
+    min-height: 44px;
+    margin: 3px 3px 3px 0;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
 }
 
 

@@ -1280,9 +1280,56 @@ if (status === "delivered") {
 
 
 // ================= LIST FILES FROM CLOUD =================
+const CART_DELIVERY_FILES_KEY = "cartdelivery.savedFiles.cartDelivery";
+let cartDeliveryFileNames = new Set();
+try {
+  const storedFileNames = JSON.parse(localStorage.getItem(CART_DELIVERY_FILES_KEY) || "[]");
+  if (Array.isArray(storedFileNames)) {
+    cartDeliveryFileNames = new Set(storedFileNames.filter(name => typeof name === "string"));
+  } else {
+    console.error("Saved Cart Delivery file organization has an invalid format.");
+  }
+} catch (error) {
+  console.error("Could not read Cart Delivery file organization:", error);
+}
+let activeSavedFilesTab = "cartDelivery";
+
+function saveCartDeliveryFileNames() {
+  try {
+    localStorage.setItem(CART_DELIVERY_FILES_KEY, JSON.stringify([...cartDeliveryFileNames]));
+  } catch (error) {
+    console.error("Could not save Cart Delivery file organization:", error);
+    alert("Could not save this file organization in this browser.");
+  }
+}
+
+function setSavedFilesTab(tab) {
+  activeSavedFilesTab = tab;
+  const cartDeliveryTab = document.getElementById("cartDeliveryFilesTab");
+  const allFilesTab = document.getElementById("allSavedFilesTab");
+  const panel = document.getElementById("savedFiles");
+  const isCartDelivery = tab === "cartDelivery";
+
+  cartDeliveryTab.classList.toggle("active", isCartDelivery);
+  cartDeliveryTab.setAttribute("aria-selected", String(isCartDelivery));
+  allFilesTab.classList.toggle("active", !isCartDelivery);
+  allFilesTab.setAttribute("aria-selected", String(!isCartDelivery));
+  panel.setAttribute("aria-labelledby", isCartDelivery ? "cartDeliveryFilesTab" : "allSavedFilesTab");
+  listFiles();
+}
+
+document.getElementById("cartDeliveryFilesTab")
+  .addEventListener("click", () => setSavedFilesTab("cartDelivery"));
+document.getElementById("allSavedFilesTab")
+  .addEventListener("click", () => setSavedFilesTab("all"));
+
 async function listFiles() {
   const { data, error } = await sb.storage.from(BUCKET).list();
-  if (error) return console.error(error);
+  if (error) {
+    console.error("Could not list saved files:", error);
+    alert("Could not load saved files. Please try again.");
+    return;
+  }
 
   const ul = document.getElementById("savedFiles");
   ul.innerHTML = "";
@@ -1303,16 +1350,51 @@ data.forEach(file => {
 
 
   // Build UI
-  Object.keys(routeFiles).forEach(key => {
+  const visibleRouteKeys = Object.keys(routeFiles).filter(key =>
+    activeSavedFilesTab === "all" || cartDeliveryFileNames.has(routeFiles[key])
+  );
+
+  if (!visibleRouteKeys.length) {
+    const emptyState = document.createElement("p");
+    emptyState.className = "saved-files-empty";
+    emptyState.textContent = activeSavedFilesTab === "cartDelivery"
+      ? "No Cart Delivery files yet. Open All Files and add files here."
+      : "No saved Excel files found.";
+    ul.appendChild(emptyState);
+    return;
+  }
+
+  visibleRouteKeys.forEach(key => {
     const routeName = routeFiles[key];
     const summaryName = summaryFiles[key];
 
     const li = document.createElement("li");
 
+    const fileName = document.createElement("span");
+    fileName.className = "saved-file-name";
+    fileName.textContent = routeName;
+    li.appendChild(fileName);
+
+    const organizeBtn = document.createElement("button");
+    organizeBtn.className = "saved-file-organize-btn";
+    const isCartDeliveryFile = cartDeliveryFileNames.has(routeName);
+    organizeBtn.textContent = isCartDeliveryFile ? "Remove from Cart Delivery" : "Add to Cart Delivery";
+    organizeBtn.setAttribute("aria-pressed", String(isCartDeliveryFile));
+    organizeBtn.onclick = () => {
+      if (cartDeliveryFileNames.has(routeName)) {
+        cartDeliveryFileNames.delete(routeName);
+      } else {
+        cartDeliveryFileNames.add(routeName);
+      }
+      saveCartDeliveryFileNames();
+      listFiles();
+    };
+    li.appendChild(organizeBtn);
+
     // OPEN MAP
     const openBtn = document.createElement("button");
     openBtn.className = "saved-file-btn";
-openBtn.textContent = "Open Map";
+    openBtn.textContent = "Open Map";
    openBtn.onclick = async () => {
   try {
 
@@ -1378,15 +1460,21 @@ openBtn.textContent = "Open Map";
   const toDelete = [routeName];
   if (summaryName) toDelete.push(summaryName);
 
-  await sb.storage.from(BUCKET).remove(toDelete);
+  const { error } = await sb.storage.from(BUCKET).remove(toDelete);
+  if (error) {
+    console.error("Could not delete saved file:", error);
+    alert("Could not delete this file. Please try again.");
+    return;
+  }
 
+  cartDeliveryFileNames.delete(routeName);
+  saveCartDeliveryFileNames();
   alert("✅ File deleted successfully.");
   listFiles();
 };
 
 
     li.appendChild(delBtn);
-    li.appendChild(document.createTextNode(" " + routeName));
     ul.appendChild(li);
   });
 }
@@ -2843,6 +2931,7 @@ if (openFileManagerBtn) {
   openFileManagerBtn.addEventListener("click", () => {
     fileManagerModal.style.display = "flex";
     markSavedFilesGuideSeen();
+    setSavedFilesTab("cartDelivery");
   });
 }
 

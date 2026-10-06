@@ -329,9 +329,13 @@
 <div id="fileManagerModal" class="modal">
   <div class="modal-content">
     <h3>Saved Excel Files (Open Here)</h3>
-    <p class="saved-files-modal-help">Choose <strong>Open Map</strong> to load the map and route summary, or <strong>Summary</strong> for summary only.</p>
+    <p class="saved-files-modal-help">Choose <strong>Open Map</strong> to load the map and route summary, or <strong>Summary</strong> for summary only. Cart Delivery picks are saved in this browser.</p>
 
-    <div id="savedFiles" class="file-list"></div>
+    <div class="saved-file-tabs" role="tablist" aria-label="Saved file categories">
+      <button id="cartDeliveryFilesTab" class="saved-file-tab active" type="button" role="tab" aria-selected="true" aria-controls="savedFiles">Cart Delivery</button>
+      <button id="allSavedFilesTab" class="saved-file-tab" type="button" role="tab" aria-selected="false" aria-controls="savedFiles">All Files</button>
+    </div>
+    <div id="savedFiles" class="file-list" role="tabpanel" aria-labelledby="cartDeliveryFilesTab"></div>
 
     <div class="modal-actions">
       <button id="closeFileManager">Close</button>
@@ -362,5 +366,3 @@
 </div>
 </body>
 </html>
-
-
