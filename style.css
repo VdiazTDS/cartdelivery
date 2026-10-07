@@ -548,47 +548,16 @@ header p {
 
 
 /* toggle button */
-.bottom-summary-header button {
-  background: none;
-  border: none;
-  color: white;
-  font-size: 16px;
-  cursor: pointer;
-}
 
 /* scrollable content */
-.bottom-summary-content {
-  flex: 1;
-  overflow: auto;
-  padding: 10px;
-}
 
 /* summary table styling */
-.bottom-summary-content table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.bottom-summary-content th,
-.bottom-summary-content td {
-  border: 1px solid #444;
-  padding: 6px;
-  text-align: left;
-}
-
-.bottom-summary-content th {
-  background: #333;
-}
 
 
 
 
 
 /* Keep title perfectly centered */
-.summary-title {
-  text-align: center;
-}
 
 
 
@@ -644,35 +613,12 @@ header p {
 
 /* ===== FINAL HEADER LAYOUT ===== */
 /* ===== FINAL BOTTOM SUMMARY HEADER ===== */
-.bottom-summary-header {
-  height: 40px;
-  background: #2a2a2a;
-
-  display: flex;
-  align-items: center;
-  gap: 10px;
-
-  padding: 0 16px;
-  border-bottom: 1px solid #444;
-}
 
 /*  while buttons stay left */
-.summary-title {
-  margin-left: auto;
-  margin-right: auto;
-  font-weight: 600;
-  color: #fff;
-}
 
 /* Ensure arrow never jumps right */
 .collapse-btn {
   order: 2;        /* keeps it left */
-}
-
-@media (min-width: 901px) {
-  #summaryToggleBtn {
-    margin-right: 16px;
-  }
 }
 
 
@@ -788,42 +734,10 @@ header p {
 
 
 /* ===== RESIZE HINT BAR ===== */
-.resize-hint {
-  position: absolute;
-  top: -10px;
-  left: 50%;
-  transform: translateX(-50%);
-
-  font-size: 11px;
-  color: #888;
-  background: #1e1e1e;
-
-  padding: 2px 8px;
-  border-radius: 6px;
-
-  pointer-events: none;
-  opacity: 0.85;
-}
 
 /* Thin grab line like native apps */
-.bottom-summary-header::before {
-  content: "";
-  position: absolute;
-  top: 4px;
-  left: 50%;
-  transform: translateX(-50%);
-
-  width: 40px;
-  height: 4px;
-  border-radius: 3px;
-  background: #555;
-}
 
 /* Cursor change = huge UX signal */
-.bottom-summary-header {
-  cursor: ns-resize;
-  position: relative;
-}
 
 /* Route list layout */
 .route-item {
@@ -851,49 +765,11 @@ header p {
 /* =========================================================
    RESPONSIVE BOTTOM ROUTE SUMMARY (SIDEBAR-AWARE)
    ========================================================= */
-#bottomSummary {
-  position: fixed;
-  bottom: 0;
-
-  /* Desktop sidebar offset */
-  left: 320px;
-  right: 0;
-
-  height: 250px;
-  background: #1e1e1e;
-  border-top: 2px solid #333;
-  border-radius: 14px 14px 0 0;
-
-  display: flex;
-  flex-direction: column;
-
-  z-index: 400;
-
-  /* Smooth movement when sidebar toggles */
-  transition:
-    height 0.2s ease,
-    left 0.25s ease,
-    width 0.25s ease;
-}
 
 
 
 /* ===== MOBILE FIX FOR ROUTE SUMMARY POSITION ===== */
 @media (max-width: 900px) {
-
-  #bottomSummary {
-    left: 0;              /* remove desktop offset */
-    right: 0;
-    bottom: 0;
-
-    width: 100%;
-    max-height: 75vh;
-
-    border-radius: 16px 16px 0 0;
-    box-shadow: 0 -4px 20px rgba(0,0,0,0.5);
-
-    z-index: 1200;
-  }
 
   /* Keep selection panel above summary */
   #selectionBox {
@@ -903,72 +779,22 @@ header p {
 
 
 /* ===== When LEFT SIDEBAR is collapsed ===== */
-.app-container.collapsed ~ #bottomSummary {
-  left: 0;
-}
 
 /* ===== Collapsed height only ===== */
-#bottomSummary.collapsed {
-  height: 40px;
-}
 
 /* Hide table when collapsed */
-#bottomSummary.collapsed .bottom-summary-content {
-  display: none;
-}
 
 /* =========================================================
    HEADER (drag + title)
    ========================================================= */
 
-.bottom-summary-header {
-  height: 40px;
-  background: #2a2a2a;
-  border-bottom: 1px solid #444;
-
-  display: flex;
-  align-items: center;
-  padding: 0 16px;
-
-  cursor: ns-resize;
-  position: relative;
-}
-
 /* Center title perfectly */
-.summary-title {
-  flex: 1;
-  text-align: center;
-  font-weight: 600;
-  color: #fff;
-}
 
 /* =========================================================
    CONTENT AREA
    ========================================================= */
 
-.bottom-summary-content {
-  flex: 1;
-  overflow: auto;
-  padding: 10px;
-}
-
 /* Table styling */
-.bottom-summary-content table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.bottom-summary-content th,
-.bottom-summary-content td {
-  border: 1px solid #444;
-  padding: 6px;
-  text-align: left;
-}
-
-.bottom-summary-content th {
-  background: #333;
-}
 
 
 /* Route+Day layer list */
@@ -1566,42 +1392,6 @@ body.sun-mode .title-with-tools h1 {
     font-size: 14px;
   }
 
-  #bottomSummary {
-    max-height: 65dvh;
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-
-  #bottomSummary .bottom-summary-header {
-    flex-wrap: nowrap;
-    gap: 5px;
-    padding: 0 6px;
-  }
-
-  #bottomSummary .bottom-summary-header .primary-btn {
-    flex: 0 0 auto;
-    min-height: 36px;
-  }
-
-  .resize-hint {
-    display: none;
-  }
-
-  .summary-title {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  #routeSummaryTable {
-    overflow: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  #routeSummaryTable table {
-    min-width: max-content;
-  }
-
   #mapSearchInput {
     min-width: 0;
     font-size: 16px;
@@ -1782,179 +1572,6 @@ body.sun-mode #selectionBox .street-toggle-label {
 }
 
 /* ===== BOTTOM SUMMARY MODERN OVERRIDES ===== */
-#bottomSummary {
-  border-top: 1px solid #384b5f;
-  background: linear-gradient(180deg, #1d2935 0%, #18222c 100%);
-  box-shadow: 0 -10px 26px rgba(0, 0, 0, 0.35);
-}
-
-#bottomSummary .bottom-summary-header {
-  height: 44px;
-  padding: 0 12px;
-  gap: 8px;
-  border-bottom: 1px solid #3a4d61;
-  background: linear-gradient(180deg, #243445 0%, #1f2e3d 100%);
-  touch-action: none;
-}
-
-#bottomSummary .bottom-summary-header .primary-btn {
-  min-height: 30px;
-  padding: 4px 10px;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-#popoutSummaryBtn {
-  background: linear-gradient(160deg, #2f89df 0%, #246db5 100%);
-  color: #f5fbff;
-  border: 1px solid #4b9fe9;
-}
-
-#popoutSummaryBtn:hover {
-  background: linear-gradient(160deg, #40a0ff 0%, #2e7fcb 100%);
-}
-
-#summaryToggleBtn {
-  min-width: 34px;
-  justify-content: center;
-  background: linear-gradient(160deg, #30485f 0%, #263c50 100%);
-  color: #f0f7ff;
-  border: 1px solid #4f6e8e;
-}
-
-.summary-title {
-  font-size: 14px;
-  letter-spacing: 0.02em;
-  color: #eaf4ff;
-}
-
-.resize-hint {
-  font-size: 10px;
-  color: #9db0c3;
-  background: rgba(24, 34, 44, 0.9);
-  border: 1px solid #2e4154;
-}
-
-#bottomSummary .bottom-summary-content {
-  padding: 12px;
-}
-
-#routeSummaryTable {
-  color: #e7f1fb;
-}
-
-#routeSummaryTable table {
-  border-radius: 10px;
-  overflow: hidden;
-  background: #1a2530;
-}
-
-#routeSummaryTable th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: #2a3b4d;
-  color: #e9f5ff;
-  border-color: #405467;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-#routeSummaryTable td {
-  border-color: #314456;
-  color: #dbe9f7;
-}
-
-#routeSummaryTable tbody tr:nth-child(even) {
-  background: rgba(255, 255, 255, 0.03);
-}
-
-#routeSummaryTable tbody tr:hover {
-  background: rgba(66, 165, 245, 0.12);
-}
-
-@media (max-width: 900px) {
-  #bottomSummary .bottom-summary-header {
-    height: 42px;
-    padding: 0 10px;
-  }
-
-  .summary-title {
-    font-size: 13px;
-  }
-
-  #bottomSummary .bottom-summary-header .primary-btn {
-    min-height: 28px;
-    padding: 4px 8px;
-    font-size: 11px;
-  }
-
-  #routeSummaryTable {
-    font-size: 12px;
-  }
-}
-
-body.sun-mode #bottomSummary {
-  border-top: 1px solid #c8d8e8 !important;
-  background: linear-gradient(180deg, #ffffff 0%, #f2f8ff 100%) !important;
-  box-shadow: 0 -10px 24px rgba(18, 50, 80, 0.12) !important;
-}
-
-body.sun-mode #bottomSummary .bottom-summary-header {
-  border-bottom: 1px solid #d4e1ee !important;
-  background: linear-gradient(180deg, #f7fbff 0%, #edf5fd 100%) !important;
-}
-
-body.sun-mode .summary-title {
-  color: #16324d !important;
-}
-
-body.sun-mode .resize-hint {
-  color: #385572 !important;
-  background: #eef5fc !important;
-  border-color: #cbdced !important;
-}
-
-body.sun-mode #popoutSummaryBtn {
-  background: linear-gradient(160deg, #2f89df 0%, #246db5 100%) !important;
-  color: #ffffff !important;
-  border-color: #4b9fe9 !important;
-}
-
-body.sun-mode #summaryToggleBtn {
-  background: linear-gradient(160deg, #e7f1fb 0%, #d8e7f7 100%) !important;
-  color: #16324d !important;
-  border-color: #bfd3e8 !important;
-}
-
-body.sun-mode #routeSummaryTable {
-  color: #17314a !important;
-}
-
-body.sun-mode #routeSummaryTable table {
-  background: #ffffff !important;
-}
-
-body.sun-mode #routeSummaryTable th {
-  background: #e8f1fa !important;
-  color: #17314a !important;
-  border-color: #c6d8ea !important;
-}
-
-body.sun-mode #routeSummaryTable td {
-  color: #1e3a56 !important;
-  border-color: #d2e0ee !important;
-}
-
-body.sun-mode #routeSummaryTable tbody tr:nth-child(even) {
-  background: #f7fbff !important;
-}
-
-body.sun-mode #routeSummaryTable tbody tr:hover {
-  background: #eaf4ff !important;
-}
 
 /* ===== HEADER MODERN OVERRIDES ===== */
 header {
@@ -2336,9 +1953,6 @@ body.sun-mode #hardRefreshBtn {
     background: #e74c3c;
     box-shadow: 0 0 14px rgba(231,76,60,0.7);
   }
- #bottomSummary.collapsed {
-  height: 40px;
-}
 }
   
 
@@ -4106,11 +3720,6 @@ body.sun-mode .delivery-save-status[data-state="error"] {
     order: 6;
     flex: 1 0 100%;
     box-sizing: border-box;
-  }
-
-  /* Leave room for the selection actions below the taller delivery header. */
-  body:has(#selectionBox.show) #bottomSummary {
-    max-height: min(65dvh, max(40px, calc(100dvh - var(--mobile-header-height, 170px) - 200px - env(safe-area-inset-bottom))));
   }
 }
 
