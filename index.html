@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261007-sequence-docs" />
+  <link rel="stylesheet" href="style.css?v=20261007-overlay-sections" />
 
   <link rel="icon" href="favicon.ico" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -110,23 +110,74 @@
       <select id="baseMapSelect" aria-label="Map View">
         <option value="streets">Streets (Detailed)</option>
         <option value="satellite">Satellite (Imagery)</option>
+        <option value="clarity">Satellite (Clarity)</option>
+        <option value="light">Streets (Minimal Light)</option>
+        <option value="dark">Streets (Minimal Dark)</option>
+        <option value="austin">Austin Aerials (Local)</option>
       </select>
+      <p id="baseMapStatus" role="status" aria-live="polite"></p>
     </div>
 
 
     
     
-<!-- Sequence filtering is independent of the route/day and delivered marker controls. -->
-<div class="filter-group sequence-controls">
-  <label class="sequence-toggle" for="sequenceLayerToggle"><input id="sequenceLayerToggle" type="checkbox" disabled>Sequence arrows · SEQNO</label>
-  <div id="sequenceLayerOptions" hidden>
-    <label for="sequenceRouteSelect">Sequence route / day</label>
-    <select id="sequenceRouteSelect" aria-label="Sequence route and day"></select>
-    <p>Keeps the original path, including delivered stops. Independent of marker layers. Lines connect stops directly; they do not follow roads.</p>
-    <div class="sequence-legend"><span>→ Sequence</span><span>⇢ Between delivered stops</span><span>✓ Delivered stop</span></div>
-  </div>
-  <p id="sequenceLayerStatus" role="status" aria-live="polite">Open a file with a numeric SEQNO column to see its sequence.</p>
+<details id="deliveryOverlaysSection" class="filter-group map-overlays">
+  <summary class="filter-header collapsible-header"><span class="routes-title"><span class="arrow" aria-hidden="true">&#9654;</span><strong>Delivery overlays</strong></span></summary>
+  <div id="deliveryOverlaysContent" class="map-overlay-content">
+<div class="quantity-controls map-overlay-card">
+  <label class="quantity-toggle map-overlay-toggle" for="quantityBadgesToggle">
+    <span class="map-overlay-icon" aria-hidden="true">×2</span>
+    <span class="map-overlay-copy"><span class="map-overlay-title">Show quantity badges</span><span class="map-overlay-subtitle">Spot stops needing multiple carts</span></span>
+    <input id="quantityBadgesToggle" type="checkbox" aria-describedby="quantityBadgesHelp" checked>
+    <span class="map-overlay-switch" aria-hidden="true"></span>
+  </label>
+  <p id="quantityBadgesHelp" class="map-overlay-help"><span class="quantity-example" aria-hidden="true">×2</span> Two carts required at this stop.</p>
 </div>
+
+<!-- Sequence filtering is independent of the route/day and delivered marker controls. -->
+<div class="sequence-controls map-overlay-card">
+  <label class="sequence-toggle map-overlay-toggle" for="sequenceLayerToggle">
+    <span class="map-overlay-icon" aria-hidden="true"><svg viewBox="0 0 28 28" fill="none"><path d="M5 21V10h10v8h8M19 14l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="5" cy="21" r="2" fill="currentColor"/></svg></span>
+    <span class="map-overlay-copy"><span class="map-overlay-title">Sequence arrows</span><span class="map-overlay-subtitle">Follow delivery order · SEQNO</span></span>
+    <input id="sequenceLayerToggle" type="checkbox" aria-describedby="sequenceLayerStatus" disabled>
+    <span class="map-overlay-switch" aria-hidden="true"></span>
+  </label>
+  <div id="sequenceLayerOptions" hidden>
+    <label for="sequenceRouteSelect">Route / day</label>
+    <select id="sequenceRouteSelect" aria-label="Sequence route and day"></select>
+    <p>Keeps delivered stops in the path. Lines connect stops directly rather than following roads.</p>
+    <div class="sequence-legend"><span><i class="sequence-key-line" aria-hidden="true"></i>Delivery order</span><span><i class="sequence-key-line sequence-key-completed" aria-hidden="true"></i>Both stops delivered</span><span><i class="sequence-key-check" aria-hidden="true">✓</i>Delivered stop</span></div>
+  </div>
+  <p id="sequenceLayerStatus" role="status" aria-live="polite">Open a route file with SEQNO to get started.</p>
+</div>
+  </div>
+</details>
+
+<details id="mapOverlaysSection" class="filter-group map-overlays">
+  <summary class="filter-header collapsible-header"><span class="routes-title"><span class="arrow" aria-hidden="true">&#9654;</span><strong>Map overlays</strong></span></summary>
+  <div id="mapOverlaysContent" class="map-overlay-content">
+<div class="city-limits-controls map-overlay-card">
+  <label class="map-overlay-toggle" for="cityLimitsToggle">
+    <span class="map-overlay-icon" aria-hidden="true"><svg viewBox="0 0 28 28" fill="none"><path d="M5 7l7-3 4 5 7-1v13l-8 3-5-5-5 1V7Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-dasharray="3 2"/></svg></span>
+    <span class="map-overlay-copy"><span class="map-overlay-title">City limits</span><span class="map-overlay-subtitle">U.S. city boundaries · any map view</span></span>
+    <input id="cityLimitsToggle" type="checkbox" aria-describedby="cityLimitsStatus cityLimitsHelp">
+    <span class="map-overlay-switch" aria-hidden="true"></span>
+  </label>
+  <p id="cityLimitsStatus" role="status" aria-live="polite">Off. City boundaries work with any Map View.</p>
+  <p id="cityLimitsHelp" class="map-overlay-help"><span class="city-limits-key" aria-hidden="true"></span>Census reference boundaries; recent annexations may be missing.</p>
+</div>
+
+<div class="address-number-controls map-overlay-card">
+  <label class="map-overlay-toggle" for="addressNumbersToggle">
+    <span class="map-overlay-icon" aria-hidden="true">123</span>
+    <span class="map-overlay-copy"><span class="map-overlay-title">Address numbers</span><span class="map-overlay-subtitle">Austin area · zoom in to see houses</span></span>
+    <input id="addressNumbersToggle" type="checkbox" aria-describedby="addressNumbersStatus">
+    <span class="map-overlay-switch" aria-hidden="true"></span>
+  </label>
+  <p id="addressNumbersStatus" role="status" aria-live="polite">Off. City address numbers are separate from delivery stops.</p>
+</div>
+  </div>
+</details>
 
 <div class="filter-group">
   <strong>Delivered</strong>
@@ -153,18 +204,38 @@
     
 <div class="map-search-container">
   <input 
-    type="text" 
+    type="search"
     id="mapSearchInput" 
-    placeholder="Search by address or number"
+    placeholder="Address or bin number"
+    aria-label="Search stops by address, house number, or bin number"
+    aria-describedby="mapSearchHelp"
+    autocomplete="off" spellcheck="false" enterkeyhint="search"
   />
-  <button id="mapSearchBtn">Search</button>
+  <button id="mapSearchBtn" type="button">Search</button>
 </div>
+<p id="mapSearchHelp">Try 1234, Oak, or a bin number. Filters also work without typing.</p>
+<div id="searchQuickFilters" class="search-quick-filters" role="group" aria-label="Filter search results">
+  <button type="button" data-search-status="all" aria-pressed="true">All</button>
+  <button type="button" data-search-status="pending" aria-pressed="false">Pending</button>
+  <button type="button" data-search-status="delivered" aria-pressed="false">Delivered</button>
+  <button id="searchMultipleCarts" type="button" aria-pressed="false">Multiple carts</button>
+</div>
+<details id="searchScope" class="search-scope">
+  <summary>Route / day <span id="searchScopeHint">All</span></summary>
+  <div class="search-scope-fields">
+    <label for="searchRouteFilter">Route<select id="searchRouteFilter"><option value="">All routes</option></select></label>
+    <label for="searchDayFilter">Day<select id="searchDayFilter"><option value="">All days</option></select></label>
+  </div>
+</details>
 <div id="searchResultsPanel" class="search-results hidden">
   <div class="search-results-header">
-    Search Results
-    <button id="clearSearchResults">Clear</button>
+    <strong>Search results</strong>
+    <button id="clearSearchResults" type="button">Clear</button>
   </div>
+  <p id="searchResultsStatus" role="status" aria-live="polite"></p>
+  <p id="searchCartTotals" aria-live="polite"></p>
   <div id="searchResultsList"></div>
+  <button id="moreSearchResults" type="button" hidden>Show more</button>
 </div>
     
   <div class="filter-group">
@@ -356,7 +427,7 @@
   </div>
 </div>
 
-<script src="app.js?v=20261007-sequence-docs" defer></script>
+<script src="app.js?v=20261007-overlay-sections" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">

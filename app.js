@@ -6,15 +6,15 @@
  *   1. Delivery button/status helpers (top of file)
  *   2. Supabase config + global state (window._currentRows / _currentWorkbook / _currentFilePath)
  *   3. Header tools menu, Sun Mode, GPS locate / live tracking / Copy Location
- *   4. Leaflet map setup, base layers, Leaflet.Draw polygon selection
+ *   4. Leaflet map setup, basemaps, city limits/address numbers, Leaflet.Draw polygon selection
  *   5. Selection engine: createSelectionTester, isStopSelected, toggleIndividualStopSelection,
  *      nearby-stop chooser (phone tap selection), updateSelectionCount
- *   6. Marker creation, route/day filters, statistics
+ *   6. Marker creation, quantity badges, route/day filters, statistics
  *   7. Sequence arrows: rowSequence, rebuildSequenceData, renderSequenceLayer
  *   8. processExcelBuffer: turns a workbook into markers and sequence groups (core data flow)
  *   9. Shared truck / trailer load log and Excel export
  *  10. Saved files (Supabase storage list/upload, shared Cart Delivery tab)
- *  11. placeDeliveryControls + initApp: layout wiring, mobile menu, selection mode, reset, search
+ *  11. placeDeliveryControls + initApp: layout wiring, mobile menu, selection mode, reset, ranked address search
  *  12. Cloud save of delivery status (saveSelectedDeliveryStatus), collapsibles, button events
  *
  * Key invariants:
@@ -37,6 +37,8 @@ window.addEventListener("error", e => {
 let layerVisibilityState = {};
 let deliverySaveInProgress = false;
 let selectedPendingStopCount = 0;
+let resetAddressSearch = () => {};
+let refreshAddressSearch = () => {};
 
 function updateDeliveryButtons() {
   const count = selectedPendingStopCount;
@@ -611,15 +613,47 @@ setCurrentFileDisplay(window._currentFilePath);
 // ================= MAP SETUP =================
 // Create Leaflet map
 const map = L.map("map").setView([0, 0], 2);
+map.attributionControl.setPrefix(false);
+function placeMapCredits() {
+  const position = window.innerWidth <= 900 ? "topright" : "bottomleft";
+  if (map.attributionControl.getPosition() !== position) map.attributionControl.setPosition(position);
+  // Desktop map height can extend below the viewport; keep credits on screen.
+  const overflow = position === "bottomleft" ? Math.max(0, map.getContainer().getBoundingClientRect().bottom - window.innerHeight) : 0;
+  map.attributionControl.getContainer().style.setProperty("--credits-bottom-overflow", `${Math.ceil(overflow)}px`);
+}
+placeMapCredits();
+window.addEventListener("resize", placeMapCredits);
+map.on("resize", placeMapCredits);
 // Shared Canvas renderer for high-performance drawing
 const canvasRenderer = L.canvas({ padding: 0.5 });
+const quantityPane = map.createPane("quantityPane");
+quantityPane.style.zIndex = "450";
+quantityPane.style.pointerEvents = "none";
+const quantityBadgesToggle = document.getElementById("quantityBadgesToggle");
+const QUANTITY_BADGES_KEY = "cartdelivery.quantityBadges";
+try { quantityBadgesToggle.checked = localStorage.getItem(QUANTITY_BADGES_KEY) !== "off"; } catch (_) { /* Preference only. */ }
+quantityPane.hidden = !quantityBadgesToggle.checked;
+quantityBadgesToggle.addEventListener("change", () => {
+  // Hide the pane so toggling does not change stop visibility or selection.
+  quantityPane.hidden = !quantityBadgesToggle.checked;
+  try { localStorage.setItem(QUANTITY_BADGES_KEY, quantityBadgesToggle.checked ? "on" : "off"); } catch (_) { /* Preference only. */ }
+});
 
 
 // ===== BASE MAP LAYERS =====
+const tileOptions = { updateWhenIdle: true, updateWhenZooming: false, keepBuffer: 1 };
+const esriAttribution = 'Tiles © <a href="https://www.esri.com/">Esri</a> & contributors';
+const austinAttribution = '<a href="https://maps.austintexas.gov/">City of Austin GIS</a>';
+const austinAerialBounds = L.latLngBounds(
+  L.CRS.EPSG3857.unproject(L.point(-10944692.02656832, 3492186.76525471)),
+  L.CRS.EPSG3857.unproject(L.point(-10835272.923456734, 3587085.514789461))
+);
 const baseMaps = {
   streets: L.tileLayer(
     "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     {
+      ...tileOptions,
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       maxZoom: 19,
       maxNativeZoom: 19
     }
@@ -628,20 +662,109 @@ const baseMaps = {
   satellite: L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     {
+      ...tileOptions,
+      attribution: esriAttribution,
       maxZoom: 20,
       maxNativeZoom: 19
     }
+  ),
+  clarity: L.tileLayer(
+    "https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    { ...tileOptions, attribution: esriAttribution, maxZoom: 20, maxNativeZoom: 19 }
+  ),
+  light: L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+    { ...tileOptions, attribution: esriAttribution, maxZoom: 20, maxNativeZoom: 16 }
+  ),
+  dark: L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+    { ...tileOptions, attribution: esriAttribution, maxZoom: 20, maxNativeZoom: 16 }
+  ),
+  austin: L.tileLayer(
+    "https://maps.austintexas.gov/gis/Image/MapTiled/AerialImagery_WebMercator/MapServer/tile/{z}/{y}/{x}",
+    { ...tileOptions, attribution: austinAttribution, bounds: austinAerialBounds, noWrap: true, maxZoom: 20, maxNativeZoom: 16 }
   )
 };
 // ===== SATELLITE STREET NAME OVERLAY (LIGHTWEIGHT) =====
 const satelliteLabelsLayer = L.tileLayer(
   "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}",
   {
+    ...tileOptions,
+    attribution: esriAttribution,
     maxZoom: 20,
     maxNativeZoom: 19,
     opacity: 1
   }
 );
+
+let activeBaseMap = "streets";
+const aerialBaseMaps = new Set(["satellite", "clarity", "austin"]);
+function syncBasemapLabels() {
+  const show = aerialBaseMaps.has(activeBaseMap) && map.getZoom() >= 15;
+  if (show && !map.hasLayer(satelliteLabelsLayer)) satelliteLabelsLayer.addTo(map);
+  else if (!show && map.hasLayer(satelliteLabelsLayer)) map.removeLayer(satelliteLabelsLayer);
+  const status = document.getElementById("baseMapStatus");
+  status.textContent = activeBaseMap === "austin" ? (austinAerialBounds.contains(map.getCenter())
+    ? "Austin-area aerials; detail is limited at close zooms."
+    : "Outside Austin aerial coverage. Choose another Map View.")
+    : activeBaseMap === "clarity" ? "Clearer imagery may be older than the regular satellite view."
+    : ["light", "dark"].includes(activeBaseMap) && map.getZoom() > 16 ? "Minimal map detail is limited at close zooms. Streets (Detailed) shows finer detail." : "";
+}
+
+function setBaseMap(name) {
+  if (!baseMaps[name]) return;
+  Object.entries(baseMaps).forEach(([key, layer]) => { if (key !== name && map.hasLayer(layer)) map.removeLayer(layer); });
+  activeBaseMap = name;
+  if (!map.hasLayer(baseMaps[name])) baseMaps[name].addTo(map);
+  syncBasemapLabels();
+}
+document.getElementById("baseMapSelect").addEventListener("change", event => setBaseMap(event.target.value));
+map.on("zoomend moveend", syncBasemapLabels);
+
+// ===== OPTIONAL CITY LIMITS (SERVER-RENDERED TILES) =====
+const CITY_LIMITS_MIN_ZOOM = 9;
+const CITY_LIMITS_WMS = "https://tigerweb.geo.census.gov/arcgis/services/TIGERweb/tigerWMS_Current/MapServer/WMSServer";
+const cityLimitsToggle = document.getElementById("cityLimitsToggle");
+const cityLimitsStatus = document.getElementById("cityLimitsStatus");
+const cityLimitsPane = map.createPane("cityLimitsPane");
+cityLimitsPane.style.zIndex = "280";
+cityLimitsPane.style.pointerEvents = "none";
+const cityLimitsLayer = L.tileLayer.wms(CITY_LIMITS_WMS, {
+  ...tileOptions,
+  pane: "cityLimitsPane",
+  className: "city-limits-tiles",
+  layers: "49,48", // WMS IDs differ from REST: incorporated outlines/names, no census-only places.
+  format: "image/png",
+  transparent: true,
+  version: "1.1.1",
+  attribution: '<a href="https://tigerweb.geo.census.gov/tigerwebmain/">U.S. Census Bureau</a>',
+  tileSize: 512,
+  keepBuffer: 0,
+  noWrap: true,
+  minZoom: CITY_LIMITS_MIN_ZOOM,
+  maxZoom: 20
+});
+let cityLimitsLoadFailed = false;
+function updateCityLimitsStatus() {
+  cityLimitsStatus.textContent = !cityLimitsToggle.checked ? "Off. City boundaries work with any Map View."
+    : map.getZoom() < CITY_LIMITS_MIN_ZOOM ? "Zoom in to show city limits."
+    : cityLimitsLoadFailed ? "Some city limits could not load. Toggle off/on to retry."
+    : cityLimitsLayer.isLoading() ? "Loading city limits…"
+    : "Pink outlines show city limits where present. Zoom in for city names.";
+}
+function syncCityLimits() {
+  const show = cityLimitsToggle.checked && map.getZoom() >= CITY_LIMITS_MIN_ZOOM;
+  if (show && !map.hasLayer(cityLimitsLayer)) {
+    cityLimitsLoadFailed = false;
+    cityLimitsLayer.addTo(map);
+  } else if (!show && map.hasLayer(cityLimitsLayer)) map.removeLayer(cityLimitsLayer);
+  updateCityLimitsStatus();
+}
+cityLimitsLayer.on("loading", () => { cityLimitsLoadFailed = false; updateCityLimitsStatus(); });
+cityLimitsLayer.on("tileerror", () => { cityLimitsLoadFailed = true; updateCityLimitsStatus(); });
+cityLimitsLayer.on("load", updateCityLimitsStatus);
+cityLimitsToggle.addEventListener("change", syncCityLimits);
+map.on("zoomend", syncCityLimits);
 
 // ================= POLYGON SELECT =================
 
@@ -654,6 +777,180 @@ const individuallySelectedMarkers = new Set();
 const individuallyDeselectedMarkers = new Set();
 const highlightedMarkers = new Set();
 let mobileStopSelectionMode = false;
+
+// ===== OPTIONAL CITY ADDRESS NUMBERS =====
+const ADDRESS_NUMBER_MIN_ZOOM = 18;
+const ADDRESS_NUMBER_FETCH_LIMIT = 400;
+const ADDRESS_NUMBER_QUERY = "https://maps.austintexas.gov/gis/rest/Shared/Property/MapServer/0/query";
+const addressNumbersToggle = document.getElementById("addressNumbersToggle");
+const addressNumbersStatus = document.getElementById("addressNumbersStatus");
+const addressNumberPane = map.createPane("addressNumberPane");
+addressNumberPane.style.zIndex = "300";
+addressNumberPane.style.pointerEvents = "none";
+let addressNumbersDrawing = false;
+
+function addressNumberPauseReason() {
+  if (!addressNumbersToggle.checked) return "Off. City address numbers are separate from delivery stops.";
+  if (mobileStopSelectionMode || addressNumbersDrawing) return "Paused while selecting or drawing stops.";
+  if (map.getZoom() < ADDRESS_NUMBER_MIN_ZOOM) return "Zoom in closer to show address numbers.";
+  if (!austinAerialBounds.pad(0.25).intersects(map.getBounds())) return "Address numbers cover the Austin area only.";
+  return "";
+}
+
+const CityAddressNumbers = L.Layer.extend({
+  onAdd() {
+    this._canvas = L.DomUtil.create("canvas", "city-address-canvas", addressNumberPane);
+    this._cache = new Map();
+    this._data = [];
+    this._ticket = (this._ticket || 0) + 1;
+    map.attributionControl.addAttribution(austinAttribution);
+    this.schedule();
+  },
+  onRemove() {
+    this.cancel();
+    L.DomUtil.remove(this._canvas);
+    this._cache.clear();
+    this._data = [];
+    map.attributionControl.removeAttribution(austinAttribution);
+  },
+  getEvents() {
+    return { movestart: this.pause, zoomstart: this.pause, moveend: this.schedule, zoomend: this.schedule, resize: this.resizeCanvas };
+  },
+  cancel() {
+    clearTimeout(this._timer);
+    this._ticket++;
+    if (this._request) this._request.abort();
+    this._request = null;
+  },
+  pause() {
+    this.cancel();
+    this._canvas.hidden = true;
+  },
+  resizeCanvas() {
+    this.pause();
+    this.schedule();
+  },
+  schedule() {
+    clearTimeout(this._timer);
+    const reason = addressNumberPauseReason();
+    if (reason) {
+      this.pause();
+      addressNumbersStatus.textContent = reason;
+      return;
+    }
+    this._timer = setTimeout(() => this.refresh(), 400);
+  },
+  async refresh() {
+    if (!this._map || addressNumberPauseReason()) return;
+    const bounds = map.getBounds();
+    const now = Date.now();
+    const cached = [...this._cache.values()].find(item => item.expires > now && item.bounds.contains(bounds));
+    if (cached) {
+      this._data = cached.data;
+      this._limited = cached.limited;
+      this.draw();
+      return;
+    }
+    this.pause();
+    const ticket = this._ticket;
+    const controller = new AbortController();
+    this._request = controller;
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    addressNumbersStatus.textContent = "Loading nearby address numbers…";
+    const queryBounds = bounds.pad(0.1);
+    const params = new URLSearchParams({
+      f: "json", where: "ADDRESS_TYPE = 1 AND ADDRESS IS NOT NULL",
+      geometry: JSON.stringify({ xmin: queryBounds.getWest(), ymin: queryBounds.getSouth(), xmax: queryBounds.getEast(), ymax: queryBounds.getNorth() }),
+      geometryType: "esriGeometryEnvelope", spatialRel: "esriSpatialRelIntersects", inSR: "4326", outSR: "4326",
+      outFields: "OBJECTID,ADDRESS,ADDRESS_FRACTION", returnGeometry: "true",
+      resultRecordCount: String(ADDRESS_NUMBER_FETCH_LIMIT), orderByFields: "OBJECTID ASC"
+    });
+    try {
+      const response = await fetch(`${ADDRESS_NUMBER_QUERY}?${params}`, { signal: controller.signal, cache: "no-store" });
+      if (!response.ok) throw new Error("Address request failed");
+      const result = await response.json();
+      if (result.error || !Array.isArray(result.features)) throw new Error("Invalid address response");
+      if (!this._map || ticket !== this._ticket || addressNumberPauseReason()) return;
+      const data = result.features.slice(0, ADDRESS_NUMBER_FETCH_LIMIT).flatMap(feature => {
+        const x = feature.geometry?.x, y = feature.geometry?.y;
+        const number = feature.attributes?.ADDRESS;
+        if (!Number.isFinite(x) || !Number.isFinite(y) || Math.abs(x) > 180 || Math.abs(y) > 90 || number == null) return [];
+        const label = [number, feature.attributes.ADDRESS_FRACTION].filter(value => value != null && String(value).trim()).join(" ").slice(0, 24);
+        return label ? [{ latlng: L.latLng(y, x), label }] : [];
+      });
+      const limited = Boolean(result.exceededTransferLimit) || result.features.length >= ADDRESS_NUMBER_FETCH_LIMIT;
+      this._cache.set(queryBounds.toBBoxString(), { bounds: queryBounds, data, limited, expires: now + 120000 });
+      while (this._cache.size > 6) this._cache.delete(this._cache.keys().next().value);
+      this._data = data;
+      this._limited = limited;
+      this.draw();
+    } catch (_) {
+      if (this._map && ticket === this._ticket) addressNumbersStatus.textContent = "Address numbers unavailable. Move the map or toggle off/on to retry.";
+    } finally {
+      clearTimeout(timeout);
+      if (this._request === controller) this._request = null;
+    }
+  },
+  draw() {
+    if (!this._map || addressNumberPauseReason()) return;
+    const canvas = this._canvas;
+    const size = map.getSize();
+    const scale = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(size.x * scale);
+    canvas.height = Math.round(size.y * scale);
+    canvas.style.width = `${size.x}px`;
+    canvas.style.height = `${size.y}px`;
+    L.DomUtil.setPosition(canvas, map.containerPointToLayerPoint([0, 0]));
+    const context = canvas.getContext("2d");
+    context.scale(scale, scale);
+    context.font = "600 13px system-ui, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    const imagery = aerialBaseMaps.has(activeBaseMap) || activeBaseMap === "dark";
+    context.fillStyle = imagery ? "#ffffff" : "#172c42";
+    context.strokeStyle = imagery ? "#172c42" : "#ffffff";
+    context.lineWidth = 3;
+    context.lineJoin = "round";
+    const occupied = new Set();
+    const limit = window.innerWidth <= 900 ? 120 : 220;
+    let count = 0;
+    // Draw only viewport labels; grid collision checks avoid hundreds of DOM tooltips.
+    const visible = this._data.map(item => ({ ...item, point: map.latLngToContainerPoint(item.latlng) }))
+      .filter(item => item.point.x >= 0 && item.point.x <= size.x && item.point.y >= 0 && item.point.y <= size.y)
+      .sort((a, b) => a.point.distanceTo(size.divideBy(2)) - b.point.distanceTo(size.divideBy(2)));
+    for (const item of visible) {
+      if (count >= limit) break;
+      const { x, y } = item.point;
+      const halfWidth = context.measureText(item.label).width / 2 + 4;
+      if (x < halfWidth || x + halfWidth > size.x || y < 12 || y > size.y - 12) continue;
+      const cells = [];
+      for (let col = Math.floor((x - halfWidth) / 24); col <= Math.floor((x + halfWidth) / 24); col++) {
+        for (let row = Math.floor((y - 11) / 24); row <= Math.floor((y + 11) / 24); row++) cells.push(`${col},${row}`);
+      }
+      if (cells.some(cell => occupied.has(cell))) continue;
+      cells.forEach(cell => occupied.add(cell));
+      context.strokeText(item.label, x, y);
+      context.fillText(item.label, x, y);
+      count++;
+    }
+    canvas.hidden = false;
+    canvas.dataset.count = String(count);
+    addressNumbersStatus.textContent = count ? `${count} nearby address ${count === 1 ? "number" : "numbers"}.${this._limited || count >= limit ? " Zoom in for more." : ""}`
+      : "No city address numbers in this view.";
+  }
+});
+const addressNumbersLayer = new CityAddressNumbers();
+function scheduleAddressNumberRefresh() {
+  if (!addressNumbersToggle.checked) {
+    if (map.hasLayer(addressNumbersLayer)) map.removeLayer(addressNumbersLayer);
+    addressNumbersStatus.textContent = addressNumberPauseReason();
+  } else if (!map.hasLayer(addressNumbersLayer)) addressNumbersLayer.addTo(map);
+  else addressNumbersLayer.schedule();
+}
+addressNumbersToggle.addEventListener("change", scheduleAddressNumberRefresh);
+map.on("draw:drawstart draw:editstart", () => { addressNumbersDrawing = true; scheduleAddressNumberRefresh(); });
+map.on("draw:drawstop draw:editstop", () => { addressNumbersDrawing = false; scheduleAddressNumberRefresh(); });
+document.getElementById("baseMapSelect").addEventListener("change", scheduleAddressNumberRefresh);
 
 // Leaflet.Draw 1.0.4 adds a polygon vertex the instant a finger touches the map (touchstart),
 // so panning/pinching while drawing dropped unwanted points. Override: a vertex is added on
@@ -888,6 +1185,52 @@ function formatStopAddress(row) {
   ].join(" ").replace(/\s+/g, " ").trim() || "Address not available";
 }
 
+const ADDRESS_SEARCH_ALIASES = {
+  n: "north", s: "south", e: "east", w: "west", ne: "northeast", nw: "northwest", se: "southeast", sw: "southwest",
+  st: "street", rd: "road", dr: "drive", ave: "avenue", av: "avenue", blvd: "boulevard", ln: "lane", ct: "court",
+  cir: "circle", pl: "place", pkwy: "parkway", hwy: "highway", trl: "trail", ter: "terrace"
+};
+
+function addressSearchTokens(value) {
+  const text = String(value ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/['’]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+  return text ? text.split(/\s+/).map(token => ADDRESS_SEARCH_ALIASES[token] || token) : [];
+}
+
+function addressSearchData(row) {
+  const tokens = addressSearchTokens([row["CSADR#"], row.CSSDIR, row.CSSTRT, row.CSSFUX].filter(value => value != null).join(" "));
+  return { tokens, text: tokens.join(" "), houseNumber: addressSearchTokens(row["CSADR#"]).join(" "), bin: binSearchText(row.BINNO) };
+}
+
+function binSearchText(value) {
+  return String(value ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function searchCartQuantity(row) {
+  const value = row.QTY;
+  if (value == null || !["number", "string"].includes(typeof value) || String(value).trim() === "") return null;
+  const quantity = Number(value);
+  return Number.isFinite(quantity) && quantity >= 0 ? quantity : null;
+}
+
+function addressSearchScore(data, queryTokens) {
+  let score = 0;
+  for (const query of queryTokens) {
+    const numeric = /^\d/.test(query);
+    const tokenScore = Math.max(0, ...data.tokens.map(token => token === query ? 6
+      : token.startsWith(query) ? 3 : !numeric && token.includes(query) ? 1 : 0));
+    if (!tokenScore) return null;
+    score += tokenScore;
+  }
+  // House numbers match from the start; 123 must not match 9123.
+  if (queryTokens.includes(data.houseNumber)) score += 120;
+  else if (queryTokens.some(token => /^\d/.test(token) && data.houseNumber.startsWith(token))) score += 30;
+  const phrase = queryTokens.join(" ");
+  if (data.text === phrase) score += 500;
+  else if (data.text.includes(phrase)) score += 15;
+  return score;
+}
+
 function showNearbyStopPicker(stops) {
   const picker = document.getElementById("mobileStopPicker");
   const list = document.getElementById("mobileStopPickerList");
@@ -910,9 +1253,14 @@ function showNearbyStopPicker(stops) {
     const status = String(row.del_status || "").trim().toLowerCase() === "delivered"
       ? "Delivered"
       : (dayName(Number(rowDay(row))) || `Day ${rowDay(row) || key.split("|")[1]}`);
-    const bin = row.BINNO ? ` · Bin ${row.BINNO}` : "";
     const sequence = rowSequence(row);
-    detail.textContent = `Route ${rowRoute(row) || key.split("|")[0]} · ${status}${bin}${sequence !== null ? ` · Seq ${sequence}` : ""} · ${Math.round(distance)} px away`;
+    const quantity = multiCartQuantity(row);
+    detail.textContent = `Route ${rowRoute(row) || key.split("|")[0]} · ${status}${quantity !== null ? ` · ${quantity} carts` : ""}${sequence !== null ? ` · Seq ${sequence}` : ""} · ${Math.round(distance)} px away`;
+
+    const binNumber = document.createElement("span");
+    binNumber.className = "mobile-stop-choice-bin";
+    const binValue = String(row.BINNO ?? "").trim();
+    binNumber.textContent = `Bin #: ${binValue || "Not provided"}`;
 
     const selectionState = document.createElement("span");
     selectionState.className = "mobile-stop-choice-state";
@@ -920,7 +1268,7 @@ function showNearbyStopPicker(stops) {
     button.classList.toggle("selected", selected);
     selectionState.textContent = selected ? "Selected · tap to deselect" : "Tap to select";
 
-    button.append(address, detail, selectionState);
+    button.append(address, binNumber, detail, selectionState);
     button.addEventListener("click", () => {
       toggleIndividualStopSelection(marker);
       picker.hidden = true;
@@ -1071,20 +1419,7 @@ map.on(L.Draw.Event.DELETED, () => {
 });
 
 // Default map
-baseMaps.streets.addTo(map);
-
-// Dropdown to switch map type
-document.getElementById("baseMapSelect").addEventListener("change", e => {
-  Object.values(baseMaps).forEach(l => map.removeLayer(l));
-  map.removeLayer(satelliteLabelsLayer);
-
-  const selected = e.target.value;
-  baseMaps[selected].addTo(map);
-
-  if (selected === "satellite" && map.getZoom() >= 15) {
-    satelliteLabelsLayer.addTo(map);
-  }
-});
+setBaseMap("streets");
 
 
 // ================= MAP SYMBOL SETTINGS =================
@@ -1224,6 +1559,32 @@ function createMarker(lat, lon, symbol) {
   return shape;
 }
 
+function multiCartQuantity(row) {
+  const value = row.QTY;
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  const quantity = Number(value);
+  return Number.isFinite(quantity) && quantity > 1 ? quantity : null;
+}
+
+function attachQuantityBadge(marker, row) {
+  const quantity = multiCartQuantity(row);
+  if (quantity === null) return;
+  const label = document.createElement("span");
+  label.className = "multi-cart-badge";
+  label.textContent = `×${quantity}`;
+  label.setAttribute("role", "img");
+  label.setAttribute("aria-label", `${quantity} carts required`);
+  const badge = L.marker([marker._base.lat, marker._base.lon], {
+    pane: "quantityPane", interactive: false, keyboard: false,
+    icon: L.divIcon({ className: "multi-cart-icon", html: label, iconSize: [0, 0], iconAnchor: [-8, 22] })
+  });
+  marker._quantityBadge = badge;
+  // Follow the stop's visibility without adding another selectable stop or tooltip.
+  marker.on("add", () => badge.addTo(map));
+  marker.on("remove", () => map.removeLayer(badge));
+  if (map.hasLayer(marker)) badge.addTo(map);
+}
+
 
 
 // ================= FILTER CHECKBOX UI =================
@@ -1348,6 +1709,7 @@ function applyFilters() {
   updateSelectionCount();
   updateUndoButtonState();
   updateStats();
+  refreshAddressSearch();
 }
 
 
@@ -1472,6 +1834,7 @@ if (layerVisibilityState.hasOwnProperty(key)) {
 
   updateSelectionCount();
   updateUndoButtonState();
+  refreshAddressSearch();
 });
 
 
@@ -1528,6 +1891,7 @@ if (layerVisibilityState.hasOwnProperty(key)) {
       routeDayContainer.appendChild(wrapper);
     }
   });
+  refreshAddressSearch();
 }
 
 
@@ -1613,8 +1977,8 @@ function renderSequenceLayer() {
   if (!toggle.checked || toggle.disabled) {
     map.removeLayer(sequenceLayer);
     status.textContent = toggle.disabled
-      ? `No drawable sequence. Need at least two stops in one route/day with numeric SEQNO values and distinct valid locations. ${sequenceDataNote}`.trim()
-      : "Turn on to see the delivery sequence.";
+      ? `Sequence unavailable. Need two stops in the same route/day with numeric SEQNO and distinct valid locations. ${sequenceDataNote}`.trim()
+      : "Ready to show this file’s delivery order.";
     return;
   }
   const pending = [], completed = [], pendingArrows = [], completedArrows = [];
@@ -1685,6 +2049,7 @@ function processExcelBuffer(buffer) {
   const ws = wb.Sheets[wb.SheetNames[0]];
 
   const rows = XLSX.utils.sheet_to_json(ws);
+  resetAddressSearch();
   rebuildSequenceData(rows);
 
   // store globally for saving later
@@ -1775,6 +2140,7 @@ if (labelText) {
 
     // 🔥 CRITICAL: link marker to Excel row
     marker._rowRef = row;
+    attachQuantityBadge(marker, row);
     marker.on("click", event => {
       if (mobileStopSelectionMode && window.innerWidth <= 900) {
         L.DomEvent.stop(event.originalEvent || event);
@@ -2597,28 +2963,6 @@ dropZone.addEventListener("drop", e => {
 });
 
 
-// ===== INITIAL MAP LAYER + USER LOCATION =====
-baseMaps.streets.addTo(map);
-
-
-
-  
-  // ===== BASE MAP DROPDOWN =====
-  const baseSelect = document.getElementById("baseMapSelect");
-if (baseSelect) {
-  baseSelect.addEventListener("change", e => {
-    Object.values(baseMaps).forEach(l => map.removeLayer(l));
-    map.removeLayer(satelliteLabelsLayer);
-
-    const selected = e.target.value;
-    baseMaps[selected].addTo(map);
-
-    if (selected === "satellite" && map.getZoom() >= 15) {
-      satelliteLabelsLayer.addTo(map);
-    }
-  });
-}
-
   // ===== SIDEBAR TOGGLE (DESKTOP) =====
   const toggleSidebarBtn = document.getElementById("toggleSidebarBtn");
   const sidebar = document.querySelector(".sidebar");
@@ -2718,6 +3062,7 @@ const mobileSelBtn = document.getElementById("mobileSelectionBtn");
 if (mobileSelBtn && selectionBox) {
   function setMobileStopSelectionMode(isActive) {
     mobileStopSelectionMode = isActive;
+    scheduleAddressNumberRefresh();
     document.body.classList.toggle("mobile-stop-selection-mode", isActive);
     mobileSelBtn.classList.toggle("selection-mode", isActive);
     document.getElementById("mobileStopPicker").hidden = true;
@@ -2798,6 +3143,7 @@ if (resetBtn) {
     // 7. Reset bounds tracker
     globalBounds = L.latLngBounds();
     rebuildSequenceData([]);
+    resetAddressSearch();
 
 
   });
@@ -2953,20 +3299,6 @@ map.on("zoomend", () => {
   const currentZoom = map.getZoom();
   const maxZoom = map.getMaxZoom();
 
-// ===== AUTO TOGGLE SATELLITE STREET NAMES =====
-const currentBase = document.getElementById("baseMapSelect")?.value;
-
-if (currentBase === "satellite") {
-  if (map.getZoom() >= 15) {
-    map.addLayer(satelliteLabelsLayer);
-  } else {
-    map.removeLayer(satelliteLabelsLayer);
-  }
-} else {
-  map.removeLayer(satelliteLabelsLayer);
-}
-
-
   Object.values(routeDayGroups).forEach(group => {
     group.layers.forEach(layer => {
       const base = layer._base;
@@ -3036,90 +3368,205 @@ if (streetToggle) {
   });
 }
   
-////////////////////////////////////////////////////////////////////
-// 🔍 MAP ADDRESS SEARCH (PASTE RIGHT BELOW STREET TOGGLE)
-////////////////////////////////////////////////////////////////////
+// ================= MAP ADDRESS SEARCH =================
 
 const searchInput = document.getElementById("mapSearchInput");
 const searchBtn   = document.getElementById("mapSearchBtn");
+const resultsPanel = document.getElementById("searchResultsPanel");
+const resultsList = document.getElementById("searchResultsList");
+const searchStatus = document.getElementById("searchResultsStatus");
+const moreSearchBtn = document.getElementById("moreSearchResults");
+const searchTotals = document.getElementById("searchCartTotals");
+const searchQuickFilters = document.getElementById("searchQuickFilters");
+const multipleCartsBtn = document.getElementById("searchMultipleCarts");
+const searchRouteFilter = document.getElementById("searchRouteFilter");
+const searchDayFilter = document.getElementById("searchDayFilter");
+const searchScopeHint = document.getElementById("searchScopeHint");
+const addressCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+const cartNumberFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 20 });
+let searchTimer;
+let searchLimit = 50;
+let searchPreview = null;
+let previewMarker = null;
+let searchDeliveryFilter = "all";
+let searchMultipleCarts = false;
+let searchActive = false;
 
-function searchMapByAddress() {
+function searchDayValue(row) {
+  const day = String(rowDay(row) ?? "").trim();
+  return day && Number.isFinite(Number(day)) ? String(Number(day)) : day;
+}
 
-  if (!searchInput) return;
+function searchHasFilters() {
+  return searchDeliveryFilter !== "all" || searchMultipleCarts || searchRouteFilter.value || searchDayFilter.value;
+}
 
-  const query = searchInput.value.trim().toLowerCase();
-  if (!query) return;
-
-  const resultsPanel = document.getElementById("searchResultsPanel");
-  const resultsList  = document.getElementById("searchResultsList");
-
-  resultsList.innerHTML = "";
-  let matches = [];
-
-  Object.values(routeDayGroups).forEach(group => {
-
-    group.layers.forEach(marker => {
-
-      const row = marker._rowRef;
-      if (!row) return;
-
-      const address = [
-        row["CSADR#"] || "",
-        row["CSSDIR"] || "",
-        row["CSSTRT"] || "",
-        row["CSSFUX"] || ""
-      ].join(" ").toLowerCase();
-
-      if (address.includes(query)) {
-        matches.push({ marker, row });
-      }
-
-    });
-
+function updateSearchFilterControls() {
+  searchQuickFilters.querySelectorAll("[data-search-status]").forEach(button => {
+    button.setAttribute("aria-pressed", String(button.dataset.searchStatus === searchDeliveryFilter &&
+      (searchDeliveryFilter !== "all" || !searchMultipleCarts)));
   });
+  multipleCartsBtn.setAttribute("aria-pressed", String(searchMultipleCarts));
+  searchScopeHint.textContent = [searchRouteFilter.value ? `Route ${searchRouteFilter.value}` : "",
+    searchDayFilter.value ? dayName(Number(searchDayFilter.value)) || `Day ${searchDayFilter.value}` : ""].filter(Boolean).join(" · ") || "All";
+}
 
-  if (!matches.length) {
-    alert("No matching addresses found.");
+function syncSearchScopeOptions() {
+  const routes = new Set(), days = new Set();
+  Object.values(routeDayGroups).forEach(group => group.layers.forEach(marker => {
+    const row = marker._rowRef;
+    const route = String(rowRoute(row) ?? "").trim();
+    const day = searchDayValue(row);
+    if (route) routes.add(route);
+    if (day) days.add(day);
+  }));
+  [[searchRouteFilter, routes, "All routes"], [searchDayFilter, days, "All days"]].forEach(([select, values, label]) => {
+    const previous = select.value;
+    select.replaceChildren(new Option(label, ""));
+    [...values].sort(addressCollator.compare).forEach(value => select.add(new Option(
+      select === searchDayFilter ? dayName(Number(value)) || `Day ${value}` : value, value)));
+    select.value = values.has(previous) ? previous : "";
+  });
+  updateSearchFilterControls();
+}
+
+function clearSearchPreview() {
+  if (searchPreview) map.removeLayer(searchPreview);
+  searchPreview = null;
+  previewMarker = null;
+}
+
+resetAddressSearch = () => {
+  clearTimeout(searchTimer);
+  clearSearchPreview();
+  searchInput.value = "";
+  searchDeliveryFilter = "all";
+  searchMultipleCarts = false;
+  searchRouteFilter.value = "";
+  searchDayFilter.value = "";
+  searchActive = false;
+  syncSearchScopeOptions();
+  searchLimit = 50;
+  resultsList.replaceChildren();
+  searchStatus.textContent = "";
+  searchTotals.textContent = "";
+  moreSearchBtn.hidden = true;
+  resultsPanel.classList.add("hidden");
+};
+
+function searchStopPopup(row) {
+  const popup = document.createElement("div");
+  const address = document.createElement("strong");
+  address.textContent = formatStopAddress(row);
+  popup.append(address);
+  const delivered = String(row.del_status || "").trim().toLowerCase() === "delivered";
+  const details = [`Route ${rowRoute(row)} · ${dayName(Number(rowDay(row))) || `Day ${rowDay(row)}`}`,
+    delivered ? "Delivered" : "Pending", `Quantity: ${row.QTY ?? "—"}`, `Container size: ${row.SIZE ?? "—"}`];
+  const sequence = rowSequence(row);
+  if (sequence !== null) details.push(`Sequence: ${sequence}`);
+  if (row.BINNO != null && String(row.BINNO).trim()) details.push(`Bin: ${row.BINNO}`);
+  details.forEach(text => { const line = document.createElement("div"); line.textContent = text; popup.append(line); });
+  return popup;
+}
+
+function showSearchStop(marker) {
+  clearSearchPreview();
+  previewMarker = marker;
+  const latlng = getLayerLatLng(marker);
+  // A separate preview finds hidden stops without revealing/selecting their real markers.
+  searchPreview = L.circleMarker(latlng, {
+    renderer: canvasRenderer, radius: 14, color: "#2563eb", weight: 3, fill: false, interactive: false
+  }).bindPopup(searchStopPopup(marker._rowRef)).addTo(map);
+  searchInput.blur();
+  if (window.innerWidth <= 900) closeMobileMenu();
+  map.setView(latlng, 18, { animate: false });
+  searchPreview.openPopup();
+  resultsList.querySelectorAll(".search-result-item").forEach(button => button.classList.toggle("is-current", button._stopMarker === marker));
+}
+
+function renderAddressSearch() {
+  const query = searchInput.value.trim();
+  if (!query && !searchHasFilters() && !searchActive) {
+    clearSearchPreview();
+    resultsList.replaceChildren();
+    searchStatus.textContent = "";
+    searchTotals.textContent = "";
+    moreSearchBtn.hidden = true;
+    resultsPanel.classList.add("hidden");
     return;
   }
-
-  matches.forEach((item, index) => {
-
-    const div = document.createElement("div");
-    div.className = "search-result-item";
-
-    const displayAddress = [
-      item.row["CSADR#"] || "",
-      item.row["CSSDIR"] || "",
-      item.row["CSSTRT"] || "",
-      item.row["CSSFUX"] || ""
-    ].join(" ");
-
-    div.textContent = displayAddress;
-
-    div.onclick = () => {
-
-      // Remove previous selected styling
-      document.querySelectorAll(".search-result-item")
-        .forEach(el => el.classList.remove("selected"));
-
-      div.classList.add("selected");
-
-      map.setView(item.marker.getLatLng(), 18);
-
-      item.marker.setStyle?.({
-        color: "#ffff00",
-        fillColor: "#ffff00",
-        fillOpacity: 1
-      });
-
-    };
-
-    resultsList.appendChild(div);
-
-  });
-
+  const tokens = addressSearchTokens(query);
+  const binQuery = binSearchText(query.replace(/^bin\s*[:#]?\s+/i, ""));
+  const matches = [];
+  let stopCount = 0;
+  Object.values(routeDayGroups).forEach(group => group.layers.forEach(marker => {
+    stopCount++;
+    const row = marker._rowRef;
+    const delivered = String(row.del_status || "").trim().toLowerCase() === "delivered";
+    if ((searchDeliveryFilter === "pending" && delivered) || (searchDeliveryFilter === "delivered" && !delivered) ||
+      (searchMultipleCarts && multiCartQuantity(row) === null) ||
+      (searchRouteFilter.value && String(rowRoute(row) ?? "").trim() !== searchRouteFilter.value) ||
+      (searchDayFilter.value && searchDayValue(row) !== searchDayFilter.value)) return;
+    const data = marker._addressSearch || (marker._addressSearch = addressSearchData(row));
+    const addressScore = tokens.length ? addressSearchScore(data, tokens) : null;
+    // Bin identifiers use their own normalization, without street/direction aliases.
+    const binScore = binQuery && data.bin.startsWith(binQuery) ? (data.bin === binQuery ? 600 : 100) : null;
+    const score = !query ? 0 : addressScore === null ? binScore : binScore === null ? addressScore : Math.max(addressScore, binScore);
+    if (score !== null) matches.push({ marker, score, address: formatStopAddress(marker._rowRef) });
+  }));
+  matches.sort((a, b) => b.score - a.score || addressCollator.compare(a.address, b.address) ||
+    addressCollator.compare(String(rowRoute(a.marker._rowRef)), String(rowRoute(b.marker._rowRef))));
   resultsPanel.classList.remove("hidden");
+  resultsList.replaceChildren();
+  moreSearchBtn.hidden = matches.length <= searchLimit;
+  moreSearchBtn.textContent = `Show ${Math.min(50, Math.max(0, matches.length - searchLimit))} more`;
+  searchStatus.textContent = !stopCount ? "Open a route file to search its stops."
+    : query && !tokens.length && !binQuery ? "Enter an address or bin number."
+    : !matches.length ? (query ? `No matches for “${query}” with these filters.` : "No stops match these filters.")
+    : `${matches.length} ${matches.length === 1 ? "match" : "matches"}${matches.length > searchLimit ? ` · showing ${searchLimit}` : ""} · includes hidden layers`;
+  let remainingCarts = 0, missingQuantities = 0;
+  matches.forEach(({ marker }) => {
+    const row = marker._rowRef;
+    if (String(row.del_status || "").trim().toLowerCase() === "delivered") return;
+    const quantity = searchCartQuantity(row);
+    if (quantity === null) missingQuantities++;
+    else remainingCarts += quantity;
+  });
+  searchTotals.textContent = stopCount ? `${matches.length} ${matches.length === 1 ? "stop" : "stops"} · ${cartNumberFormat.format(remainingCarts)}${missingQuantities ? " known" : ""} ${remainingCarts === 1 ? "cart" : "carts"} remaining${missingQuantities ? ` · ${missingQuantities} ${missingQuantities === 1 ? "stop missing" : "stops missing"} QTY` : ""}` : "";
+  matches.slice(0, searchLimit).forEach(({ marker, address }) => {
+    const row = marker._rowRef;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "search-result-item";
+    button.classList.toggle("is-current", marker === previewMarker);
+    button._stopMarker = marker;
+    const title = document.createElement("span");
+    title.className = "search-result-address";
+    title.textContent = address;
+    const detail = document.createElement("span");
+    detail.className = "search-result-detail";
+    const sequence = rowSequence(row);
+    detail.textContent = `Route ${rowRoute(row)} · ${dayName(Number(rowDay(row))) || `Day ${rowDay(row)}`}${sequence !== null ? ` · Seq ${sequence}` : ""}${row.BINNO != null && String(row.BINNO).trim() ? ` · Bin ${row.BINNO}` : ""}`;
+    const state = document.createElement("span");
+    state.className = "search-result-state";
+    const delivered = String(row.del_status || "").trim().toLowerCase() === "delivered";
+    state.dataset.delivered = String(delivered);
+    state.textContent = `${delivered ? "✓ Delivered" : "Pending"}${row.QTY != null && String(row.QTY).trim() ? ` · ${row.QTY} ${Number(row.QTY) === 1 ? "cart" : "carts"}` : ""}${map.hasLayer(marker) ? "" : " · Hidden layer"}`;
+    button.append(title, detail, state);
+    button.addEventListener("click", () => showSearchStop(marker));
+    resultsList.append(button);
+  });
+  if (searchPreview && previewMarker) searchPreview.setPopupContent(searchStopPopup(previewMarker._rowRef));
+}
+
+refreshAddressSearch = () => { syncSearchScopeOptions(); renderAddressSearch(); };
+
+function searchMapByAddress() {
+  clearTimeout(searchTimer);
+  clearSearchPreview();
+  searchActive = true;
+  searchLimit = 50;
+  renderAddressSearch();
 }
   // Hook up search button + Enter key
 if (searchBtn) {
@@ -3127,34 +3574,40 @@ if (searchBtn) {
 }
 
 if (searchInput) {
+  searchInput.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    clearSearchPreview();
+    searchLimit = 50;
+    searchActive = Boolean(searchInput.value.trim() || searchHasFilters());
+    if (!searchInput.value.trim()) renderAddressSearch();
+    else searchTimer = setTimeout(renderAddressSearch, 180);
+  });
   searchInput.addEventListener("keydown", function(e) {
     if (e.key === "Enter") {
+      e.preventDefault();
       searchMapByAddress();
+    } else if (e.key === "Escape") {
+      resetAddressSearch();
     }
   });
 }
-  // ===== CLEAR SEARCH RESULTS =====
-const clearSearchBtn = document.getElementById("clearSearchResults");
-
-if (clearSearchBtn) {
-  clearSearchBtn.addEventListener("click", () => {
-
-    // Clear search input
-    const searchInput = document.getElementById("mapSearchInput");
-    if (searchInput) searchInput.value = "";
-
-    // Clear results list
-    const resultsList = document.getElementById("searchResultsList");
-    if (resultsList) resultsList.innerHTML = "";
-
-    // Hide results panel
-    const resultsPanel = document.getElementById("searchResultsPanel");
-    if (resultsPanel) {
-      resultsPanel.classList.add("hidden");
-    }
-
-  });
-}
+moreSearchBtn.addEventListener("click", () => { searchLimit += 50; renderAddressSearch(); });
+document.getElementById("clearSearchResults").addEventListener("click", () => { resetAddressSearch(); searchInput.focus(); });
+searchQuickFilters.addEventListener("click", event => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  if (button === multipleCartsBtn) searchMultipleCarts = !searchMultipleCarts;
+  else {
+    searchDeliveryFilter = button.dataset.searchStatus;
+    if (searchDeliveryFilter === "all") searchMultipleCarts = false;
+  }
+  updateSearchFilterControls();
+  searchMapByAddress();
+});
+[searchRouteFilter, searchDayFilter].forEach(select => select.addEventListener("change", () => {
+  updateSearchFilterControls();
+  searchMapByAddress();
+}));
 async function serializeDeliveryWorkbook(workbook, bookType) {
   const options = { bookType, type: "buffer" };
   if (window.fflate) {

@@ -1,7 +1,7 @@
 ﻿// Service worker: makes the app load fast and open without signal.
 // Never caches Supabase traffic, so saved/delivered data is always live.
-const SHELL_CACHE = "cartdelivery-shell-v1";
-const TILE_CACHE = "cartdelivery-tiles-v1";
+const SHELL_CACHE = "cartdelivery-shell-v3";
+const TILE_CACHE = "cartdelivery-tiles-v3";
 const MAX_TILES = 600;
 
 self.addEventListener("install", () => self.skipWaiting());
@@ -35,7 +35,14 @@ self.addEventListener("fetch", (event) => {
   if (!/^https?:$/.test(url.protocol)) return;
   if (url.hostname.endsWith("supabase.co")) return;
 
-  const isTile = /tile\.openstreetmap\.org|arcgisonline\.com/.test(url.hostname);
+  // Live city queries have a small in-memory cache in the app, never a shell cache.
+  if (url.hostname === "maps.austintexas.gov" && /\/query\/?$/.test(url.pathname)) return;
+  const isCityLimitsTile = url.hostname === "tigerweb.geo.census.gov" &&
+    url.pathname === "/arcgis/services/TIGERweb/tigerWMS_Current/MapServer/WMSServer" &&
+    url.searchParams.get("request")?.toLowerCase() === "getmap";
+  const isTile = url.hostname.endsWith("tile.openstreetmap.org") ||
+    ((url.hostname.endsWith("arcgisonline.com") || url.hostname.endsWith("maptiles.arcgis.com") || url.hostname === "maps.austintexas.gov") &&
+      /\/tile\/\d+\/\d+\/\d+\/?$/.test(url.pathname)) || isCityLimitsTile;
 
   if (isTile) {
     // Tiles rarely change: serve cached copy, refresh in background.
