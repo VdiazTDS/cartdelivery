@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261006-selection-layout" />
+  <link rel="stylesheet" href="style.css?v=20261007-delivery-feedback" />
 
   <link rel="icon" href="favicon.ico" />
 
@@ -60,7 +60,8 @@
     <button id="hardRefreshBtn" class="primary-btn" title="Reload app data and clear cached view">Refresh App</button>
     <button id="mobileMenuBtn">☰ Menu</button>
     <button id="locateMeBtn" class="primary-btn">📍</button>
-    <button id="completeStopsBtnMobile" class="primary-btn" title="Mark selected stops as delivered" aria-label="Mark selected stops as delivered">✔</button>
+    <button id="completeStopsBtnMobile" class="primary-btn" disabled>Mark Stops Delivered</button>
+    <div id="deliverySaveStatus" class="delivery-save-status" role="status" aria-live="polite" aria-atomic="true"></div>
   </div>
 
 </header>
@@ -258,8 +259,8 @@
   
   <div id="desktopLocateContainer"></div>
   
-  <button id="completeStopsBtn" class="primary-btn">
-  Complete Stops
+  <button id="completeStopsBtn" class="primary-btn" disabled>
+  Mark Stops Delivered
 </button>
 
 <label class="street-toggle-label">
@@ -353,7 +354,7 @@
   </div>
 </div>
 
-<script src="app.js?v=20261006-selection-layout" defer></script>
+<script src="app.js?v=20261007-delivery-feedback" defer></script>
 <!-- MOBILE Selected Stops Button -->
 <button id="mobileSelectionBtn" aria-label="0 stops selected; open selection actions">Selected: 0</button>
 

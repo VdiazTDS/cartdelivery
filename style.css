@@ -2424,8 +2424,14 @@ body.sun-mode #hardRefreshBtn {
     align-items: center;
     justify-content: center;
 
-    height: 42px;
-    padding: 0 14px;
+    flex: 1 0 100%;
+    width: 100%;
+    min-height: 48px;
+    height: auto;
+    padding: 10px 14px;
+    box-sizing: border-box;
+    font-size: 15px;
+    line-height: 1.3;
 
     background: #42a5f5;
     color: #000;
@@ -2433,7 +2439,7 @@ body.sun-mode #hardRefreshBtn {
     border-radius: 10px;
     font-weight: 600;
 
-    z-index: 6000; /* above overlays */
+    z-index: auto;
   }
 
   /* Hide the desktop sidebar version */
@@ -4031,5 +4037,74 @@ body.sun-mode .dropzone-browse {
 
   body.sun-mode .mobile-stop-choice.selected .mobile-stop-choice-state {
     color: #8a6500;
+  }
+}
+
+/* Delivery actions share the same count and cloud-save feedback on all screens. */
+#completeStopsBtn,
+#completeStopsBtnMobile {
+  white-space: normal;
+  text-align: center;
+}
+
+#completeStopsBtn:disabled,
+#completeStopsBtnMobile:disabled,
+#undoDeliveredBtn:disabled {
+  opacity: 0.55;
+  cursor: default;
+  animation: none;
+}
+
+#completeStopsBtn[aria-busy="true"],
+#completeStopsBtnMobile[aria-busy="true"] {
+  opacity: 1;
+  cursor: progress;
+}
+
+.delivery-save-status {
+  margin: 0;
+  padding: 2px 4px 4px;
+  color: #d9eafa;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.delivery-save-status:empty {
+  display: none;
+}
+
+.delivery-save-status[data-state="saved"] {
+  color: #8fe6ad;
+}
+
+.delivery-save-status[data-state="error"] {
+  color: #ffb5ad;
+}
+
+body.sun-mode .delivery-save-status {
+  color: #284e72;
+}
+
+body.sun-mode .delivery-save-status[data-state="saved"] {
+  color: #176c37;
+}
+
+body.sun-mode .delivery-save-status[data-state="error"] {
+  color: #ad2727;
+}
+
+@media (max-width: 900px) {
+  .mobile-header-buttons .delivery-save-status {
+    order: 5;
+    flex: 1 0 100%;
+    box-sizing: border-box;
+  }
+
+  /* Leave room for the selection actions below the taller delivery header. */
+  body:has(#selectionBox.show) #bottomSummary {
+    max-height: min(65dvh, max(40px, calc(100dvh - var(--mobile-header-height, 170px) - 200px - env(safe-area-inset-bottom))));
   }
 }

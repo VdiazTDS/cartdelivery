@@ -3,6 +3,44 @@ window.addEventListener("error", e => {
 });
 
 let layerVisibilityState = {};
+let deliverySaveInProgress = false;
+let selectedPendingStopCount = 0;
+
+function updateDeliveryButtons() {
+  const count = selectedPendingStopCount;
+  const label = deliverySaveInProgress
+    ? "Saving…"
+    : count
+      ? `Mark ${count} ${count === 1 ? "Stop" : "Stops"} Delivered`
+      : "Mark Stops Delivered";
+
+  ["completeStopsBtn", "completeStopsBtnMobile"].forEach(id => {
+    const button = document.getElementById(id);
+    if (!button) return;
+    button.textContent = label;
+    button.disabled = deliverySaveInProgress || count === 0;
+    button.setAttribute("aria-busy", String(deliverySaveInProgress));
+    button.title = count ? label : "Select undelivered stops on the map first";
+  });
+  const undoButton = document.getElementById("undoDeliveredBtn");
+  if (undoButton) undoButton.disabled = deliverySaveInProgress;
+}
+
+function updatePendingDeliveryCount(markers) {
+  selectedPendingStopCount = [...markers].filter(marker =>
+    marker._rowRef &&
+    String(marker._rowRef.del_status || "").trim().toLowerCase() !== "delivered"
+  ).length;
+  updateDeliveryButtons();
+}
+
+function setDeliverySaveStatus(state, message) {
+  deliverySaveInProgress = state === "saving";
+  const status = document.getElementById("deliverySaveStatus");
+  status.dataset.state = state;
+  status.textContent = message;
+  updateDeliveryButtons();
+}
 
 // ================= SUPABASE CONFIG =================
 // Connection info for cloud file storage
@@ -685,8 +723,9 @@ function updateSelectionCount() {
         highlightedMarkers.add(marker);
       }
     });
-    const visibleSelected = [...individuallySelectedMarkers].filter(marker => map.hasLayer(marker)).length;
-    document.getElementById("selectionCount").textContent = visibleSelected;
+    const visibleSelected = [...individuallySelectedMarkers].filter(marker => map.hasLayer(marker));
+    document.getElementById("selectionCount").textContent = visibleSelected.length;
+    updatePendingDeliveryCount(visibleSelected);
     return;
   }
 
@@ -709,6 +748,7 @@ function updateSelectionCount() {
   });
 
   document.getElementById("selectionCount").textContent = selected.size;
+  updatePendingDeliveryCount(selected);
 }
 
 function highlightSelectedMarker(marker) {
@@ -1306,6 +1346,7 @@ function processExcelBuffer(buffer) {
   // store globally for saving later
   window._currentRows = rows;
   window._currentWorkbook = wb;
+  if (!deliverySaveInProgress) setDeliverySaveStatus("idle", "");
 
   // Clear previous map data
   Object.values(routeDayGroups).forEach(g => g.layers.forEach(l => map.removeLayer(l)));
@@ -1890,6 +1931,7 @@ function placeLocateButton() {
   const desktopContainer = document.getElementById("desktopLocateContainer");
   const undoBtn = document.getElementById("undoDeliveredBtn");
   const streetToggle = document.getElementById("streetLabelToggle");
+  const saveStatus = document.getElementById("deliverySaveStatus");
 
   if (!locateBtn || !completeBtn || !headerContainer || !desktopContainer) return;
 
@@ -1903,7 +1945,7 @@ function placeLocateButton() {
       headerContainer.appendChild(streetToggle.parentElement);
     }
 
-    completeBtn.textContent = "✔";
+    headerContainer.appendChild(saveStatus);
 
   } else {
     // 🖥 DESKTOP
@@ -1915,8 +1957,9 @@ function placeLocateButton() {
       desktopContainer.appendChild(streetToggle.parentElement);
     }
 
-    completeBtn.textContent = "Complete Stops";
+    desktopContainer.insertBefore(saveStatus, completeBtn.nextSibling);
   }
+  updateDeliveryButtons();
 }
 
 //undo button state
@@ -3066,6 +3109,7 @@ if (resetBtn) {
     updateSelectionCount();
 
     // 5. Reset counters & stats
+    if (!deliverySaveInProgress) setDeliverySaveStatus("idle", "");
     document.getElementById("selectionCount").textContent = "0";
     document.getElementById("statsList").innerHTML = "";
 
@@ -3456,248 +3500,112 @@ if (clearSearchBtn) {
 
   });
 }
-////////////////central save function
-async function saveWorkbookToCloud() {
-
-  const newSheet = XLSX.utils.json_to_sheet(window._currentRows);
-  window._currentWorkbook.Sheets[
-    window._currentWorkbook.SheetNames[0]
-  ] = newSheet;
-
-  const bookType = window._currentFilePath.toLowerCase().endsWith(".xlsm")
-    ? "xlsm"
-    : "xlsx";
-
-  const wbArray = XLSX.write(window._currentWorkbook, {
-    bookType,
+// Build a separate workbook so failed saves leave the current route unchanged.
+async function saveWorkbookToCloud(rows, workbook, filePath) {
+  const nextWorkbook = {
+    ...workbook,
+    Sheets: {
+      ...workbook.Sheets,
+      [workbook.SheetNames[0]]: XLSX.utils.json_to_sheet(rows)
+    }
+  };
+  const wbArray = XLSX.write(nextWorkbook, {
+    bookType: filePath.toLowerCase().endsWith(".xlsm") ? "xlsm" : "xlsx",
     type: "array"
   });
-
-  const { error } = await sb.storage
-    .from(BUCKET)
-    .upload(window._currentFilePath, wbArray, {
-      upsert: true,
-      contentType:
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    });
-
-  if (error) {
-    console.error("Cloud Save Error:", error);
-    return false;
-  }
-
-  return true;
+  const { error } = await sb.storage.from(BUCKET).upload(filePath, wbArray, {
+    upsert: true,
+    contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  });
+  if (error) throw error;
+  return nextWorkbook;
 }
 
-
-// ================= COMPLETE STOPS + SAVE TO CLOUD =================
-async function completeStops() {
-  if (!window._currentRows || !window._currentWorkbook || !window._currentFilePath) {
-    alert("No Excel file loaded.");
+async function saveSelectedDeliveryStatus(markDelivered) {
+  if (deliverySaveInProgress) return;
+  const rows = window._currentRows;
+  const workbook = window._currentWorkbook;
+  const filePath = window._currentFilePath;
+  if (!rows || !workbook || !filePath) {
+    setDeliverySaveStatus("error", "Not saved — load a route file first.");
     return;
   }
 
-  const polygon = drawnLayer.getLayers()[0];
   const selectionTester = createSelectionTester();
-  const selectedCount = Object.values(routeDayGroups)
-    .flatMap(group => group.layers)
-    .filter(marker => isStopSelected(marker, selectionTester))
-    .length;
-  if (!polygon && selectedCount === 0) {
-    alert("Tap stops to select them, or draw an area around multiple stops.");
-    return;
-  }
-
-  let completedCount = 0;
- 
-
-
-  // Complete the visible selected stops, whether selected by tapping or drawing an area.
-Object.entries(routeDayGroups).forEach(([key, group]) => {
-
-  if (key.endsWith("|Delivered")) return;
-
-  group.layers.slice().forEach(marker => {
-
-    if (isStopSelected(marker, selectionTester) && marker._rowRef) {
-
-      const row = marker._rowRef;
-
-      row.del_status = "Delivered";
-
-      routeDayGroups[key].layers =
-        routeDayGroups[key].layers.filter(l => l !== marker);
-
-      const deliveredKey = `${row.NEWROUTE}|Delivered`;
-
-      if (!routeDayGroups[deliveredKey]) {
-        routeDayGroups[deliveredKey] = { layers: [] };
-      }
-
-      marker.setStyle?.({
-        color: "#00FF00",
-        fillColor: "#00FF00",
-        fillOpacity: 1,
-        opacity: 1
-      });
-
-      routeDayGroups[deliveredKey].layers.push(marker);
-
-      completedCount++;
-    }
-
-  });
-
-});
-
-
-  if (completedCount === 0) {
-    alert("No selected stops to complete.");
-    return;
-  }
-
-  // rewrite worksheet from updated rows
-  const saved = await saveWorkbookToCloud();
-
-if (!saved) {
-  alert("❌ Cloud save failed. Excel file was NOT updated.");
-  return;
-}
-
-// 🔥 remove selection polygon after completion
-drawnLayer.clearLayers();
-individuallySelectedMarkers.clear();
-individuallyDeselectedMarkers.clear();
-  // Save current checkbox states
-document.querySelectorAll("#routeDayLayers input[type='checkbox']")
-  .forEach(cb => {
-    const key = cb.dataset.key;
-    if (key) layerVisibilityState[key] = cb.checked;
-  });
-
-document.querySelectorAll("#deliveredControls input[type='checkbox']")
-  .forEach(cb => {
-    const key = cb.dataset.key;
-    if (key) layerVisibilityState[key] = cb.checked;
-  });
-
-buildRouteDayLayerControls(); // refresh UI
-updateUndoButtonState();
-
-// 🔥 CLEAR selection + counter AFTER UI rebuild
-// 🔥 CLEAR polygon
-if (drawnLayer) {
-  drawnLayer.clearLayers();
-}
-
-// 🔥 Recalculate + restore marker styling properly
-updateSelectionCount();
-updateUndoButtonState();
-
-alert(`${completedCount} stop(s) marked Delivered and saved.`);
-
-
-}
-////////undo delivered stops
-async function undoDelivered() {
-
-  const confirmed = confirm("Are you sure you want to undo the selected Delivered stops?");
-  if (!confirmed) return;
-
-  if (!window._currentRows || !window._currentWorkbook || !window._currentFilePath) {
-    alert("No Excel file loaded.");
-    return;
-  }
-
-
-  const polygon = drawnLayer.getLayers()[0];
-  const selectionTester = createSelectionTester();
-  const selectedCount = Object.values(routeDayGroups)
-    .flatMap(group => group.layers)
-    .filter(marker => isStopSelected(marker, selectionTester))
-    .length;
-  if (!polygon && selectedCount === 0) {
-    alert("Tap Delivered stops to select them, or draw an area around multiple stops.");
-    return;
-  }
-
-  let undoCount = 0;
-
-  // 🔥 ONLY loop Delivered groups
+  const selected = [];
   Object.entries(routeDayGroups).forEach(([key, group]) => {
-
-    if (!key.endsWith("|Delivered")) return;  // HARD FILTER
-
-    group.layers.slice().forEach(marker => {
-
-      // must be inside selection AND actually marked Delivered
-      if (
-        isStopSelected(marker, selectionTester) &&
-        marker._rowRef &&
-        String(marker._rowRef.del_status || "").trim().toLowerCase() === "delivered"
-      ) {
-
-        const row = marker._rowRef;
-
-        // remove Delivered from Excel data
-        row.del_status = "";
-
-        // remove marker from Delivered layer
-        routeDayGroups[key].layers =
-          routeDayGroups[key].layers.filter(l => l !== marker);
-
-      // restore original route/day layer
-const originalKey = `${row.NEWROUTE}|${row.NEWDAY}`;
-
-if (!routeDayGroups[originalKey]) {
-  routeDayGroups[originalKey] = { layers: [] };
-}
-
-const symbol = getSymbol(originalKey);
-
-marker.setStyle?.({
-  color: symbol.color,
-  fillColor: symbol.color,
-  fillOpacity: 0.95,
-  opacity: 1
-});
-
-routeDayGroups[originalKey].layers.push(marker);
-
-undoCount++;
-              }
+    group.layers.forEach(marker => {
+      const row = marker._rowRef;
+      const delivered = String(row?.del_status || "").trim().toLowerCase() === "delivered";
+      if (row && delivered !== markDelivered && isStopSelected(marker, selectionTester)) {
+        selected.push({ key, marker, row });
+      }
     });
   });
+  if (!selected.length) {
+    setDeliverySaveStatus("error", markDelivered
+      ? "Select undelivered stops first."
+      : "Select delivered stops to undo.");
+    return;
+  }
+  if (!markDelivered && !confirm("Are you sure you want to undo the selected Delivered stops?")) return;
 
-  if (undoCount === 0) {
-    alert("No selected Delivered stops to restore.");
+  const count = selected.length;
+  const stopLabel = count === 1 ? "stop" : "stops";
+  const nextStatus = markDelivered ? "Delivered" : "";
+  const selectedRows = new Set(selected.map(item => item.row));
+  const nextRows = rows.map(row => selectedRows.has(row) ? { ...row, del_status: nextStatus } : row);
+  setDeliverySaveStatus("saving", `Saving… ${count} ${stopLabel}`);
+
+  let savedWorkbook;
+  try {
+    savedWorkbook = await saveWorkbookToCloud(nextRows, workbook, filePath);
+  } catch (error) {
+    console.error("Cloud Save Error:", error);
+    setDeliverySaveStatus("error", "Not saved — check your connection and try again.");
     return;
   }
 
-  // Rewrite Excel sheet
- const saved = await saveWorkbookToCloud();
+  // A route opened during the upload must keep its own markers and workbook.
+  const routeIsCurrent = window._currentRows === rows &&
+    window._currentWorkbook === workbook && window._currentFilePath === filePath;
+  if (routeIsCurrent) {
+    window._currentWorkbook = savedWorkbook;
+    selected.forEach(({ key, marker, row }) => {
+      row.del_status = nextStatus;
+      const group = routeDayGroups[key];
+      if (!group?.layers.includes(marker)) return;
+      group.layers = group.layers.filter(layer => layer !== marker);
+      const nextKey = `${row.NEWROUTE}|${markDelivered ? "Delivered" : row.NEWDAY}`;
+      if (!routeDayGroups[nextKey]) routeDayGroups[nextKey] = { layers: [] };
+      getSymbol(nextKey);
+      routeDayGroups[nextKey].layers.push(marker);
+      restoreMarkerStyle(marker, nextKey);
+    });
 
-if (!saved) {
-  alert("❌ Cloud save failed. Excel file was NOT updated.");
-  return;
+    document.querySelectorAll("#routeDayLayers input[type='checkbox'], #deliveredControls input[type='checkbox']")
+      .forEach(checkbox => {
+        if (checkbox.dataset.key) layerVisibilityState[checkbox.dataset.key] = checkbox.checked;
+      });
+    drawnLayer.clearLayers();
+    individuallySelectedMarkers.clear();
+    individuallyDeselectedMarkers.clear();
+    buildRouteDayLayerControls();
+    updateSelectionCount();
+    updateUndoButtonState();
+  }
+
+  const action = markDelivered ? "marked delivered" : "restored";
+  const fileNote = routeIsCurrent ? "" : ` in ${filePath}`;
+  setDeliverySaveStatus("saved", `Saved — ${count} ${stopLabel} ${action}${fileNote}.`);
 }
 
-
-// 🔥 CLEAR polygon
-if (drawnLayer) {
-  drawnLayer.clearLayers();
+function completeStops() {
+  return saveSelectedDeliveryStatus(true);
 }
-individuallySelectedMarkers.clear();
-individuallyDeselectedMarkers.clear();
 
-// 🔥 Recalculate selection state + restore styling
-updateSelectionCount();
-updateUndoButtonState();
-
-buildRouteDayLayerControls();
-
-alert(`${undoCount} stop(s) restored.`);
-
+function undoDelivered() {
+  return saveSelectedDeliveryStatus(false);
 }
  // ================= LOADING OVERLAY =================
 window.showLoading = function(message) {
