@@ -1446,8 +1446,24 @@ if (layerVisibilityState.hasOwnProperty(key)) {
 
 
 // Route/day column names differ by export: NEWROUTE/NEWDAY (original) or ROUTE/DAY (e.g. Trash&Recycle files).
-function rowRoute(row) { return row.NEWROUTE ?? row.ROUTE; }
-function rowDay(row) { return row.NEWDAY ?? row.DAY; }
+// If a file has BOTH sets, the user picks at upload time; the choice is remembered per file name
+// in localStorage ("routeColumns:<file>" = "NEW" | "PLAIN") and reused when the file is reopened.
+let routeColumnMode = "NEW";
+function rowRoute(row) { return routeColumnMode === "PLAIN" ? row.ROUTE : row.NEWROUTE ?? row.ROUTE; }
+function rowDay(row) { return routeColumnMode === "PLAIN" ? row.DAY : row.NEWDAY ?? row.DAY; }
+function workbookHasBothColumnSets(wb) {
+  const header = (XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 })[0] || []).map(String);
+  return ["NEWROUTE", "NEWDAY", "ROUTE", "DAY"].every(c => header.includes(c));
+}
+function chooseColumnMode(fileName, askUser) {
+  const key = "routeColumns:" + fileName;
+  if (askUser) {
+    const useNew = confirm(
+      "This file has two sets of route columns.\n\nOK = use NEWROUTE / NEWDAY\nCancel = use ROUTE / DAY");
+    localStorage.setItem(key, useNew ? "NEW" : "PLAIN");
+  }
+  return localStorage.getItem(key) || "NEW";
+}
 
 // ================= PROCESS ROUTE EXCEL =================
 // Core data flow: first sheet -> row objects -> one Leaflet marker per row.
@@ -1457,6 +1473,11 @@ function rowDay(row) { return row.NEWDAY ?? row.DAY; }
 function processExcelBuffer(buffer) {
   const wb = XLSX.read(new Uint8Array(buffer), { type: "array" });
   const ws = wb.Sheets[wb.SheetNames[0]];
+
+  routeColumnMode = workbookHasBothColumnSets(wb)
+    ? chooseColumnMode(window._currentFilePath || '', !!window._askColumnChoice)
+    : 'NEW';
+  window._askColumnChoice = false;
 
   const rows = XLSX.utils.sheet_to_json(ws);
 
@@ -1784,6 +1805,7 @@ async function uploadFile(file) {
     window._currentFilePath = file.name;
     setCurrentFileDisplay(window._currentFilePath);
 
+    window._askColumnChoice = true;
     processExcelBuffer(await file.arrayBuffer());
     closeMobileMenu();
     listFiles();
