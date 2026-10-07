@@ -36,7 +36,7 @@ Saved files live in the Supabase storage bucket `excel-files`. Files named like 
 - Each marker: `marker._rowRef` (its row object), `marker._base` (`{lat, lon, symbol}`).
 - Selection: `drawnLayer` (polygon/rectangle), `individuallySelectedMarkers`, `individuallyDeselectedMarkers`. **A stop is selected iff** it is in the first set, or inside the drawn shape and not in the second. Always use `isStopSelected(marker, tester)` (`createSelectionTester()` builds the polygon test once).
 - `mobileStopSelectionMode`: phone tap-selection mode flag.
-- `localStorage`: `cartdelivery.savedFiles.cartDelivery` (names for the Cart Delivery tab; per browser, not shared), `sunMode` (`on`/`off`).
+- `localStorage`: `cartdelivery.savedFiles.cartDelivery` (local cache of the Cart Delivery tab list; the real, shared list is the hidden bucket file `_cart-delivery-tab.json`, see `SHARED_TAB_FILE`), `sunMode` (`on`/`off`).
 
 ## Main flows
 1. **Open file**: saved-files modal (`listFiles`) or upload (`uploadFile`) -> `processExcelBuffer(buffer)` clears old state and builds markers. The modal opens on the **Cart Delivery** tab.
@@ -66,6 +66,8 @@ Saved files live in the Supabase storage bucket `excel-files`. Files named like 
 - Phone taps: with Select Stops off a tap opens the customer popup; with it on a tap selects (see `handleMobileStopTap`). Street labels (`updateStreetLabels`) show from zoom 16 when the checkbox is on and Select Stops is off.
 
 - Backup download (top-left ⬇ button): saves the whole open workbook, including current `del_status`, as `<Base>_Backup_YYYY-MM-DD_HHMM.xlsx`. `getDownloadBaseName` strips earlier `_Backup_`/`_Downloaded_` stamps and ` (1)` suffixes so names never grow after download -> upload cycles; the timestamp shows which copy is newest. Keep this behaviour.
+
+- **Cart Delivery tab is shared across phones**: `listFiles` loads `_cart-delivery-tab.json` from the bucket each time; add/remove calls `saveCartDeliveryFileNames()` (async, throws) and reverts on failure. The file is hidden from lists. First load seeds it from the phone's old localStorage list. Don't rename or delete it.
 
 ## Testing
 Build a small workbook in the browser console (`XLSX.utils.json_to_sheet`) and call `processExcelBuffer(...)` at 440x956 and desktop widths. Check: direct tap selects, overlapping tap opens the chooser, polygon + single deselect, Done, no horizontal scroll, no console errors. Don't save to the real bucket while testing.

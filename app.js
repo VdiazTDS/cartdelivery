@@ -1671,7 +1671,7 @@ if (status === "delivered") {
 
 // ================= LIST FILES FROM CLOUD =================
 // Saved-files popup: "Cart Delivery" tab (default, shown first) lists files the user chose, stored
-// per browser in localStorage under CART_DELIVERY_FILES_KEY; "All Files" lists the whole bucket.
+// shared across phones via a JSON file in the bucket (SHARED_TAB_FILE; localStorage is a cache); "All Files" lists the whole bucket.
 const CART_DELIVERY_FILES_KEY = "cartdelivery.savedFiles.cartDelivery";
 let cartDeliveryFileNames = new Set();
 try {
@@ -1686,15 +1686,43 @@ try {
 }
 let activeSavedFilesTab = "cartDelivery";
 
-function saveCartDeliveryFileNames() {
+// The Cart Delivery list is shared across all phones: it is stored as a small JSON file in the
+// same Supabase bucket (SHARED_TAB_FILE) and hidden from the file lists. localStorage is only a
+// local cache / one-time migration source. Reads never overwrite the shared file on failure.
+const SHARED_TAB_FILE = "_cart-delivery-tab.json";
+let sharedTabLoaded = false;
+
+async function loadSharedCartDeliveryNames() {
+  const { data } = sb.storage.from(BUCKET).getPublicUrl(SHARED_TAB_FILE);
+  const response = await fetch(data.publicUrl + "?v=" + Date.now(), { cache: "no-store" });
+  if (response.ok) {
+    const names = await response.json();
+    if (!Array.isArray(names)) throw new Error("Shared Cart Delivery list has an invalid format.");
+    cartDeliveryFileNames = new Set(names.filter(name => typeof name === "string"));
+  } else if (response.status === 400 || response.status === 404) {
+    // Not created yet: seed it from this browser's previous local list (if any).
+    if (cartDeliveryFileNames.size) await saveCartDeliveryFileNames();
+  } else {
+    throw new Error("Could not read shared Cart Delivery list (HTTP " + response.status + ").");
+  }
+  sharedTabLoaded = true;
   try {
     localStorage.setItem(CART_DELIVERY_FILES_KEY, JSON.stringify([...cartDeliveryFileNames]));
-  } catch (error) {
-    console.error("Could not save Cart Delivery file organization:", error);
-    alert("Could not save this file organization in this browser.");
-  }
+  } catch (error) { /* cache only */ }
 }
 
+// Uploads the shared list. Throws on failure so callers can revert their change.
+async function saveCartDeliveryFileNames() {
+  const body = new Blob([JSON.stringify([...cartDeliveryFileNames])], { type: "application/json" });
+  const { error } = await sb.storage.from(BUCKET).upload(SHARED_TAB_FILE, body, {
+    upsert: true,
+    contentType: "application/json"
+  });
+  if (error) throw error;
+  try {
+    localStorage.setItem(CART_DELIVERY_FILES_KEY, JSON.stringify([...cartDeliveryFileNames]));
+  } catch (error) { /* cache only */ }
+}
 function setSavedFilesTab(tab) {
   activeSavedFilesTab = tab;
   const cartDeliveryTab = document.getElementById("cartDeliveryFilesTab");
@@ -1716,6 +1744,14 @@ document.getElementById("allSavedFilesTab")
   .addEventListener("click", () => setSavedFilesTab("all"));
 
 async function listFiles() {
+  try {
+    await loadSharedCartDeliveryNames();
+  } catch (error) {
+    console.error(error);
+    if (activeSavedFilesTab === "cartDelivery" && !sharedTabLoaded) {
+      alert("Could not load the shared Cart Delivery list. Check your connection and try again.");
+    }
+  }
   const { data, error } = await sb.storage.from(BUCKET).list();
   if (error) {
     console.error("Could not list saved files:", error);
@@ -1729,7 +1765,7 @@ async function listFiles() {
   // Legacy summary files are not delivery datasets; keep them out of this list.
   const routeFiles = {};
   data.forEach(file => {
-    if (!/route[\s_.-]*summary/i.test(file.name)) routeFiles[file.name] = file.name;
+    if (file.name !== SHARED_TAB_FILE && !/route[\s_.-]*summary/i.test(file.name)) routeFiles[file.name] = file.name;
   });
 
   // Build UI
@@ -1762,13 +1798,21 @@ async function listFiles() {
     const isCartDeliveryFile = cartDeliveryFileNames.has(routeName);
     organizeBtn.textContent = isCartDeliveryFile ? "Remove from Cart Delivery" : "Add to Cart Delivery";
     organizeBtn.setAttribute("aria-pressed", String(isCartDeliveryFile));
-    organizeBtn.onclick = () => {
+    organizeBtn.onclick = async () => {
+      const previous = new Set(cartDeliveryFileNames);
       if (cartDeliveryFileNames.has(routeName)) {
         cartDeliveryFileNames.delete(routeName);
       } else {
         cartDeliveryFileNames.add(routeName);
       }
-      saveCartDeliveryFileNames();
+      organizeBtn.disabled = true;
+      try {
+        await saveCartDeliveryFileNames();
+      } catch (error) {
+        console.error("Could not save Cart Delivery list:", error);
+        cartDeliveryFileNames = previous;
+        alert("Could not update the Cart Delivery tab. Check your connection and try again.");
+      }
       listFiles();
     };
     li.appendChild(organizeBtn);
@@ -1836,8 +1880,9 @@ async function listFiles() {
     return;
   }
 
-  cartDeliveryFileNames.delete(routeName);
-  saveCartDeliveryFileNames();
+  if (cartDeliveryFileNames.delete(routeName)) {
+    try { await saveCartDeliveryFileNames(); } catch (error) { console.error(error); }
+  }
   alert("✅ File deleted successfully.");
   listFiles();
 };
