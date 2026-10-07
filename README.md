@@ -26,7 +26,7 @@ Route files are Excel/CSV; only the **first sheet** is read. One row = one stop.
 | `ROUTE`, `DAY` | Route id and weekday number 1-7 (Monday=1); grouping, filters, colors. `NEWROUTE`/`NEWDAY` are ignored |
 | `CSADR#`, `CSSDIR`, `CSSTRT`, `CSSFUX` | Address parts (number, direction, street, suffix) |
 | `SIZE`, `QTY`, `BINNO` | Shown in popup / chooser |
-| `SEQNO` | Optional numeric sequence (zero allowed); shown in popup/chooser and the sequence overlay |
+| `SEQNO` | Optional finite, nonnegative number or numeric text (zero allowed); shown in popup/chooser and the sequence overlay |
 | `del_status` | `"Delivered"` (case-insensitive) = done; empty = pending |
 
 Saved files live in the Supabase storage bucket `excel-files`. Files named like "route summary" are ignored (the old Route Summary panel was removed).
@@ -35,7 +35,8 @@ Saved files live in the Supabase storage bucket `excel-files`. Files named like 
 - `window._currentRows / _currentWorkbook / _currentFilePath`: the loaded file; used when saving.
 - `routeDayGroups["ROUTE|DAY"]` and `["ROUTE|Delivered"]` = `{ layers: [markers] }`; drives filter checkboxes (`buildRouteDayLayerControls`) and visibility (`applyFilters`).
 - Each marker: `marker._rowRef` (its row object), `marker._base` (`{lat, lon, symbol}`).
-- Selection: `drawnLayer` (polygon/rectangle), `individuallySelectedMarkers`, `individuallyDeselectedMarkers`. **A stop is selected iff** it is in the first set, or inside the drawn shape and not in the second. Always use `isStopSelected(marker, tester)` (`createSelectionTester()` builds the polygon test once).
+- Selection: `drawnLayer` (polygon/rectangle), `individuallySelectedMarkers`, `individuallyDeselectedMarkers`. **A stop is selected iff its marker is visible** and either it is in the first set or it is inside the drawn shape and not in the second. Always use `isStopSelected(marker, tester)` (`createSelectionTester()` builds the polygon test once).
+- `sequenceGroups`: a `Map` keyed by `JSON.stringify([route, day])`, separate from marker groups. Each group contains `{ route, day, stops }`; each stop holds `{ row, seq, index, latlng }`, with `latlng: null` for an invalid location. Row references are shared with `_currentRows`, so confirmed delivery changes update styling without changing sequence order.
 - `mobileStopSelectionMode`: phone tap-selection mode flag.
 - `localStorage`: `cartdelivery.savedFiles.cartDelivery` (local cache of the Cart Delivery tab list; the real, shared list is the hidden bucket file `_cart-delivery-tab.json`, see `SHARED_TAB_FILE`), `sunMode` (`on`/`off`).
 
@@ -45,8 +46,24 @@ Saved files live in the Supabase storage bucket `excel-files`. Files named like 
 3. **Mark delivered / undo**: `saveSelectedDeliveryStatus(markDelivered)` uploads the whole workbook with `del_status` changed; only after success does it update rows, move markers to the `|Delivered` group and refresh controls. Status shows preparation/upload stages, payload size and elapsed seconds in `#deliverySaveStatus`. **Data trust rule: markers/rows change only after a confirmed upload; never make this optimistic.** `serializeDeliveryWorkbook` generates Excel bytes, then repacks the ZIP entries with fflate level 6 (asynchronous compression for large entries). It falls back to SheetJS compression if fflate is unavailable, fails, or exceeds 20 seconds. No worksheet entries are removed. This reduces network traffic but still uploads the full workbook, so connection speed and file size matter. `window.lastDeliverySaveMetrics` records the latest upload's bytes, preparation/upload milliseconds and confirmation flag, without row data.
 4. **Layout**: `placeDeliveryControls()` moves the same buttons between the phone dock (below the map) and the desktop sidebar at 900px. `syncMobile*Layout` publishes `--mobile-controls-height` / `--mobile-header-height` CSS variables through a `ResizeObserver`.
 5. **Location**: Locate (follow GPS + heading); Copy Location (nearby addresses + coordinates for truck handoffs).
-   **Sequence arrows**: in Menu, turn on **Sequence arrows · SEQNO** and choose all sequences or a route/day. The overlay sorts numerically within each original `ROUTE`/`DAY`, independent of marker visibility, and keeps delivered stops in the original path. Thin blue lines/arrowheads connect stop coordinates directly (not road routing). Green check badges mark delivered stops even when their regular markers are hidden; lines between two delivered stops are gray/dashed. Badges and colors change only after confirmed delivery saves/undo. Invalid sequence/route/day rows are omitted with a notice; invalid locations break paths, and tied sequence values retain spreadsheet row order. New files rebuild the overlay; Reset Map clears it. A noninteractive Canvas pane below the stop markers preserves map taps and selection; arrowheads are sized in screen pixels and rebuilt after pan/zoom, with a 1,500-arrow cap per view.
-6. **Truck / trailer loads**: open **More → Truck / Trailer Loads** on phones (right sidebar on desktop). Choose or create a shared truck count profile, such as **Burnet**. Manually record a load only after the crew finishes unloading it: truck/trailer, optional vehicle name, unloading date/time, approximate trash and recycling quantities. Each trip counts once. Profiles are independent of route files and cart delivery order. All-date or today totals exclude voided entries; today uses the viewing phone's local date. A mistaken load can be voided and replaced; its history remains visible.
+6. **Sequence arrows**: open **Menu** on phones (left sidebar on desktop), enable **Sequence arrows · SEQNO**, and choose all sequences or a route/day. Original paths include delivered stops and remain independent of marker visibility. See [Sequence overlay](#sequence-overlay) for styling and data rules.
+7. **Truck / trailer loads**: open **More → Truck / Trailer Loads** on phones (right sidebar on desktop). Choose or create a shared truck count profile, such as **Burnet**. Manually record a load only after the crew finishes unloading it: truck/trailer, optional vehicle name, unloading date/time, approximate trash and recycling quantities. Each trip counts once. Profiles are independent of route files and cart delivery order. All-date or today totals exclude voided entries; today uses the viewing phone's local date. A mistaken load can be voided and replaced; its history remains visible.
+
+### Sequence overlay
+
+Blue lines and arrowheads connect consecutive stop coordinates in numeric `SEQNO` order within each original `ROUTE`/`DAY`. These are straight connections, not road directions. Stops on different routes or days never connect. Duplicate sequence values retain spreadsheet row order.
+
+| Display | Meaning |
+|---|---|
+| Blue connection | At least one endpoint is pending |
+| Gray dashed connection and gray arrows | Both endpoints are delivered |
+| Green check badge | Delivered stop, including when its regular marker is hidden |
+
+Rows with invalid `SEQNO`, a blank route, or a day outside integer 1–7 are omitted from the overlay with a notice. Rows with valid grouping/sequence but invalid coordinates stay in the ordered list and break the path; the overlay never bridges that missing location. Consecutive stops at the same coordinate have no connection. The toggle is disabled unless at least one route/day has adjacent stops with distinct valid locations. These rules apply to the overlay; `rowSequence()` can still show a valid sequence in a marker popup or nearby-stop chooser.
+
+`rebuildSequenceData(rows)` runs on file load and Reset Map, rebuilding groups and the route/day dropdown. Loading another file resets the dropdown to all sequences and retains the enabled toggle only if a drawable sequence exists. Reset Map clears and disables it. Sequence controls are session state and are not saved to the workbook or localStorage.
+
+`scheduleSequenceRender()` combines redraw requests into one animation frame. `renderSequenceLayer()` reads the confirmed row status and updates batched Canvas paths in `sequencePane` (z-index 350, below regular stop markers). The pane and paths are noninteractive, preserving map taps and selection. Badges and arrowheads use projected pixel offsets and redraw after pan, zoom, or resize. Arrow placement is clipped to the viewport and capped at 1,500 per view; lines remain complete, and short connections may have no arrowhead. After a confirmed save/undo, the shared row references supply the new status and only a redraw is needed.
 
 ### Shared load storage
 - **Download Excel · selected profile** exports the selected profile and date filter, including all matching history beyond the first 30 displayed entries. The workbook has **Summary** totals and **Load History** sheets, with numeric cart quantities, UTC/local dates, IDs, and voided entries clearly marked and excluded from totals. It exports the currently loaded confirmed snapshot; refresh first for the latest data. The summary includes export and last-refresh timestamps. Downloads do not change cloud data.
@@ -60,6 +77,7 @@ Saved files live in the Supabase storage bucket `excel-files`. Files named like 
 - **New shared button**: add it in `index.html`, place it in both branches of `placeDeliveryControls()`, style both layouts.
 - **Delivery control appearance**: shared buttons use `delivery-action` and `data-action` for purpose colors and decorative CSS icons. The final action styles in `style.css` cover both themes, active/disabled/saving states, and the phone/desktop placements. Keep text labels; JS updates them without removing the icons.
 - **Different route/day column names**: change only `rowRoute()` / `rowDay()` in `app.js`; every other place (grouping, nearby-stop chooser, delivered save) reads route/day through them. Never read `row.ROUTE`/`row.DAY` directly.
+- **Sequence column or appearance**: parse sequence values in `rowSequence()`, group/sort in `rebuildSequenceData()`, and draw in `renderSequenceLayer()`. Keep original row references and ordering independent of marker visibility. Styling lives in the sequence Canvas paths in `app.js`; sidebar controls use the final `.sequence-controls` rules in `style.css`.
 - **New spreadsheet column in popups**: extend `popupContent` in `processExcelBuffer` (and `showNearbyStopPicker` if relevant).
 - **Tap sensitivity**: `getNearbyVisibleStops` (hit radius) and `handleMobileStopTap` (12px ambiguity threshold).
 - **New selection-based action**: iterate `routeDayGroups`, filter with `isStopSelected`, then call `updateSelectionCount()` and `updateUndoButtonState()`.
@@ -84,7 +102,9 @@ Saved files live in the Supabase storage bucket `excel-files`. Files named like 
 - **Dynamic Island / notch**: `index.html` uses `viewport-fit=cover`; header, sidebar, map and dock offsets use `env(safe-area-inset-*)` (the JS in `placeDeliveryControls`/layout observer measures the real header height, so the sidebar and map start below it). To test, replace `env(safe-area-inset-top)` with `59px` and `env(safe-area-inset-bottom)` with `34px` in a copy of the CSS (iPhone 16 Pro Max values). Any new fixed/absolute element near a screen edge must include the matching `env()` inset.
 
 ## Testing
-Build a small workbook in the browser console (`XLSX.utils.json_to_sheet`) and call `processExcelBuffer(...)` at 440x956 and desktop widths. Check: direct tap selects, overlapping tap opens the chooser, polygon + single deselect, Done, no horizontal scroll, no console errors. Don't save to the real bucket while testing.
+Build a small workbook in the browser console (`XLSX.utils.json_to_sheet`) and call `processExcelBuffer(...)` at 440x956 and desktop widths. Check: with **Select Stops** enabled, a direct phone tap selects and an overlapping tap opens the chooser; with it off, a tap opens details. Also check desktop clicks, polygon + single deselect, Done, no horizontal scroll, and no console errors. Don't save to the real bucket while testing.
+
+For the sequence overlay, use unsorted `SEQNO` values such as `10`, `2`, and `0`, multiple routes/days, and delivered stops. Verify numeric order, separate paths, hidden delivered badges, and unchanged stop selection with the overlay on. Check duplicate values, invalid sequence/day/location values, and colocated stops; then pan/zoom, switch files, toggle the overlay, and Reset Map. With an intercepted or fake upload, verify delayed/failed saves leave rows, badges, and colors unchanged; successful delivery and undo update styling while preserving connections. Never let a test upload reach the real bucket.
 
 - **Polygon drawing on touch**: Leaflet.Draw's `_onTouch` is overridden in `app.js` (above `drawControl`) so a vertex is added only on a quick, non-moving, single-finger tap; panning/pinching while drawing adds no points.
 

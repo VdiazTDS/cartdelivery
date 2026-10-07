@@ -10,16 +10,20 @@
  *   5. Selection engine: createSelectionTester, isStopSelected, toggleIndividualStopSelection,
  *      nearby-stop chooser (phone tap selection), updateSelectionCount
  *   6. Marker creation, route/day filters, statistics
- *   7. processExcelBuffer: turns a workbook into markers (core data flow)
- *   8. Saved files (Supabase storage list/upload, Cart Delivery tab in localStorage)
- *   9. placeDeliveryControls + initApp: layout wiring, mobile menu, selection mode, reset, search
- *  10. Cloud save of delivery status (saveSelectedDeliveryStatus), collapsibles, button events
+ *   7. Sequence arrows: rowSequence, rebuildSequenceData, renderSequenceLayer
+ *   8. processExcelBuffer: turns a workbook into markers and sequence groups (core data flow)
+ *   9. Shared truck / trailer load log and Excel export
+ *  10. Saved files (Supabase storage list/upload, shared Cart Delivery tab)
+ *  11. placeDeliveryControls + initApp: layout wiring, mobile menu, selection mode, reset, search
+ *  12. Cloud save of delivery status (saveSelectedDeliveryStatus), collapsibles, button events
  *
  * Key invariants:
  *   - Every marker has marker._rowRef (the spreadsheet row object) and marker._base ({lat, lon, symbol}).
  *   - routeDayGroups["ROUTE|DAY"] or ["ROUTE|Delivered"] = { layers: [markers] } is the source of truth for markers.
- *   - A stop is "selected" if it is in individuallySelectedMarkers, or inside the drawn polygon and not in
- *     individuallyDeselectedMarkers. Always use isStopSelected(); never read marker styles to decide.
+ *   - Only visible markers can be selected: individuallySelectedMarkers, or inside the drawn polygon and
+ *     not in individuallyDeselectedMarkers. Always use isStopSelected(); never read marker styles to decide.
+ *   - sequenceGroups keeps original route/day order and row references, including hidden delivered stops.
+ *     Delivery badges and segment colors read those rows only after a confirmed save/undo.
  *   - del_status === "Delivered" (case-insensitive) in a row means delivered. Saving rewrites the whole sheet.
  *   - updateSelectionCount is re-assigned later (mobile selection section) to also refresh the phone button;
  *     call it by name after any selection change, plus updateUndoButtonState().
@@ -1531,6 +1535,7 @@ if (layerVisibilityState.hasOwnProperty(key)) {
 function rowRoute(row) { return row.ROUTE; }
 function rowDay(row) { return row.DAY; }
 
+// Zero is a valid sequence; blank or invalid values must not become zero.
 function rowSequence(row) {
   const value = row.SEQNO;
   if ((typeof value !== "number" && typeof value !== "string") || String(value).trim() === "") return null;
@@ -1538,7 +1543,8 @@ function rowSequence(row) {
   return Number.isFinite(number) && number >= 0 ? number : null;
 }
 
-// This overlay owns its route/day filter; delivered-marker visibility never changes its path.
+// ================= SEQUENCE ARROWS =================
+// Original route/day groups are independent of marker filters and delivered-marker groups.
 const sequenceGroups = new Map();
 const sequencePane = map.createPane("sequencePane");
 sequencePane.style.zIndex = "350";
@@ -1561,6 +1567,7 @@ function scheduleSequenceRender() {
   sequenceFrame = requestAnimationFrame(() => { sequenceFrame = null; renderSequenceLayer(); });
 }
 
+// Rebuild on file load/reset; retain row references so confirmed saves need only a redraw.
 function rebuildSequenceData(rows) {
   sequenceGroups.clear();
   let missing = 0;
@@ -1578,6 +1585,7 @@ function rebuildSequenceData(rows) {
     if (!located) invalidCoordinates++;
     const key = JSON.stringify([route, day]);
     if (!sequenceGroups.has(key)) sequenceGroups.set(key, { route, day, stops: [] });
+    // Keep an unlocated stop in order to break the path instead of skipping across it.
     sequenceGroups.get(key).stops.push({ row, seq, index, latlng: located ? L.latLng(lat, lng) : null });
   });
   sequenceGroups.forEach(group => {
@@ -1624,6 +1632,7 @@ function renderSequenceLayer() {
       if (!stop.latlng || !delivered(stop)) return;
       const point = map.project(stop.latlng, zoom);
       if (!bounds.contains(point)) return;
+      // Projected offsets keep badges the same screen size at every zoom.
       const at = (x, y) => map.unproject(L.point(point.x + x, point.y + y), zoom);
       badges.push([at(-6, -6), at(6, -6), at(6, 6), at(-6, 6)]);
       checks.push([at(-3, 0), at(-1, 2.5), at(3.5, -3)]);
@@ -1636,6 +1645,7 @@ function renderSequenceLayer() {
       segmentCount++;
       const a = map.project(from.latlng, zoom), b = map.project(to.latlng, zoom);
       if (a.distanceTo(b) < 24 || arrowCount >= 1500) continue;
+      // Clip only arrow placement; preserve the full lines and original direction.
       const clipped = L.LineUtil.clipSegment(a, b, bounds, false);
       if (!clipped) continue;
       const length = clipped[0].distanceTo(clipped[1]);
@@ -1668,8 +1678,8 @@ map.on("zoomend moveend resize", scheduleSequenceRender);
 // ================= PROCESS ROUTE EXCEL =================
 // Core data flow: first sheet -> row objects -> one Leaflet marker per row.
 // Required columns: LATITUDE, LONGITUDE, ROUTE, DAY. Optional: CSADR#, CSSDIR, CSSTRT, CSSFUX
-// (address), SIZE, QTY, BINNO (popup), del_status ("Delivered" marks completed stops).
-// Resets all map/selection state, then fills routeDayGroups keyed "ROUTE|DAY" or "ROUTE|Delivered".
+// (address), SIZE, QTY, BINNO (popup), SEQNO (sequence), del_status ("Delivered" marks completed stops).
+// Rebuilds sequenceGroups, resets map/selection, then fills routeDayGroups by day or Delivered.
 function processExcelBuffer(buffer) {
   const wb = XLSX.read(new Uint8Array(buffer), { type: "array" });
   const ws = wb.Sheets[wb.SheetNames[0]];
@@ -3218,7 +3228,7 @@ async function saveWorkbookToCloud(rows, workbook, filePath, onProgress = () => 
 
 // Marks selected stops Delivered (markDelivered=true) or restores them (false).
 // Flow: collect selected rows -> upload a new workbook to Supabase -> only on success mutate
-// row.del_status, move markers between routeDayGroups keys, rebuild layer controls.
+// row.del_status, move markers between routeDayGroups keys, refresh controls and sequence styling.
 // Uploads overwrite the whole file, so never mutate rows before the upload succeeds.
 // Assumes a single editing phone at a time (viewers only read); there is no merge with remote changes.
 async function saveSelectedDeliveryStatus(markDelivered) {
