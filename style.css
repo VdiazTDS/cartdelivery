@@ -1016,12 +1016,17 @@ header p {
   /* Move selection panel ABOVE the summary instead of overlapping */
   #selectionBox {
     position: fixed;
-    left: 10px;
-    right: 10px;
-    bottom: 260px;   /* sits just above route summary */
+    /* Leave the 44px drawing controls and their margins unobstructed. */
+    left: max(76px, env(safe-area-inset-left));
+    right: max(10px, env(safe-area-inset-right));
+    bottom: calc(var(--mobile-summary-height, 40px) + 76px);
     top: auto;
 
     width: auto;
+    box-sizing: border-box;
+    max-height: max(100px, calc(100dvh - var(--mobile-header-height, 170px) - var(--mobile-summary-height, 40px) - 88px));
+    transform: none;
+    z-index: 1400;
     border-radius: 14px;
     box-shadow: 0 8px 20px rgba(0,0,0,0.5);
 
@@ -1030,7 +1035,28 @@ header p {
 
   /* Visible state */
   #selectionBox.show {
-    display: block;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+  }
+
+  #selectionBox.collapsed {
+    transform: none;
+  }
+
+  #selectionBox #selectionCount {
+    margin: 0;
+  }
+
+  #selectionBox #clearSelectionBtn {
+    grid-column: 1 / -1;
+    min-height: 44px;
+    margin: 0;
+  }
+
+  #selectionBox #desktopLocateContainer {
+    display: none;
   }
 
   /* Small floating open button */
@@ -1038,7 +1064,7 @@ header p {
     position: fixed;
     display: block;
     right: 14px;
-    bottom: 90px;
+    bottom: calc(var(--mobile-summary-height, 40px) + 16px);
 
     background: #42a5f5;
     color: #000;
@@ -1600,7 +1626,6 @@ body.sun-mode .title-with-tools h1 {
 
   #mobileSelectionBtn {
     right: 10px;
-    bottom: calc(90px + env(safe-area-inset-bottom));
     min-height: 44px;
   }
 }
@@ -1709,6 +1734,7 @@ body.sun-mode .mobile-header-buttons {
 
 @media (max-width: 900px) {
   #selectionBox {
+    width: auto;
     border: 1px solid #314152;
     border-radius: 14px;
     background: linear-gradient(165deg, #1f2b38 0%, #18222c 100%);

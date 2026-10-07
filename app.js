@@ -2124,6 +2124,27 @@ function syncMobileSidebarLayout() {
 syncMobileSidebarLayout();
 window.addEventListener("resize", syncMobileSidebarLayout);
 
+// Anchor mobile selection actions to the summary's actual height, including
+// the iPhone home-indicator inset and changes while resizing the summary.
+const mobileSummaryPanel = document.getElementById("bottomSummary");
+function syncMobileSelectionLayout() {
+  if (window.innerWidth > 900) return;
+  const root = document.documentElement;
+  root.style.setProperty("--mobile-summary-height", `${mobileSummaryPanel.offsetHeight}px`);
+  root.style.setProperty("--mobile-header-height", `${pageHeader.offsetHeight}px`);
+}
+
+const mobileLayoutObserver = new ResizeObserver(() => {
+  syncMobileSelectionLayout();
+  syncMobileSidebarLayout();
+  syncSelectionBoxTop();
+  map.invalidateSize({ pan: false });
+});
+mobileLayoutObserver.observe(mobileSummaryPanel);
+mobileLayoutObserver.observe(pageHeader);
+window.addEventListener("resize", syncMobileSelectionLayout);
+syncMobileSelectionLayout();
+
 if (mobileMenuBtn && sidebar && overlay) {
 
   mobileMenuBtn.addEventListener("click", () => {
