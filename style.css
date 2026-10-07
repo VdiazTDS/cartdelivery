@@ -1695,7 +1695,7 @@ body.sun-mode #baseMapSelect {
 }
 
 /* ===== SUN MODE: FORCE WHITE TEXT FOR SPECIFIC CONTROLS ===== */
-body.sun-mode #openFileManagerBtn,
+/* Open Saved Files keeps its light Sun Mode style (.file-manager-btn rules below) so its dark text stays readable. */
 body.sun-mode #resetMapBtn {
   background: #111111 !important;
   color: #ffffff !important;
@@ -4070,3 +4070,10 @@ body.sun-mode #copyLocationStatus[data-state="copied"] {
   box-shadow: 0 2px 8px rgba(0,0,0,.35);
 }
 #drawActionBar #drawCancelBtn { background: #6b7280; }
+
+/* ===== SUN MODE TEXT CONTRAST (final): explicit colors so no generic sun-mode rule makes text invisible ===== */
+body.sun-mode .file-manager-btn .file-manager-title { color: #11283f !important; }
+body.sun-mode .file-manager-btn .file-manager-subtitle { color: #3a536f !important; }
+body.sun-mode #resetMapBtn .reset-map-title { color: #ffffff !important; }
+body.sun-mode #resetMapBtn .reset-map-subtitle { color: #d6e4f2 !important; }
+body.sun-mode #resetMapBtn .reset-map-icon { color: #ffffff !important; }
