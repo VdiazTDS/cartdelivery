@@ -23,7 +23,7 @@ Route files are Excel/CSV; only the **first sheet** is read. One row = one stop.
 | Column | Use |
 |---|---|
 | `LATITUDE`, `LONGITUDE` | Marker position (rows without them are skipped) |
-| `NEWROUTE`, `NEWDAY` | Route id and weekday number 1-7 (Monday=1); grouping, filters, colors |
+| `ROUTE`, `DAY` | Route id and weekday number 1-7 (Monday=1); grouping, filters, colors. `NEWROUTE`/`NEWDAY` are ignored |
 | `CSADR#`, `CSSDIR`, `CSSTRT`, `CSSFUX` | Address parts (number, direction, street, suffix) |
 | `SIZE`, `QTY`, `BINNO` | Shown in popup / chooser |
 | `del_status` | `"Delivered"` (case-insensitive) = done; empty = pending |
