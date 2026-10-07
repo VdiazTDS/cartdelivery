@@ -1555,6 +1555,9 @@ if (labelText) {
         return;
       }
 
+      // Phone: with Select Stops off, a tap only opens the customer details popup.
+      if (window.innerWidth <= 900) return;
+
       toggleIndividualStopSelection(marker);
       updateSelectionCount();
       updateUndoButtonState();

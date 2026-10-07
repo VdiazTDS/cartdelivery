@@ -40,7 +40,7 @@ Saved files live in the Supabase storage bucket `excel-files`. Files named like 
 
 ## Main flows
 1. **Open file**: saved-files modal (`listFiles`) or upload (`uploadFile`) -> `processExcelBuffer(buffer)` clears old state and builds markers. The modal opens on the **Cart Delivery** tab.
-2. **Select**: desktop clicks markers or draws polygons; phone uses **Select Stops** mode. `handleMobileStopTap` selects the nearest stop, or shows the chooser when the two nearest are within 12px. Finish with **Done**.
+2. **Select**: desktop clicks markers or draws polygons; phone uses **Select Stops** mode. `handleMobileStopTap` selects the nearest stop, or shows the chooser when the two nearest are within 12px. Finish with **Done**. With Select Stops off, a phone tap only opens the customer details popup (no selection).
 3. **Mark delivered / undo**: `saveSelectedDeliveryStatus(markDelivered)` uploads the whole workbook with `del_status` changed; only after success does it update rows, move markers to the `|Delivered` group and refresh controls. Status shows in `#deliverySaveStatus` via `setDeliverySaveStatus`.
 4. **Layout**: `placeDeliveryControls()` moves the same buttons between the phone dock (below the map) and the desktop sidebar at 900px. `syncMobile*Layout` publishes `--mobile-controls-height` / `--mobile-header-height` CSS variables through a `ResizeObserver`.
 5. **Location**: Locate (follow GPS + heading); Copy Location (nearby addresses + coordinates for truck handoffs).
