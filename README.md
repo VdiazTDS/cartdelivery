@@ -65,6 +65,8 @@ Saved files live in the Supabase storage bucket `excel-files`. Files named like 
 - One phone edits delivery status at a time; other phones only view, so there is no multi-writer conflict handling. Each save overwrites the whole file from what that phone loaded. Viewers see a file as it was when opened (reopen it or use Refresh App to see updates). If multi-driver editing is ever needed, reload the latest file before each save and apply only the changed rows.
 - Phone taps: with Select Stops off a tap opens the customer popup; with it on a tap selects (see `handleMobileStopTap`). Street labels (`updateStreetLabels`) show from zoom 16 when the checkbox is on and Select Stops is off.
 
+- Backup download (top-left ⬇ button): saves the whole open workbook, including current `del_status`, as `<Base>_Backup_YYYY-MM-DD_HHMM.xlsx`. `getDownloadBaseName` strips earlier `_Backup_`/`_Downloaded_` stamps and ` (1)` suffixes so names never grow after download -> upload cycles; the timestamp shows which copy is newest. Keep this behaviour.
+
 ## Testing
 Build a small workbook in the browser console (`XLSX.utils.json_to_sheet`) and call `processExcelBuffer(...)` at 440x956 and desktop widths. Check: direct tap selects, overlapping tap opens the chooser, polygon + single deselect, Done, no horizontal scroll, no console errors. Don't save to the real bucket while testing.
 

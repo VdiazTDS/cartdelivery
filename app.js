@@ -573,15 +573,20 @@ if (hardRefreshBtn) {
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 
-// Prevent recursive growth like "..._Downloaded_<ts>_Downloaded_<ts>".
+// Backup download names are "<Base>_Backup_YYYY-MM-DD_HHMM.xlsx" (short, sorts by date, newest last).
+// The base name is cleaned first so re-uploading and re-downloading never grows the name:
+// strips any earlier _Backup_/_Downloaded_ stamps (new or old format, repeated) and browser
+// duplicate suffixes like " (1)", and caps the length.
 function getDownloadBaseName(filePath) {
-  const rawName = (filePath || "Export").replace(/\.[^/.]+$/, "");
-  return rawName.replace(
-    /(?:_Downloaded_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})+$/i,
-    ""
-  );
+  let name = (filePath || "Export").replace(/\.[^/.]+$/, "");
+  const stamp = /(?:[_ -]*\(\d+\))?(?:_(?:Backup|Downloaded)_\d{4}-\d{2}-\d{2}_\d{2}-?\d{2}(?:-\d{2})?)+(?:[_ -]*\(\d+\))?$/i;
+  let previous;
+  do {
+    previous = name;
+    name = name.replace(stamp, "").replace(/[_ -]*\(\d+\)$/, "");
+  } while (name !== previous);
+  return name.slice(0, 60) || "Export";
 }
-
 function setCurrentFileDisplay(filePath) {
   const label = document.getElementById("currentFileDisplay");
   const name = document.getElementById("currentFileName");
@@ -2372,19 +2377,14 @@ if (downloadBtn && modal && confirmBtn && cancelBtn) {
 
     const now = new Date();
 
+    const pad = n => String(n).padStart(2, "0");
     const timestamp =
-      now.getFullYear() + "-" +
-      String(now.getMonth() + 1).padStart(2, "0") + "-" +
-      String(now.getDate()).padStart(2, "0") + "_" +
-      String(now.getHours()).padStart(2, "0") + "-" +
-      String(now.getMinutes()).padStart(2, "0") + "-" +
-      String(now.getSeconds()).padStart(2, "0");
+      `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
 
     const baseName = getDownloadBaseName(window._currentFilePath);
 
-    const newFileName = `${baseName}_Downloaded_${timestamp}.xlsx`;
-
-    XLSX.writeFile(window._currentWorkbook, newFileName);
+    const newFileName = `${baseName}_Backup_${timestamp}.xlsx`;
+    XLSX.writeFile(window._currentWorkbook, newFileName, { compression: true });
   });
 }
 
