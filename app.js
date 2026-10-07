@@ -2903,3 +2903,8 @@ document.getElementById("completeStopsBtnMobile")
   
   listFiles();
 }
+
+// PWA: register the service worker (home-screen install, offline shell, cached tiles).
+if ("serviceWorker" in navigator && location.protocol !== "file:") {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}

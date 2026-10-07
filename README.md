@@ -77,3 +77,13 @@ Build a small workbook in the browser console (`XLSX.utils.json_to_sheet`) and c
 - **Polygon drawing on touch**: Leaflet.Draw's `_onTouch` is overridden in `app.js` (above `drawControl`) so a vertex is added only on a quick, non-moving, single-finger tap; panning/pinching while drawing adds no points.
 
 - **Closing polygons**: while drawing, the first point turns green/large and a **Finish Shape** / **Cancel** bar appears at the top of the map after 3 points (`EASIER SHAPE CLOSING` in `app.js`, `#drawActionBar` in `style.css`).
+
+
+## Install as a home-screen app (PWA)
+
+On iPhone: open the site in Safari, tap Share, then **Add to Home Screen**. It opens full-screen with its own icon.
+
+- Files: `manifest.webmanifest`, `sw.js`, `icon-192.png`, `icon-512.png`, `apple-touch-icon.png`. The service worker is registered at the end of `app.js`.
+- App files use network-first (updates arrive immediately, cached copy only when offline). Map tiles are cached (up to 600) for faster/offline panning.
+- Supabase requests are **never** cached, so delivery data is always live. Saving still requires a connection.
+- If you change `sw.js` caching rules, bump the cache names in it.
