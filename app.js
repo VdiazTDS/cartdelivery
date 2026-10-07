@@ -2648,6 +2648,7 @@ async function saveWorkbookToCloud(rows, workbook, filePath) {
 // Flow: collect selected rows -> upload a new workbook to Supabase -> only on success mutate
 // row.del_status, move markers between routeDayGroups keys, rebuild layer controls.
 // Uploads overwrite the whole file, so never mutate rows before the upload succeeds.
+// Assumes a single editing phone at a time (viewers only read); there is no merge with remote changes.
 async function saveSelectedDeliveryStatus(markDelivered) {
   if (deliverySaveInProgress) return;
   const rows = window._currentRows;

@@ -17,3 +17,5 @@ Read [README.md](./README.md) first (architecture, data model, how-to recipes).
 
 - Read a stop's route/day only via `rowRoute(row)` / `rowDay(row)` (they use the `ROUTE` / `DAY` columns; `NEWROUTE`/`NEWDAY` are ignored).
 
+
+- Delivery status changes must stay confirm-then-mutate: upload first, update rows/markers only on success. Never make it optimistic.

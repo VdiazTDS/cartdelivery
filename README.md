@@ -41,7 +41,7 @@ Saved files live in the Supabase storage bucket `excel-files`. Files named like 
 ## Main flows
 1. **Open file**: saved-files modal (`listFiles`) or upload (`uploadFile`) -> `processExcelBuffer(buffer)` clears old state and builds markers. The modal opens on the **Cart Delivery** tab.
 2. **Select**: desktop clicks markers or draws polygons; phone uses **Select Stops** mode. `handleMobileStopTap` selects the nearest stop, or shows the chooser when the two nearest are within 12px. Finish with **Done**. With Select Stops off, a phone tap only opens the customer details popup (no selection).
-3. **Mark delivered / undo**: `saveSelectedDeliveryStatus(markDelivered)` uploads the whole workbook with `del_status` changed; only after success does it update rows, move markers to the `|Delivered` group and refresh controls. Status shows in `#deliverySaveStatus` via `setDeliverySaveStatus`.
+3. **Mark delivered / undo**: `saveSelectedDeliveryStatus(markDelivered)` uploads the whole workbook with `del_status` changed; only after success does it update rows, move markers to the `|Delivered` group and refresh controls. Status shows in `#deliverySaveStatus` via `setDeliverySaveStatus`. **Data trust rule: markers/rows change only after a confirmed upload; never make this optimistic.** Uploads are zip-compressed (`compression: true`, ~3x smaller).
 4. **Layout**: `placeDeliveryControls()` moves the same buttons between the phone dock (below the map) and the desktop sidebar at 900px. `syncMobile*Layout` publishes `--mobile-controls-height` / `--mobile-header-height` CSS variables through a `ResizeObserver`.
 5. **Location**: Locate (follow GPS + heading); Copy Location (nearby addresses + coordinates for truck handoffs).
 
@@ -60,6 +60,10 @@ Saved files live in the Supabase storage bucket `excel-files`. Files named like 
 - Saving rewrites the whole file (last writer wins if two devices edit the same file).
 - Nearby-stop lookup scans all visible markers per tap; re-evaluate if routes reach many thousands of stops.
 - `HEADER_TOOL_LINKS` still has placeholder `#` links.
+
+## Usage assumptions
+- One phone edits delivery status at a time; other phones only view, so there is no multi-writer conflict handling. Each save overwrites the whole file from what that phone loaded. Viewers see a file as it was when opened (reopen it or use Refresh App to see updates). If multi-driver editing is ever needed, reload the latest file before each save and apply only the changed rows.
+- Phone taps: with Select Stops off a tap opens the customer popup; with it on a tap selects (see `handleMobileStopTap`). Street labels (`updateStreetLabels`) show from zoom 16 when the checkbox is on and Select Stops is off.
 
 ## Testing
 Build a small workbook in the browser console (`XLSX.utils.json_to_sheet`) and call `processExcelBuffer(...)` at 440x956 and desktop widths. Check: direct tap selects, overlapping tap opens the chooser, polygon + single deselect, Done, no horizontal scroll, no console errors. Don't save to the real bucket while testing.
