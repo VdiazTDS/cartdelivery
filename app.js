@@ -1669,6 +1669,343 @@ if (status === "delivered") {
 
 
 
+// ================= SHARED TRUCK / TRAILER LOAD LOG =================
+function validateLoadLogEvent(event, name) {
+  const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+  const profileId = /^[a-f0-9]{64}$/;
+  const text = (value, max) => typeof value === "string" && value.length <= max;
+  const quantity = value => Number.isInteger(value) && value >= 0 && value <= 100000;
+  let valid = event && event.version === 1 && Number.isFinite(Date.parse(event.createdAt));
+  if (event?.kind === "profile") {
+    valid &&= profileId.test(event.id) && text(event.name, 80) && event.name.trim().length > 0;
+  } else if (event?.kind === "load") {
+    valid &&= uuid.test(event.id) && profileId.test(event.profileId) &&
+      ["truck", "trailer"].includes(event.vehicleType) && text(event.vehicleName, 60) &&
+      quantity(event.trash) && quantity(event.recycling) && event.trash + event.recycling > 0 &&
+      Number.isFinite(Date.parse(event.unloadedAt));
+  } else if (event?.kind === "void") {
+    valid &&= uuid.test(event.id);
+  } else valid = false;
+  if (!valid || name !== `${event.kind}-${event.id}.json`) throw new Error("Invalid load log record");
+  return event;
+}
+
+async function readLoadLogEvent(name) {
+  const { data } = sb.storage.from(BUCKET).getPublicUrl(`${LOAD_LOG_PREFIX}/${name}`);
+  const response = await fetch(`${data.publicUrl}?v=${Date.now()}`, {
+    cache: "no-store", signal: AbortSignal.timeout(15000)
+  });
+  if (!response.ok) throw new Error(`Load log read failed (${response.status})`);
+  return validateLoadLogEvent(await response.json(), name);
+}
+
+async function writeLoadLogEvent(event) {
+  const name = `${event.kind}-${event.id}.json`;
+  validateLoadLogEvent(event, name);
+  try {
+    const { error } = await sb.storage.from(BUCKET).upload(`${LOAD_LOG_PREFIX}/${name}`,
+      new Blob([JSON.stringify(event)], { type: "application/json" }),
+      { upsert: false, contentType: "application/json", cacheControl: "0" });
+    if (error) throw error;
+    return event;
+  } catch (error) {
+    // A lost response or a retry must not count the same load twice.
+    try {
+      const existing = await readLoadLogEvent(name);
+      if (event.kind !== "load" || JSON.stringify(existing) === JSON.stringify(event)) return existing;
+    } catch (_) { /* Preserve the original save failure. */ }
+    throw error;
+  }
+}
+
+function setupLoadLog() {
+  const el = id => document.getElementById(id);
+  const dialog = el("loadLogDialog");
+  const profileSelect = el("loadLogProfile");
+  const form = el("loadLogForm");
+  const profileForm = el("loadProfileForm");
+  const syncStatus = el("loadLogSyncStatus");
+  const saveStatus = el("loadLogSaveStatus");
+  let cache = new Map();
+  let events = [];
+  let loaded = false;
+  let lastRefreshedAt = null;
+  let writing = false;
+  let refreshTask = null;
+  let refreshTimer;
+  let shown = 30;
+  let pendingLoad = null;
+  let preferredProfile = "";
+  try { preferredProfile = localStorage.getItem("cartdelivery.loadProfile") || ""; } catch (_) { /* Preference only. */ }
+  const status = (node, message, state = "ready") => {
+    node.textContent = message;
+    node.dataset.state = state;
+  };
+  const node = (tag, text, className) => {
+    const result = document.createElement(tag);
+    result.textContent = text;
+    if (className) result.className = className;
+    return result;
+  };
+  const currentProfile = () => events.find(event => event.kind === "profile" && event.id === profileSelect.value);
+  const profileLoads = profile => events.filter(event => event.kind === "load" && event.profileId === profile?.id &&
+    (el("loadLogPeriod").value !== "today" || new Date(event.unloadedAt).toDateString() === new Date().toDateString()))
+    .sort((a, b) => b.unloadedAt.localeCompare(a.unloadedAt) || b.createdAt.localeCompare(a.createdAt));
+  const rememberProfile = () => {
+    preferredProfile = profileSelect.value;
+    try { localStorage.setItem("cartdelivery.loadProfile", preferredProfile); } catch (_) { /* Preference only. */ }
+  };
+  const localDateTime = () => {
+    const now = new Date();
+    return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  };
+  function updateControls() {
+    dialog.dataset.editing = String(!form.hidden || !profileForm.hidden);
+    profileSelect.disabled = writing || !form.hidden;
+    el("newLoadBtn").disabled = writing || !currentProfile();
+    el("newLoadProfileBtn").disabled = writing || !loaded;
+    el("refreshLoadLogBtn").disabled = writing || Boolean(refreshTask);
+    el("exportLoadLogBtn").disabled = writing || Boolean(refreshTask) || !loaded || !currentProfile();
+    el("loadLogFields").disabled = writing;
+    [...profileForm.elements].forEach(control => { control.disabled = writing; });
+    el("saveLoadBtn").textContent = writing ? "Saving…" : "Save unloaded load";
+    el("loadLogList").querySelectorAll("button").forEach(button => { button.disabled = writing; });
+  }
+  function render() {
+    const profiles = events.filter(event => event.kind === "profile").sort((a, b) => a.name.localeCompare(b.name));
+    const selected = profileSelect.value || preferredProfile;
+    profileSelect.replaceChildren(new Option("Choose a profile", ""), ...profiles.map(profile => new Option(profile.name, profile.id)));
+    profileSelect.value = profiles.some(profile => profile.id === selected) ? selected : profiles.length === 1 ? profiles[0].id : "";
+    const profile = currentProfile();
+    const loads = profileLoads(profile);
+    const voided = new Set(events.filter(event => event.kind === "void").map(event => event.id));
+    const counted = loads.filter(load => !voided.has(load.id));
+    const totals = {
+      truckLoadTotal: counted.filter(load => load.vehicleType === "truck").length,
+      trailerLoadTotal: counted.filter(load => load.vehicleType === "trailer").length,
+      trashCartTotal: counted.reduce((sum, load) => sum + load.trash, 0),
+      recycleCartTotal: counted.reduce((sum, load) => sum + load.recycling, 0)
+    };
+    Object.entries(totals).forEach(([id, value]) => { el(id).textContent = loaded && profile ? value.toLocaleString() : "—"; });
+    const list = el("loadLogList");
+    list.replaceChildren();
+    if (!profile || !loads.length) list.append(node("p", !loaded ? "Load the shared log to see counts." : !profile
+      ? profiles.length ? "Choose a profile to see its counts and history." : "Create a profile, such as Burnet, to start counting loads."
+      : "No unloaded loads recorded for this profile and period."));
+    loads.slice(0, shown).forEach(load => {
+      const isVoid = voided.has(load.id);
+      const card = node("article", "", `load-log-entry${isVoid ? " is-void" : ""}`);
+      const title = `${load.vehicleType === "truck" ? "Truck" : "Trailer"}${load.vehicleName ? ` · ${load.vehicleName}` : ""}`;
+      card.append(node("strong", title), node("p", `Unloaded ${new Date(load.unloadedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`),
+        node("p", `Approx. ${load.trash.toLocaleString()} trash · ${load.recycling.toLocaleString()} recycling`));
+      if (isVoid) card.append(node("span", "Voided · excluded from totals", "load-log-void-label"));
+      else {
+        const button = node("button", "Void entry");
+        button.type = "button";
+        button.setAttribute("aria-label", `Void ${title}, ${load.trash + load.recycling} carts`);
+        button.addEventListener("click", () => voidLoad(load));
+        card.append(button);
+      }
+      list.append(card);
+    });
+    el("loadLogShowMore").hidden = loads.length <= shown;
+    updateControls();
+  }
+  async function refresh() {
+    if (refreshTask) return refreshTask;
+    if (writing) return;
+    status(syncStatus, "Checking shared counts…");
+    refreshTask = (async () => {
+      const names = new Set();
+      for (let offset = 0; ; offset += 200) {
+        const { data, error } = await sb.storage.from(BUCKET).list(LOAD_LOG_PREFIX, {
+          limit: 200, offset, sortBy: { column: "name", order: "asc" }
+        });
+        if (error) throw error;
+        if (!Array.isArray(data)) throw new Error("Could not list load records");
+        data.forEach(file => { if (/^(profile|load|void)-[a-f0-9-]+\.json$/.test(file.name)) names.add(file.name); });
+        if (data.length < 200) break;
+      }
+      const missing = [...names].filter(name => !cache.has(name));
+      let cursor = 0;
+      const downloaded = new Map();
+      await Promise.all(Array.from({ length: Math.min(6, missing.length) }, async () => {
+        while (cursor < missing.length) {
+          const name = missing[cursor++];
+          downloaded.set(name, await readLoadLogEvent(name));
+        }
+      }));
+      // Commit a complete snapshot; never show partial totals after a failed read.
+      cache = new Map([...cache, ...downloaded]);
+      events = [...cache.values()];
+      loaded = true;
+      lastRefreshedAt = new Date().toISOString();
+      render();
+      status(syncStatus, `Updated ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · Refreshes every 30s while open`);
+    })().catch(error => {
+      console.error("Load log refresh:", error);
+      status(syncStatus, loaded ? "Could not refresh. Showing previously loaded counts; try Refresh log." : "Could not load shared counts. Check your connection and tap Refresh log.", "error");
+    }).finally(() => { refreshTask = null; updateControls(); });
+    updateControls();
+    return refreshTask;
+  }
+  async function saveEvent(event) {
+    if (refreshTask) await refreshTask;
+    const saved = await writeLoadLogEvent(event);
+    cache.set(`${saved.kind}-${saved.id}.json`, saved);
+    events = [...cache.values()];
+    return saved;
+  }
+  async function voidLoad(load) {
+    if (writing || !confirm("Void this load and remove it from the totals? It will remain in the history. To correct it, record a replacement load.")) return;
+    writing = true;
+    updateControls();
+    status(saveStatus, "Saving correction…");
+    try {
+      await saveEvent({ version: 1, kind: "void", id: load.id, createdAt: new Date().toISOString() });
+      status(saveStatus, "Saved — load voided on the shared log.", "saved");
+    } catch (error) {
+      console.error("Void load:", error);
+      status(saveStatus, "Correction not confirmed. Counts are unchanged; try again.", "error");
+    } finally { writing = false; render(); }
+  }
+  profileForm.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (writing || !profileForm.reportValidity()) return;
+    const name = el("loadProfileName").value.trim().replace(/\s+/g, " ");
+    if (!name) return;
+    writing = true;
+    updateControls();
+    status(saveStatus, "Saving profile…");
+    try {
+      const normalized = name.normalize("NFKC").toLowerCase();
+      const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalized));
+      const id = [...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+      const saved = await saveEvent({ version: 1, kind: "profile", id, name, createdAt: new Date().toISOString() });
+      profileSelect.value = "";
+      preferredProfile = saved.id;
+      profileForm.hidden = true;
+      render();
+      rememberProfile();
+      status(saveStatus, `Saved — ${saved.name} profile is shared across phones.`, "saved");
+    } catch (error) {
+      console.error("Save load profile:", error);
+      status(saveStatus, "Profile save not confirmed. Keep the name and try again.", "error");
+    } finally { writing = false; updateControls(); }
+  });
+  form.addEventListener("input", () => { pendingLoad = null; });
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (writing || !currentProfile() || !form.reportValidity()) return;
+    const trash = Number(el("loadTrashQuantity").value);
+    const recycling = Number(el("loadRecycleQuantity").value);
+    if (!Number.isInteger(trash) || !Number.isInteger(recycling) || trash < 0 || recycling < 0 || trash + recycling === 0) {
+      status(saveStatus, "Enter a whole number of carts for at least one cart type.", "error");
+      return;
+    }
+    writing = true;
+    updateControls();
+    status(saveStatus, "Saving unloaded load…");
+    try {
+      pendingLoad ||= {
+        version: 1, kind: "load", id: crypto.randomUUID(), profileId: profileSelect.value,
+        vehicleType: el("loadVehicleType").value, vehicleName: el("loadVehicleName").value.trim(),
+        trash, recycling, unloadedAt: new Date(el("loadOccurredAt").value).toISOString(), createdAt: new Date().toISOString()
+      };
+      await saveEvent(pendingLoad);
+      pendingLoad = null;
+      form.hidden = true;
+      rememberProfile();
+      status(saveStatus, "Saved — unloaded load added to this profile on all phones.", "saved");
+    } catch (error) {
+      console.error("Save unloaded load:", error);
+      status(saveStatus, "Save not confirmed. Your entry is kept here; retry to confirm it without counting it twice.", "error");
+    } finally { writing = false; render(); }
+  });
+  el("newLoadBtn").addEventListener("click", () => {
+    if (!currentProfile() || writing) return;
+    form.reset();
+    pendingLoad = null;
+    el("loadOccurredAt").value = localDateTime();
+    el("loadFormProfile").textContent = `Profile: ${currentProfile().name}`;
+    profileForm.hidden = true;
+    form.hidden = false;
+    status(saveStatus, "");
+    updateControls();
+    el("loadVehicleType").focus();
+  });
+  el("cancelLoadBtn").addEventListener("click", () => { form.hidden = true; pendingLoad = null; updateControls(); });
+  el("newLoadProfileBtn").addEventListener("click", () => {
+    form.hidden = true;
+    profileForm.hidden = false;
+    el("loadProfileName").value = "";
+    status(saveStatus, "");
+    updateControls();
+    el("loadProfileName").focus();
+  });
+  el("cancelLoadProfileBtn").addEventListener("click", () => { profileForm.hidden = true; updateControls(); });
+  profileSelect.addEventListener("change", () => { shown = 30; status(saveStatus, ""); rememberProfile(); render(); });
+  el("loadLogPeriod").addEventListener("change", () => { shown = 30; render(); });
+  el("loadLogShowMore").addEventListener("click", () => { shown += 30; render(); });
+  el("exportLoadLogBtn").addEventListener("click", () => {
+    const profile = currentProfile();
+    if (!loaded || !profile || writing || refreshTask) return;
+    try {
+      const exportedAt = new Date();
+      const period = el("loadLogPeriod").value === "today" ? "Today" : "All dates";
+      const loads = profileLoads(profile);
+      const voids = new Map(events.filter(event => event.kind === "void").map(event => [event.id, event]));
+      const counted = loads.filter(load => !voids.has(load.id));
+      const wb = XLSX.utils.book_new();
+      const summary = XLSX.utils.aoa_to_sheet([
+        ["Profile", profile.name], ["Period", period],
+        ["Truck loads", counted.filter(load => load.vehicleType === "truck").length],
+        ["Trailer loads", counted.filter(load => load.vehicleType === "trailer").length],
+        ["Approx. trash carts", counted.reduce((sum, load) => sum + load.trash, 0)],
+        ["Approx. recycling carts", counted.reduce((sum, load) => sum + load.recycling, 0)],
+        ["Voided entries (excluded from totals)", loads.length - counted.length],
+        ["Exported at (UTC)", exportedAt.toISOString()],
+        ["Last full cloud refresh (UTC)", lastRefreshedAt || ""],
+        ["Display time zone", Intl.DateTimeFormat().resolvedOptions().timeZone],
+        ["Data", "Confirmed records currently loaded, including subsequent saves on this phone. Refresh log for the latest records from other phones."],
+        ["Profile ID", profile.id]
+      ]);
+      summary["!cols"] = [{ wch: 38 }, { wch: 85 }];
+      const history = XLSX.utils.aoa_to_sheet([
+        ["Profile", "Vehicle type", "Vehicle name / number", "Unloaded at (UTC)", "Unloaded at (local)",
+          "Approx. trash carts", "Approx. recycling carts", "Total carts", "Status", "Recorded at (UTC)", "Voided at (UTC)", "Load ID"],
+        ...loads.map(load => [profile.name, load.vehicleType === "truck" ? "Truck" : "Trailer", load.vehicleName,
+          load.unloadedAt, new Date(load.unloadedAt).toLocaleString(), load.trash, load.recycling,
+          load.trash + load.recycling, voids.has(load.id) ? "Voided" : "Counted", load.createdAt,
+          voids.get(load.id)?.createdAt || "", load.id])
+      ]);
+      history["!cols"] = [24, 14, 24, 26, 26, 20, 24, 14, 12, 26, 26, 38].map(wch => ({ wch }));
+      history["!autofilter"] = { ref: history["!ref"] };
+      XLSX.utils.book_append_sheet(wb, summary, "Summary");
+      XLSX.utils.book_append_sheet(wb, history, "Load History");
+      const name = profile.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/[. ]+$/g, "").slice(0, 70) || "Profile";
+      const stamp = exportedAt.toISOString().replace(/[:.]/g, "-");
+      XLSX.writeFile(wb, `${name}_Loads_${period === "Today" ? "Today" : "AllDates"}_${stamp}.xlsx`, { compression: true });
+      status(saveStatus, `Excel download started — ${profile.name}, ${period.toLowerCase()}.`, "saved");
+    } catch (error) {
+      console.error("Load log export:", error);
+      status(saveStatus, "Could not create the Excel download. Try again.", "error");
+    }
+  });
+  el("refreshLoadLogBtn").addEventListener("click", refresh);
+  el("loadLogBtn").addEventListener("click", () => {
+    dialog.showModal();
+    render();
+    refresh();
+    clearInterval(refreshTimer);
+    refreshTimer = setInterval(() => { if (!document.hidden) refresh(); }, 30000);
+  });
+  el("closeLoadLogBtn").addEventListener("click", () => dialog.close());
+  dialog.addEventListener("close", () => clearInterval(refreshTimer));
+  document.addEventListener("visibilitychange", () => { if (dialog.open && !document.hidden) refresh(); });
+  window.addEventListener("online", () => { if (dialog.open) refresh(); });
+}
+
 // ================= LIST FILES FROM CLOUD =================
 // Saved-files popup: "Cart Delivery" tab (default, shown first) lists files the user chose, stored
 // shared across phones via a JSON file in the bucket (SHARED_TAB_FILE; localStorage is a cache); "All Files" lists the whole bucket.
@@ -1690,6 +2027,7 @@ let activeSavedFilesTab = "cartDelivery";
 // same Supabase bucket (SHARED_TAB_FILE) and hidden from the file lists. localStorage is only a
 // local cache / one-time migration source. Reads never overwrite the shared file on failure.
 const SHARED_TAB_FILE = "_cart-delivery-tab.json";
+const LOAD_LOG_PREFIX = "_cart-loads";
 let sharedTabLoaded = false;
 
 async function loadSharedCartDeliveryNames() {
@@ -1765,7 +2103,7 @@ async function listFiles() {
   // Legacy summary files are not delivery datasets; keep them out of this list.
   const routeFiles = {};
   data.forEach(file => {
-    if (file.name !== SHARED_TAB_FILE && !/route[\s_.-]*summary/i.test(file.name)) routeFiles[file.name] = file.name;
+    if (file.name !== SHARED_TAB_FILE && file.name !== LOAD_LOG_PREFIX && !/route[\s_.-]*summary/i.test(file.name)) routeFiles[file.name] = file.name;
   });
 
   // Build UI
@@ -1954,15 +2292,17 @@ function placeDeliveryControls() {
   const streetLabel = document.getElementById("streetLabelToggle").parentElement;
   const saveStatus = document.getElementById("deliverySaveStatus");
   const copyLocationBtn = document.getElementById("copyLocationBtn");
+  const loadLogBtn = document.getElementById("loadLogBtn");
 
   if (window.innerWidth <= 900) {
     quickActions.insertBefore(locateBtn, moreBtn);
     quickActions.insertBefore(copyLocationBtn, moreBtn);
     moreActions.append(clearBtn, undoBtn, streetLabel, refreshBtn);
+    moreActions.prepend(loadLogBtn);
     dock.insertBefore(saveStatus, quickActions);
   } else {
     selectionBox.insertBefore(clearBtn, desktopContainer);
-    desktopContainer.append(locateBtn, copyLocationBtn, completeBtn, saveStatus, undoBtn, streetLabel);
+    desktopContainer.append(locateBtn, copyLocationBtn, completeBtn, saveStatus, undoBtn, streetLabel, loadLogBtn);
     headerContainer.appendChild(refreshBtn);
   }
   updateDeliveryButtons();
@@ -2004,6 +2344,7 @@ function updateUndoButtonState() {
 function initApp() { //begining of initApp=================================================================
 
 setupLocationCopy();
+setupLoadLog();
 
 // ===== RIGHT SIDEBAR TOGGLE =====
 
@@ -2666,8 +3007,43 @@ if (clearSearchBtn) {
 
   });
 }
+async function serializeDeliveryWorkbook(workbook, bookType) {
+  const options = { bookType, type: "buffer" };
+  if (window.fflate) {
+    try {
+      // Repack the Excel ZIP with stronger compression; every entry stays intact.
+      const raw = XLSX.write(workbook, { ...options, compression: false });
+      const entries = fflate.unzipSync(raw);
+      return await new Promise((resolve, reject) => {
+        let terminate;
+        const timeout = setTimeout(() => {
+          terminate?.();
+          reject(new Error("Workbook compression timed out"));
+        }, 20000);
+        try {
+          terminate = fflate.zip(entries, { level: 6 }, (error, bytes) => {
+            clearTimeout(timeout);
+            if (error) reject(error);
+            else resolve(bytes);
+          });
+        } catch (error) {
+          clearTimeout(timeout);
+          reject(error);
+        }
+      });
+    } catch (error) {
+      console.warn("Using standard workbook compression:", error);
+    }
+  }
+  return XLSX.write(workbook, { ...options, compression: true });
+}
+
 // Build a separate workbook so failed saves leave the current route unchanged.
-async function saveWorkbookToCloud(rows, workbook, filePath) {
+async function saveWorkbookToCloud(rows, workbook, filePath, onProgress = () => {}) {
+  const started = performance.now();
+  onProgress("Preparing file");
+  // Let the phone paint the saving feedback before spreadsheet serialization.
+  await new Promise(resolve => setTimeout(resolve, 20));
   const nextWorkbook = {
     ...workbook,
     Sheets: {
@@ -2675,17 +3051,30 @@ async function saveWorkbookToCloud(rows, workbook, filePath) {
       [workbook.SheetNames[0]]: XLSX.utils.json_to_sheet(rows)
     }
   };
-  const wbArray = XLSX.write(nextWorkbook, {
-    bookType: filePath.toLowerCase().endsWith(".xlsm") ? "xlsm" : "xlsx",
-    type: "array",
-    // Zip compression makes the upload ~3x smaller (9 MB -> 3 MB for 5k stops); data is identical.
-    compression: true
-  });
-  const { error } = await sb.storage.from(BUCKET).upload(filePath, wbArray, {
-    upsert: true,
-    contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-  });
-  if (error) throw error;
+  const bookType = filePath.toLowerCase().endsWith(".xlsm") ? "xlsm" : "xlsx";
+  const wbArray = await serializeDeliveryWorkbook(nextWorkbook, bookType);
+  const prepared = performance.now();
+  const metrics = {
+    bytes: wbArray.byteLength,
+    preparationMs: Math.round(prepared - started),
+    uploadMs: null,
+    confirmed: false
+  };
+  window.lastDeliverySaveMetrics = metrics;
+  const size = wbArray.byteLength < 1024 * 1024
+    ? `${Math.ceil(wbArray.byteLength / 1024)} KB`
+    : `${(wbArray.byteLength / (1024 * 1024)).toFixed(1)} MB`;
+  onProgress(`Uploading ${size}`);
+  try {
+    const { error } = await sb.storage.from(BUCKET).upload(filePath, wbArray, {
+      upsert: true,
+      contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    });
+    if (error) throw error;
+    metrics.confirmed = true;
+  } finally {
+    metrics.uploadMs = Math.round(performance.now() - prepared);
+  }
   return nextWorkbook;
 }
 
@@ -2728,15 +3117,29 @@ async function saveSelectedDeliveryStatus(markDelivered) {
   const nextStatus = markDelivered ? "Delivered" : "";
   const selectedRows = new Set(selected.map(item => item.row));
   const nextRows = rows.map(row => selectedRows.has(row) ? { ...row, del_status: nextStatus } : row);
-  setDeliverySaveStatus("saving", `Saving… ${count} ${stopLabel}`);
+  const started = performance.now();
+  let savePhase = "Preparing file";
+  const showSaveProgress = () => {
+    const seconds = Math.floor((performance.now() - started) / 1000);
+    const elapsed = seconds >= 2 ? ` · ${seconds}s` : "";
+    const waiting = seconds >= 15 ? " · Keep app open" : "";
+    setDeliverySaveStatus("saving", `Saving ${count} ${stopLabel}… ${savePhase}${elapsed}${waiting}`);
+  };
+  showSaveProgress();
+  const progressTimer = setInterval(showSaveProgress, 1000);
 
   let savedWorkbook;
   try {
-    savedWorkbook = await saveWorkbookToCloud(nextRows, workbook, filePath);
+    savedWorkbook = await saveWorkbookToCloud(nextRows, workbook, filePath, phase => {
+      savePhase = phase;
+      showSaveProgress();
+    });
   } catch (error) {
     console.error("Cloud Save Error:", error);
     setDeliverySaveStatus("error", "Not saved — check your connection and try again.");
     return;
+  } finally {
+    clearInterval(progressTimer);
   }
 
   // A route opened during the upload must keep its own markers and workbook.

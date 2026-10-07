@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261007-delivery-controls" />
+  <link rel="stylesheet" href="style.css?v=20261007-load-export" />
 
   <link rel="icon" href="favicon.ico" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -66,7 +66,7 @@
   <p>Periodically export a backend Excel backup (top-left download button)</p>
 
   <div class="mobile-header-buttons">
-    <button id="hardRefreshBtn" class="primary-btn" title="Reload app data and clear cached view">Refresh App</button>
+    <button id="hardRefreshBtn" data-action="refresh" class="delivery-action primary-btn" title="Reload app data and clear cached view">Refresh App</button>
   </div>
 
 </header>
@@ -258,13 +258,13 @@
   <strong>Selected Stops:</strong>
   <span id="selectionCount">0</span>
 
-  <button id="clearSelectionBtn" class="primary-btn">
+  <button id="clearSelectionBtn" data-action="clear" class="delivery-action primary-btn">
     Clear Selection
   </button>
   
   <div id="desktopLocateContainer"></div>
   
-  <button id="completeStopsBtn" class="primary-btn" disabled>
+  <button id="completeStopsBtn" data-action="deliver" class="delivery-action primary-btn" disabled>
   Mark Stops Delivered
 </button>
 
@@ -274,7 +274,7 @@
 </label>
 
   
-   <button id="undoDeliveredBtn" class="primary-btn undo-btn">
+   <button id="undoDeliveredBtn" data-action="undo" class="delivery-action primary-btn undo-btn">
   Undo Delivered
 </button>
 
@@ -293,17 +293,18 @@
 <!-- Phone controls stay below the map. Shared actions move to the sidebar on desktop. -->
 <section id="deliveryControls" class="delivery-controls" aria-label="Delivery controls">
   <div class="delivery-controls-main">
-    <button id="mobileSelectionBtn" class="primary-btn" type="button" aria-pressed="false">Select Stops</button>
-    <button id="completeStopsBtnMobile" class="primary-btn" type="button" disabled>Mark Stops Delivered</button>
+    <button id="mobileSelectionBtn" data-action="select" class="delivery-action primary-btn" type="button" aria-pressed="false">Select Stops</button>
+    <button id="completeStopsBtnMobile" data-action="deliver" class="delivery-action primary-btn" type="button" disabled>Mark Stops Delivered</button>
   </div>
   <div id="deliverySaveStatus" class="delivery-save-status" role="status" aria-live="polite" aria-atomic="true"></div>
   <div id="deliveryQuickActions" class="delivery-quick-actions">
-    <button id="mobileMenuBtn" class="primary-btn" type="button" aria-expanded="false">Menu</button>
-    <button id="locateMeBtn" class="primary-btn" type="button" aria-label="Locate me and follow my position" aria-pressed="false">Locate</button>
-    <button id="copyLocationBtn" class="primary-btn" type="button" aria-haspopup="dialog">Copy Location</button>
-    <button id="deliveryMoreBtn" class="primary-btn" type="button" aria-expanded="false" aria-controls="deliveryMoreActions">More</button>
+    <button id="mobileMenuBtn" data-action="menu" class="delivery-action primary-btn" type="button" aria-expanded="false">Menu</button>
+    <button id="locateMeBtn" data-action="locate" class="delivery-action primary-btn" type="button" aria-label="Locate me and follow my position" aria-pressed="false">Locate</button>
+    <button id="copyLocationBtn" data-action="copy" class="delivery-action primary-btn" type="button" aria-haspopup="dialog">Copy Location</button>
+    <button id="deliveryMoreBtn" data-action="more" class="delivery-action primary-btn" type="button" aria-expanded="false" aria-controls="deliveryMoreActions">More</button>
   </div>
   <div id="deliveryMoreActions" class="delivery-more-actions" hidden></div>
+  <button id="loadLogBtn" data-action="loads" class="delivery-action primary-btn" type="button" aria-haspopup="dialog">Truck / Trailer Loads</button>
 </section>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -313,6 +314,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
 <script src="https://unpkg.com/leaflet-pip@1.1.0/leaflet-pip.min.js"></script>
   <!-- FILE MANAGER MODAL -->
 <div id="fileManagerModal" class="modal">
@@ -342,7 +344,7 @@
   </div>
 </div>
 
-<script src="app.js?v=20261007-pwa" defer></script>
+<script src="app.js?v=20261007-load-export" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">
@@ -385,6 +387,58 @@
     <textarea id="manualLocationText" rows="3" readonly></textarea>
   </div>
   <button id="updateCopyLocationBtn" class="primary-btn" type="button">Update Location</button>
+</dialog>
+
+<dialog id="loadLogDialog" class="load-log-dialog" aria-labelledby="loadLogTitle" aria-describedby="loadLogHelp">
+  <div class="load-log-heading">
+    <div><h2 id="loadLogTitle">Truck / trailer loads</h2><p>Shared across phones</p></div>
+    <button id="closeLoadLogBtn" type="button" aria-label="Close load log">×</button>
+  </div>
+  <p id="loadLogHelp">Manually record each load after the crew finishes unloading it. Profiles keep their counts when you switch Excel files.</p>
+  <div class="load-log-filters">
+    <label>Truck count profile<select id="loadLogProfile"><option value="">Choose a profile</option></select></label>
+    <label>Period<select id="loadLogPeriod"><option value="all">All dates</option><option value="today">Today</option></select></label>
+  </div>
+  <button id="newLoadProfileBtn" type="button">+ New profile</button>
+  <form id="loadProfileForm" hidden>
+    <label>Profile name<input id="loadProfileName" type="text" maxlength="80" required placeholder="e.g. Burnet" autocomplete="off"></label>
+    <div class="load-log-actions"><button id="saveLoadProfileBtn" type="submit">Save profile</button><button id="cancelLoadProfileBtn" type="button">Cancel</button></div>
+  </form>
+  <div id="loadLogTotals" class="load-log-totals" aria-label="Load totals">
+    <div><strong id="truckLoadTotal">—</strong><span>Truck loads</span></div>
+    <div><strong id="trailerLoadTotal">—</strong><span>Trailer loads</span></div>
+    <div><strong id="trashCartTotal">—</strong><span>Approx. trash carts</span></div>
+    <div><strong id="recycleCartTotal">—</strong><span>Approx. recycling carts</span></div>
+  </div>
+  <p id="loadLogSyncStatus" class="load-log-status" role="status" aria-live="polite"></p>
+  <div class="load-log-actions">
+    <button id="newLoadBtn" type="button">+ Record unloaded load</button>
+    <button id="refreshLoadLogBtn" type="button">Refresh log</button>
+  </div>
+  <button id="exportLoadLogBtn" type="button" disabled>Download Excel · selected profile</button>
+  <form id="loadLogForm" hidden>
+    <h3>Record unloaded load</h3><p id="loadFormProfile"></p>
+    <fieldset id="loadLogFields">
+      <div class="load-log-fields-row">
+        <label>Vehicle type<select id="loadVehicleType"><option value="truck">Truck</option><option value="trailer">Trailer</option></select></label>
+        <label>Name / number (optional)<input id="loadVehicleName" type="text" maxlength="60" placeholder="e.g. Truck A"></label>
+      </div>
+      <label>Unloaded on<input id="loadOccurredAt" type="datetime-local" required></label>
+      <div class="load-log-fields-row">
+        <label>Approx. trash carts<input id="loadTrashQuantity" type="number" inputmode="numeric" min="0" max="100000" step="1" value="0" required></label>
+        <label>Approx. recycling carts<input id="loadRecycleQuantity" type="number" inputmode="numeric" min="0" max="100000" step="1" value="0" required></label>
+      </div>
+      <p class="load-log-hint">Enter 0 for a cart type not on this load. Each trip counts as one load, even when the same truck returns.</p>
+      <div class="load-log-actions">
+        <button id="saveLoadBtn" type="submit">Save unloaded load</button>
+        <button id="cancelLoadBtn" type="button">Cancel</button>
+      </div>
+    </fieldset>
+  </form>
+  <p id="loadLogSaveStatus" class="load-log-status" role="status" aria-live="polite"></p>
+  <h3>Load history</h3>
+  <div id="loadLogList"></div>
+  <button id="loadLogShowMore" type="button" hidden>Show more loads</button>
 </dialog>
 
 <!-- ===== FILE LOADING OVERLAY ===== -->
