@@ -14,3 +14,6 @@ Read [README.md](./README.md) first (architecture, data model, how-to recipes).
 - Never commit secrets. The Supabase key in `app.js` is a publishable (public) key by design; do not add service keys.
 - Test with sample data and fake saves; do not upload to or delete from the real storage bucket.
 - Keep comments short and only where behavior is non-obvious. Update README.md when architecture changes.
+
+- Read a stop's route/day only via `rowRoute(row)` / `rowDay(row)` (they use the `ROUTE` / `DAY` columns; `NEWROUTE`/`NEWDAY` are ignored).
+
