@@ -824,9 +824,9 @@ function showNearbyStopPicker(stops) {
     detail.className = "mobile-stop-choice-detail";
     const status = String(row.del_status || "").trim().toLowerCase() === "delivered"
       ? "Delivered"
-      : (dayName(Number(row.NEWDAY)) || `Day ${row.NEWDAY || key.split("|")[1]}`);
+      : (dayName(Number(rowDay(row))) || `Day ${rowDay(row) || key.split("|")[1]}`);
     const bin = row.BINNO ? ` · Bin ${row.BINNO}` : "";
-    detail.textContent = `Route ${row.NEWROUTE || key.split("|")[0]} · ${status}${bin} · ${Math.round(distance)} px away`;
+    detail.textContent = `Route ${rowRoute(row) || key.split("|")[0]} · ${status}${bin} · ${Math.round(distance)} px away`;
 
     const selectionState = document.createElement("span");
     selectionState.className = "mobile-stop-choice-state";
@@ -1445,9 +1445,13 @@ if (layerVisibilityState.hasOwnProperty(key)) {
 }
 
 
+// Route/day column names differ by export: NEWROUTE/NEWDAY (original) or ROUTE/DAY (e.g. Trash&Recycle files).
+function rowRoute(row) { return row.NEWROUTE ?? row.ROUTE; }
+function rowDay(row) { return row.NEWDAY ?? row.DAY; }
+
 // ================= PROCESS ROUTE EXCEL =================
 // Core data flow: first sheet -> row objects -> one Leaflet marker per row.
-// Required columns: LATITUDE, LONGITUDE, NEWROUTE, NEWDAY. Optional: CSADR#, CSSDIR, CSSTRT, CSSFUX
+// Required columns: LATITUDE, LONGITUDE, NEWROUTE/NEWDAY (or ROUTE/DAY). Optional: CSADR#, CSSDIR, CSSTRT, CSSFUX
 // (address), SIZE, QTY, BINNO (popup), del_status ("Delivered" marks completed stops).
 // Resets all map/selection state, then fills routeDayGroups keyed "ROUTE|DAY" or "ROUTE|Delivered".
 function processExcelBuffer(buffer) {
@@ -1477,8 +1481,8 @@ function processExcelBuffer(buffer) {
   rows.forEach(row => {
     const lat = Number(row.LATITUDE);
     const lon = Number(row.LONGITUDE);
-    const route = String(row.NEWROUTE);
-    const day = String(row.NEWDAY);
+    const route = String(rowRoute(row));
+    const day = String(rowDay(row));
 
     if (!lat || !lon || !route || !day) return;
 
@@ -2626,7 +2630,7 @@ async function saveSelectedDeliveryStatus(markDelivered) {
       const group = routeDayGroups[key];
       if (!group?.layers.includes(marker)) return;
       group.layers = group.layers.filter(layer => layer !== marker);
-      const nextKey = `${row.NEWROUTE}|${markDelivered ? "Delivered" : row.NEWDAY}`;
+      const nextKey = `${rowRoute(row)}|${markDelivered ? "Delivered" : rowDay(row)}`;
       if (!routeDayGroups[nextKey]) routeDayGroups[nextKey] = { layers: [] };
       getSymbol(nextKey);
       routeDayGroups[nextKey].layers.push(marker);
