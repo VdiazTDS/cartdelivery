@@ -696,6 +696,46 @@ const drawControl = new L.Control.Draw({
 
 map.addControl(drawControl);
 
+// ===== EASIER SHAPE CLOSING (PHONE) =====
+// Leaflet.Draw only closes a shape by tapping the first point, which is hard to find. While a
+// polygon is being drawn we (1) mark the first point green and enlarge it, (2) show a large
+// "Finish Shape" button (calls handler.completeShape()), (3) show a "Cancel" button.
+let activeDrawHandler = null;
+const drawActionBar = document.createElement("div");
+drawActionBar.id = "drawActionBar";
+drawActionBar.hidden = true;
+drawActionBar.innerHTML =
+  '<button type="button" id="drawFinishBtn">Finish Shape</button>' +
+  '<button type="button" id="drawCancelBtn">Cancel</button>';
+map.getContainer().appendChild(drawActionBar);
+L.DomEvent.disableClickPropagation(drawActionBar);
+
+function hideDrawActionBar() {
+  activeDrawHandler = null;
+  drawActionBar.hidden = true;
+}
+map.on(L.Draw.Event.DRAWSTART, e => {
+  if (e.layerType !== "polygon") return;
+  activeDrawHandler = drawControl._toolbars.draw._modes.polygon.handler;
+  drawActionBar.hidden = true;
+});
+map.on(L.Draw.Event.DRAWVERTEX, e => {
+  const layers = e.layers && e.layers.getLayers();
+  if (layers && layers[0] && layers[0]._icon) layers[0]._icon.classList.add("first-draw-vertex");
+  // A polygon needs 3 points before it can be finished.
+  drawActionBar.hidden = !activeDrawHandler || !layers || layers.length < 3;
+});
+map.on(L.Draw.Event.DRAWSTOP, hideDrawActionBar);
+map.on(L.Draw.Event.CREATED, hideDrawActionBar);
+document.getElementById("drawFinishBtn").addEventListener("click", () => {
+  if (activeDrawHandler) activeDrawHandler.completeShape();
+});
+document.getElementById("drawCancelBtn").addEventListener("click", () => {
+  if (activeDrawHandler) activeDrawHandler.disable();
+});
+
+L.drawLocal.draw.handlers.polygon.tooltip.end = 'Tap the green first point or Finish Shape to close';
+
 // ===== SELECTION COUNT FUNCTION (GLOBAL & CORRECT) =====
 function pointIsInsideRing(point, ring) {
   let inside = false;

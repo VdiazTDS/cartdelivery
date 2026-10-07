@@ -4037,3 +4037,36 @@ body.sun-mode #copyLocationStatus[data-state="copied"] {
     color: #ffffff;
   }
 }
+
+/* ===== POLYGON DRAWING AIDS (see "EASIER SHAPE CLOSING" in app.js) ===== */
+.leaflet-editing-icon.first-draw-vertex {
+  background: #16a34a !important;
+  border: 3px solid #fff !important;
+  width: 22px !important;
+  height: 22px !important;
+  margin-left: -11px !important;
+  margin-top: -11px !important;
+  border-radius: 50% !important;
+}
+#drawActionBar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1200;
+  display: flex;
+  gap: 8px;
+}
+#drawActionBar[hidden] { display: none; }
+#drawActionBar button {
+  min-height: 48px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 24px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  background: #16a34a;
+  box-shadow: 0 2px 8px rgba(0,0,0,.35);
+}
+#drawActionBar #drawCancelBtn { background: #6b7280; }
