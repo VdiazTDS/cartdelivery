@@ -69,6 +69,8 @@ Saved files live in the Supabase storage bucket `excel-files`. Files named like 
 
 - **Cart Delivery tab is shared across phones**: `listFiles` loads `_cart-delivery-tab.json` from the bucket each time; add/remove calls `saveCartDeliveryFileNames()` (async, throws) and reverts on failure. The file is hidden from lists. First load seeds it from the phone's old localStorage list. Don't rename or delete it.
 
+- **Dynamic Island / notch**: `index.html` uses `viewport-fit=cover`; header, sidebar, map and dock offsets use `env(safe-area-inset-*)` (the JS in `placeDeliveryControls`/layout observer measures the real header height, so the sidebar and map start below it). To test, replace `env(safe-area-inset-top)` with `59px` and `env(safe-area-inset-bottom)` with `34px` in a copy of the CSS (iPhone 16 Pro Max values). Any new fixed/absolute element near a screen edge must include the matching `env()` inset.
+
 ## Testing
 Build a small workbook in the browser console (`XLSX.utils.json_to_sheet`) and call `processExcelBuffer(...)` at 440x956 and desktop widths. Check: direct tap selects, overlapping tap opens the chooser, polygon + single deselect, Done, no horizontal scroll, no console errors. Don't save to the real bucket while testing.
 
