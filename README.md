@@ -63,3 +63,5 @@ Saved files live in the Supabase storage bucket `excel-files`. Files named like 
 
 ## Testing
 Build a small workbook in the browser console (`XLSX.utils.json_to_sheet`) and call `processExcelBuffer(...)` at 440x956 and desktop widths. Check: direct tap selects, overlapping tap opens the chooser, polygon + single deselect, Done, no horizontal scroll, no console errors. Don't save to the real bucket while testing.
+
+- **Polygon drawing on touch**: Leaflet.Draw's `_onTouch` is overridden in `app.js` (above `drawControl`) so a vertex is added only on a quick, non-moving, single-finger tap; panning/pinching while drawing adds no points.

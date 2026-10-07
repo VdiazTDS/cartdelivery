@@ -646,6 +646,42 @@ const individuallyDeselectedMarkers = new Set();
 const highlightedMarkers = new Set();
 let mobileStopSelectionMode = false;
 
+// Leaflet.Draw 1.0.4 adds a polygon vertex the instant a finger touches the map (touchstart),
+// so panning/pinching while drawing dropped unwanted points. Override: a vertex is added on
+// touchend only if it was a quick, single-finger tap that did not move (<10px).
+L.Draw.Polyline.prototype._onTouch = function (e) {
+  const original = e.originalEvent;
+  if (!original || !original.touches || !original.touches[0]) { this._clickHandled = null; return; }
+  if (this._clickHandled || this._touchHandled || this._disableMarkers) return;
+  this._clickHandled = null;
+  const container = this._map.getContainer();
+  const start = { x: original.touches[0].clientX, y: original.touches[0].clientY, time: Date.now() };
+  let cancelled = original.touches.length > 1;
+  const cleanup = () => {
+    container.removeEventListener("touchmove", onMove);
+    container.removeEventListener("touchend", onEnd);
+    container.removeEventListener("touchcancel", onCancel);
+  };
+  const onMove = ev => {
+    const t = ev.touches[0];
+    if (ev.touches.length > 1 || (t && Math.hypot(t.clientX - start.x, t.clientY - start.y) > 10)) cancelled = true;
+  };
+  const onCancel = () => cleanup();
+  const onEnd = ev => {
+    cleanup();
+    const t = ev.changedTouches && ev.changedTouches[0];
+    if (cancelled || !t || ev.touches.length || Date.now() - start.time > 600) return;
+    const latlng = this._map.mouseEventToLatLng(t);
+    this._disableNewMarkers();
+    this._touchHandled = true;
+    this._startPoint(start.x, start.y);
+    this._endPoint(t.clientX, t.clientY, { latlng, originalEvent: ev });
+    this._touchHandled = null;
+  };
+  container.addEventListener("touchmove", onMove, { passive: true });
+  container.addEventListener("touchend", onEnd, { passive: true });
+  container.addEventListener("touchcancel", onCancel, { passive: true });
+};
 const drawControl = new L.Control.Draw({
   draw: {
     polygon: true,
