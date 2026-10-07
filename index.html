@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261007-delivery-feedback" />
+  <link rel="stylesheet" href="style.css?v=20261007-copy-location" />
 
   <link rel="icon" href="favicon.ico" />
 
@@ -60,6 +60,7 @@
     <button id="hardRefreshBtn" class="primary-btn" title="Reload app data and clear cached view">Refresh App</button>
     <button id="mobileMenuBtn">☰ Menu</button>
     <button id="locateMeBtn" class="primary-btn">📍</button>
+    <button id="copyLocationBtn" class="primary-btn" type="button" aria-haspopup="dialog">Copy Location</button>
     <button id="completeStopsBtnMobile" class="primary-btn" disabled>Mark Stops Delivered</button>
     <div id="deliverySaveStatus" class="delivery-save-status" role="status" aria-live="polite" aria-atomic="true"></div>
   </div>
@@ -354,7 +355,7 @@
   </div>
 </div>
 
-<script src="app.js?v=20261007-delivery-feedback" defer></script>
+<script src="app.js?v=20261007-copy-location" defer></script>
 <!-- MOBILE Selected Stops Button -->
 <button id="mobileSelectionBtn" aria-label="0 stops selected; open selection actions">Selected: 0</button>
 
@@ -368,6 +369,38 @@
   </div>
   <div id="mobileStopPickerList" class="mobile-stop-picker-list"></div>
 </section>
+
+<dialog id="copyLocationDialog" class="copy-location-dialog" aria-labelledby="copyLocationTitle" aria-describedby="copyLocationHelp">
+  <div class="copy-location-heading">
+    <h2 id="copyLocationTitle">Copy your location</h2>
+    <button id="closeCopyLocationBtn" type="button" aria-label="Close location panel">×</button>
+  </div>
+  <p id="copyLocationHelp">Send a meeting point to the incoming truck.</p>
+  <p id="copyLocationStatus" role="status" aria-live="polite" aria-atomic="true"></p>
+
+  <label for="currentCoordinates">Current latitude, longitude</label>
+  <input id="currentCoordinates" type="text" readonly placeholder="Getting your location…">
+  <p id="currentLocationAccuracy" class="copy-location-detail"></p>
+  <div class="copy-location-actions">
+    <button id="copyCoordinatesBtn" class="primary-btn" type="button" disabled>Copy Coordinates</button>
+    <button id="copyMapLinkBtn" class="primary-btn" type="button" disabled>Copy Map Link</button>
+  </div>
+
+  <div class="copy-location-address">
+    <label for="nearbyLocationAddress">Nearby route address</label>
+    <p id="nearbyLocationHelp" class="copy-location-detail">Choose the address you are at from the loaded route.</p>
+    <select id="nearbyLocationAddress" aria-describedby="nearbyLocationHelp" disabled>
+      <option value="">Waiting for your location</option>
+    </select>
+    <button id="copyNearbyAddressBtn" class="primary-btn" type="button" disabled>Copy Address</button>
+  </div>
+
+  <div id="manualLocationCopy" hidden>
+    <label for="manualLocationText">Press and hold this text to copy</label>
+    <textarea id="manualLocationText" rows="3" readonly></textarea>
+  </div>
+  <button id="updateCopyLocationBtn" class="primary-btn" type="button">Update Location</button>
+</dialog>
 
 <!-- ===== FILE LOADING OVERLAY ===== -->
 <div id="loadingOverlay" class="hidden">

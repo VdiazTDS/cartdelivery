@@ -252,6 +252,178 @@ watchId = navigator.geolocation.watchPosition(
 }
 
 
+// Copy a fresh GPS fix without changing map selections or live-tracking state.
+function setupLocationCopy() {
+  const dialog = document.getElementById("copyLocationDialog");
+  const status = document.getElementById("copyLocationStatus");
+  const coordinates = document.getElementById("currentCoordinates");
+  const accuracy = document.getElementById("currentLocationAccuracy");
+  const addressSelect = document.getElementById("nearbyLocationAddress");
+  const addressHelp = document.getElementById("nearbyLocationHelp");
+  const copyCoordinatesBtn = document.getElementById("copyCoordinatesBtn");
+  const copyMapLinkBtn = document.getElementById("copyMapLinkBtn");
+  const copyAddressBtn = document.getElementById("copyNearbyAddressBtn");
+  const updateBtn = document.getElementById("updateCopyLocationBtn");
+  const manualCopy = document.getElementById("manualLocationCopy");
+  const manualText = document.getElementById("manualLocationText");
+  const maxAge = 60000;
+  let position = null;
+  let requestId = 0;
+  let expiryTimer = null;
+
+  function showStatus(message, state = "ready") {
+    status.textContent = message;
+    status.dataset.state = state;
+  }
+
+  function disableCopy() {
+    copyCoordinatesBtn.disabled = true;
+    copyMapLinkBtn.disabled = true;
+    copyAddressBtn.disabled = true;
+    addressSelect.disabled = true;
+  }
+
+  function isFresh() {
+    if (!position) return false;
+    if (Date.now() - position.timestamp < maxAge) return true;
+    disableCopy();
+    showStatus("This location is over a minute old. Tap Update Location before copying.", "error");
+    return false;
+  }
+
+  function populateNearbyAddresses() {
+    addressSelect.replaceChildren(new Option("Choose the address you are at", ""));
+    const candidates = new Map();
+    // A poor GPS fix cannot reliably identify which nearby address the crew is at.
+    if (position.coords.accuracy <= 75) {
+      const here = L.latLng(position.coords.latitude, position.coords.longitude);
+      (window._currentRows || []).forEach(row => {
+        const lat = Number(row.LATITUDE);
+        const lng = Number(row.LONGITUDE);
+        if (!row.CSSTRT || row.LATITUDE == null || row.LONGITUDE == null ||
+            String(row.LATITUDE).trim() === "" || String(row.LONGITUDE).trim() === "" ||
+            !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return;
+        const distance = here.distanceTo([lat, lng]);
+        if (distance > 75) return;
+        const locality = [row.CITY || row.CSCITY, row.STATE || row.CSSTATE, row.ZIP || row.CSZIP]
+          .filter(value => value != null && String(value).trim()).join(" ");
+        const address = [formatStopAddress(row), locality].filter(Boolean).join(", ");
+        if (!candidates.has(address) || distance < candidates.get(address)) candidates.set(address, distance);
+      });
+    }
+    [...candidates].sort((a, b) => a[1] - b[1]).forEach(([address, distance]) => {
+      addressSelect.add(new Option(`${address} · ${Math.round(distance * 3.28084)} ft away`, address));
+    });
+    addressSelect.disabled = candidates.size === 0;
+    addressHelp.textContent = candidates.size
+      ? "Choose your address from the loaded route. These addresses are within about 250 ft of your GPS position."
+      : position.coords.accuracy > 75
+        ? "GPS is too approximate to suggest an address. Update Location for a closer fix, or copy coordinates."
+        : "No nearby address in the loaded route. Copy coordinates or the map link instead.";
+  }
+
+  function requestLocation() {
+    const id = ++requestId;
+    clearTimeout(expiryTimer);
+    position = null;
+    coordinates.value = "";
+    coordinates.placeholder = "Getting your location…";
+    accuracy.textContent = "";
+    manualCopy.hidden = true;
+    addressSelect.replaceChildren(new Option("Waiting for your location", ""));
+    addressHelp.textContent = "Choose the address you are at from the loaded route.";
+    disableCopy();
+
+    if (!navigator.geolocation) {
+      coordinates.placeholder = "Location unavailable";
+      showStatus("Location is unavailable in this browser. Open the app in Safari or Chrome.", "error");
+      return;
+    }
+
+    updateBtn.disabled = true;
+    showStatus("Getting your current GPS location…", "loading");
+    navigator.geolocation.getCurrentPosition(result => {
+      if (id !== requestId || !dialog.open) return;
+      updateBtn.disabled = false;
+      const { latitude, longitude, accuracy: meters } = result.coords;
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude) ||
+          Math.abs(latitude) > 90 || Math.abs(longitude) > 180 ||
+          !Number.isFinite(meters) || meters < 0) {
+        showStatus("A usable GPS location was not returned. Tap Update Location to retry.", "error");
+        return;
+      }
+      position = result;
+      coordinates.value = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+      const time = new Date(result.timestamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      accuracy.textContent = `Located at ${time} · GPS accuracy ±${Math.ceil(meters * 3.28084)} ft. Update if you move.`;
+      copyCoordinatesBtn.disabled = false;
+      copyMapLinkBtn.disabled = false;
+      populateNearbyAddresses();
+      showStatus(meters > 75
+        ? "GPS is approximate. Check the accuracy below before sending."
+        : "Ready to copy. Paste it into a message to the incoming truck.");
+      if (isFresh()) expiryTimer = setTimeout(isFresh, Math.max(0, maxAge - (Date.now() - result.timestamp)));
+    }, error => {
+      if (id !== requestId || !dialog.open) return;
+      updateBtn.disabled = false;
+      coordinates.placeholder = "Location unavailable";
+      const message = error.code === 1
+        ? "Location permission is off. Allow location access for this site, then tap Update Location."
+        : error.code === 3
+          ? "GPS took too long. Move to a clearer area and tap Update Location."
+          : "Your location could not be found. Tap Update Location to retry.";
+      showStatus(message, "error");
+    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
+  }
+
+  // GPS finishes before this click, preserving Safari's clipboard user gesture.
+  async function copyText(text, description) {
+    if (!isFresh() || !text) return;
+    const id = requestId;
+    manualCopy.hidden = true;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(text);
+      if (id === requestId && dialog.open) showStatus(`${description} copied. Paste it into your message.`, "copied");
+    } catch {
+      if (id !== requestId || !dialog.open) return;
+      manualCopy.hidden = false;
+      manualText.value = text;
+      manualText.focus();
+      manualText.select();
+      showStatus("Automatic copy is unavailable. Press and hold the selected text below to copy.", "error");
+    }
+  }
+
+  document.getElementById("copyLocationBtn").addEventListener("click", () => {
+    dialog.showModal();
+    requestLocation();
+  });
+  document.getElementById("closeCopyLocationBtn").addEventListener("click", () => dialog.close());
+  dialog.addEventListener("close", () => {
+    ++requestId;
+    clearTimeout(expiryTimer);
+    position = null;
+    updateBtn.disabled = false;
+  });
+  updateBtn.addEventListener("click", requestLocation);
+  coordinates.addEventListener("click", () => coordinates.select());
+  addressSelect.addEventListener("change", () => {
+    copyAddressBtn.disabled = !isFresh() || !addressSelect.value;
+  });
+  copyCoordinatesBtn.addEventListener("click", () => copyText(coordinates.value, "Coordinates"));
+  copyMapLinkBtn.addEventListener("click", () => {
+    const url = new URL("https://www.google.com/maps/search/");
+    url.searchParams.set("api", "1");
+    url.searchParams.set("query", coordinates.value);
+    copyText(url.toString(), "Map link");
+  });
+  copyAddressBtn.addEventListener("click", () => copyText(addressSelect.value, "Address"));
+  document.addEventListener("visibilitychange", () => {
+    if (dialog.open && !document.hidden) isFresh();
+  });
+}
+
 //===direction user is facing
 let headingMarker = null;
 let currentHeading = 0;
@@ -1932,12 +2104,14 @@ function placeLocateButton() {
   const undoBtn = document.getElementById("undoDeliveredBtn");
   const streetToggle = document.getElementById("streetLabelToggle");
   const saveStatus = document.getElementById("deliverySaveStatus");
+  const copyLocationBtn = document.getElementById("copyLocationBtn");
 
   if (!locateBtn || !completeBtn || !headerContainer || !desktopContainer) return;
 
   if (window.innerWidth <= 900) {
     // 📱 MOBILE
     headerContainer.appendChild(locateBtn);
+    headerContainer.appendChild(copyLocationBtn);
     headerContainer.appendChild(completeBtn);
     if (undoBtn) headerContainer.appendChild(undoBtn);
 
@@ -1950,6 +2124,7 @@ function placeLocateButton() {
   } else {
     // 🖥 DESKTOP
     desktopContainer.appendChild(locateBtn);
+    desktopContainer.appendChild(copyLocationBtn);
     desktopContainer.appendChild(completeBtn);
     if (undoBtn) desktopContainer.appendChild(undoBtn);
 
@@ -1996,6 +2171,8 @@ function updateUndoButtonState() {
 
 
 function initApp() { //begining of initApp=================================================================
+
+setupLocationCopy();
 
 // ===== RIGHT SIDEBAR TOGGLE =====
 

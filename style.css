@@ -2402,7 +2402,8 @@ body.sun-mode #hardRefreshBtn {
   #hardRefreshBtn { order: 1; }
   #mobileMenuBtn { order: 2; }
   #locateMeBtn { order: 3; }
-  #completeStopsBtnMobile { order: 4; }
+  #copyLocationBtn { order: 4; }
+  #completeStopsBtnMobile { order: 5; }
 
 }
 
@@ -4098,7 +4099,7 @@ body.sun-mode .delivery-save-status[data-state="error"] {
 
 @media (max-width: 900px) {
   .mobile-header-buttons .delivery-save-status {
-    order: 5;
+    order: 6;
     flex: 1 0 100%;
     box-sizing: border-box;
   }
@@ -4107,4 +4108,160 @@ body.sun-mode .delivery-save-status[data-state="error"] {
   body:has(#selectionBox.show) #bottomSummary {
     max-height: min(65dvh, max(40px, calc(100dvh - var(--mobile-header-height, 170px) - 200px - env(safe-area-inset-bottom))));
   }
+}
+
+#copyLocationBtn {
+  min-height: 44px;
+  padding: 8px 10px;
+  font-size: 13px;
+  touch-action: manipulation;
+}
+
+.copy-location-dialog {
+  width: min(460px, calc(100% - 24px));
+  max-height: calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px;
+  border: 1px solid #49647d;
+  border-radius: 16px;
+  background: #17222e;
+  color: #f2f7fc;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+
+.copy-location-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.copy-location-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.copy-location-heading h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+#closeCopyLocationBtn {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  border: 1px solid #49647d;
+  border-radius: 10px;
+  background: #26394b;
+  color: inherit;
+  font-size: 26px;
+}
+
+.copy-location-dialog p {
+  margin: 8px 0 14px;
+  line-height: 1.4;
+}
+
+.copy-location-dialog label {
+  display: block;
+  margin: 12px 0 6px;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.copy-location-dialog input,
+.copy-location-dialog select,
+.copy-location-dialog textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 10px;
+  border: 1px solid #49647d;
+  border-radius: 8px;
+  background: #101b26;
+  color: inherit;
+  font: inherit;
+  font-size: 16px;
+}
+
+.copy-location-dialog textarea {
+  resize: vertical;
+}
+
+.copy-location-detail {
+  color: #bdccda;
+  font-size: 12px;
+}
+
+#copyLocationStatus {
+  color: #b9ddff;
+  font-size: 14px;
+}
+
+#copyLocationStatus[data-state="error"] {
+  color: #ffbd94;
+}
+
+#copyLocationStatus[data-state="copied"] {
+  color: #8fe6ad;
+}
+
+.copy-location-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.copy-location-dialog .primary-btn {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 8px;
+  white-space: normal;
+  font-size: 14px;
+  touch-action: manipulation;
+}
+
+.copy-location-dialog button:disabled,
+.copy-location-dialog select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.copy-location-address {
+  border-top: 1px solid #34485b;
+  margin-top: 16px;
+}
+
+#copyNearbyAddressBtn,
+#updateCopyLocationBtn {
+  margin-top: 12px;
+}
+
+body.sun-mode .copy-location-dialog {
+  background: #ffffff;
+  color: #16324d;
+  border-color: #bfd3e6;
+}
+
+body.sun-mode .copy-location-dialog input,
+body.sun-mode .copy-location-dialog select,
+body.sun-mode .copy-location-dialog textarea,
+body.sun-mode #closeCopyLocationBtn {
+  background: #f3f8fd;
+  border-color: #cbdced;
+}
+
+body.sun-mode .copy-location-detail,
+body.sun-mode #copyLocationStatus {
+  color: #375a7a;
+}
+
+body.sun-mode #copyLocationStatus[data-state="error"] {
+  color: #9d3419;
+}
+
+body.sun-mode #copyLocationStatus[data-state="copied"] {
+  color: #176c37;
 }
