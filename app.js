@@ -2315,6 +2315,26 @@ if (downloadBtn && modal && confirmBtn && cancelBtn) {
 
 
 
+// Street labels: when the "Street Labels" checkbox is on and zoom >= STREET_LABEL_MIN_ZOOM,
+// open a tooltip for up to 150 visible stops. Runs on zoomend, moveend and checkbox change.
+const STREET_LABEL_MIN_ZOOM = 16;
+function updateStreetLabels() {
+  const bounds = map.getBounds();
+  const show = window.streetLabelsEnabled && map.getZoom() >= STREET_LABEL_MIN_ZOOM;
+  let count = 0;
+  Object.values(routeDayGroups).forEach(group => {
+    group.layers.forEach(layer => {
+      if (!layer._hasStreetLabel) return;
+      if (show && count < 150 && map.hasLayer(layer) && bounds.contains(layer.getLatLng())) {
+        layer.openTooltip();
+        count++;
+      } else {
+        layer.closeTooltip();
+      }
+    });
+  });
+}
+map.on("moveend", updateStreetLabels);
 // ===== AUTO-RESIZE MARKERS ON ZOOM =====
 map.on("zoomend", () => {
   window._labelCount = 0;
@@ -2374,37 +2394,9 @@ if (currentBase === "satellite") {
         }
       }
 
-     // ---- STREET LABEL LOGIC (MOBILE SAFE) ----
-// ---- STREET LABEL LOGIC (HARD TOGGLE CONTROL) ----
-if (layer._hasStreetLabel) {
-
-  // 🚫 If toggle is OFF, force close and skip
-  if (!window.streetLabelsEnabled) {
-    layer.closeTooltip();
-    return;
-  }
-
-  const bounds = map.getBounds();
-  const isVisible = bounds.contains(layer.getLatLng());
-
-  const MAX_LABELS = 150;
-  if (!window._labelCount) window._labelCount = 0;
-
-  if (
-    currentZoom >= maxZoom - 3 &&
-    map.hasLayer(layer) &&
-    isVisible &&
-    window._labelCount < MAX_LABELS
-  ) {
-    layer.openTooltip();
-    window._labelCount++;
-  } else {
-    layer.closeTooltip();
-  }
-}
-
     });
   });
+  updateStreetLabels();
 });
 
   
