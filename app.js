@@ -2632,7 +2632,9 @@ async function saveWorkbookToCloud(rows, workbook, filePath) {
   };
   const wbArray = XLSX.write(nextWorkbook, {
     bookType: filePath.toLowerCase().endsWith(".xlsm") ? "xlsm" : "xlsx",
-    type: "array"
+    type: "array",
+    // Zip compression makes the upload ~3x smaller (9 MB -> 3 MB for 5k stops); data is identical.
+    compression: true
   });
   const { error } = await sb.storage.from(BUCKET).upload(filePath, wbArray, {
     upsert: true,
