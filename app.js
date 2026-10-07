@@ -907,7 +907,8 @@ function showNearbyStopPicker(stops) {
       ? "Delivered"
       : (dayName(Number(rowDay(row))) || `Day ${rowDay(row) || key.split("|")[1]}`);
     const bin = row.BINNO ? ` · Bin ${row.BINNO}` : "";
-    detail.textContent = `Route ${rowRoute(row) || key.split("|")[0]} · ${status}${bin} · ${Math.round(distance)} px away`;
+    const sequence = rowSequence(row);
+    detail.textContent = `Route ${rowRoute(row) || key.split("|")[0]} · ${status}${bin}${sequence !== null ? ` · Seq ${sequence}` : ""} · ${Math.round(distance)} px away`;
 
     const selectionState = document.createElement("span");
     selectionState.className = "mobile-stop-choice-state";
@@ -1530,6 +1531,140 @@ if (layerVisibilityState.hasOwnProperty(key)) {
 function rowRoute(row) { return row.ROUTE; }
 function rowDay(row) { return row.DAY; }
 
+function rowSequence(row) {
+  const value = row.SEQNO;
+  if ((typeof value !== "number" && typeof value !== "string") || String(value).trim() === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+// This overlay owns its route/day filter; delivered-marker visibility never changes its path.
+const sequenceGroups = new Map();
+const sequencePane = map.createPane("sequencePane");
+sequencePane.style.zIndex = "350";
+sequencePane.style.pointerEvents = "none";
+const sequenceRenderer = L.canvas({ pane: "sequencePane", padding: 0.2 });
+const sequenceLayer = L.layerGroup();
+const sequenceStyle = { renderer: sequenceRenderer, pane: "sequencePane", interactive: false, smoothFactor: 0, lineCap: "round" };
+const sequenceHalo = L.polyline([], { ...sequenceStyle, color: "#ffffff", weight: 4, opacity: 0.8 }).addTo(sequenceLayer);
+const sequenceCompletedLine = L.polyline([], { ...sequenceStyle, color: "#64748b", weight: 1.7, opacity: 0.8, dashArray: "5 5" }).addTo(sequenceLayer);
+const sequencePendingLine = L.polyline([], { ...sequenceStyle, color: "#173dff", weight: 1.7, opacity: 1 }).addTo(sequenceLayer);
+const sequenceCompletedArrows = L.polygon([], { ...sequenceStyle, color: "#64748b", weight: 0, fillOpacity: 0.85 }).addTo(sequenceLayer);
+const sequencePendingArrows = L.polygon([], { ...sequenceStyle, color: "#173dff", weight: 0, fillOpacity: 1 }).addTo(sequenceLayer);
+const sequenceDeliveredBadges = L.polygon([], { ...sequenceStyle, color: "#ffffff", fillColor: "#137442", weight: 1.5, fillOpacity: 1 }).addTo(sequenceLayer);
+const sequenceDeliveredChecks = L.polyline([], { ...sequenceStyle, color: "#ffffff", weight: 1.8, opacity: 1 }).addTo(sequenceLayer);
+let sequenceFrame = null;
+let sequenceDataNote = "";
+
+function scheduleSequenceRender() {
+  if (sequenceFrame !== null) return;
+  sequenceFrame = requestAnimationFrame(() => { sequenceFrame = null; renderSequenceLayer(); });
+}
+
+function rebuildSequenceData(rows) {
+  sequenceGroups.clear();
+  let missing = 0;
+  let invalidCoordinates = 0;
+  let duplicates = 0;
+  rows.forEach((row, index) => {
+    const seq = rowSequence(row);
+    const route = String(rowRoute(row) ?? "").trim();
+    const day = String(rowDay(row) ?? "").trim();
+    const dayNumber = Number(day);
+    if (seq === null || !route || !Number.isInteger(dayNumber) || dayNumber < 1 || dayNumber > 7) { missing++; return; }
+    const lat = Number(row.LATITUDE), lng = Number(row.LONGITUDE);
+    const located = String(row.LATITUDE ?? "").trim() !== "" && String(row.LONGITUDE ?? "").trim() !== "" &&
+      Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+    if (!located) invalidCoordinates++;
+    const key = JSON.stringify([route, day]);
+    if (!sequenceGroups.has(key)) sequenceGroups.set(key, { route, day, stops: [] });
+    sequenceGroups.get(key).stops.push({ row, seq, index, latlng: located ? L.latLng(lat, lng) : null });
+  });
+  sequenceGroups.forEach(group => {
+    group.stops.sort((a, b) => a.seq - b.seq || a.index - b.index);
+    group.stops.forEach((stop, i) => { if (i && stop.seq === group.stops[i - 1].seq) duplicates++; });
+  });
+  const select = document.getElementById("sequenceRouteSelect");
+  select.replaceChildren(new Option("All route / day sequences", "all"));
+  sequenceGroups.forEach((group, key) => select.add(new Option(`Route ${group.route} · ${dayName(Number(group.day)) || `Day ${group.day}`}`, key)));
+  const usable = [...sequenceGroups.values()].some(group => group.stops.some((stop, i) =>
+    i && stop.latlng && group.stops[i - 1].latlng && !stop.latlng.equals(group.stops[i - 1].latlng)));
+  const toggle = document.getElementById("sequenceLayerToggle");
+  toggle.disabled = !usable;
+  if (!usable) toggle.checked = false;
+  sequenceDataNote = [missing ? `${missing} rows without a valid sequence/route/day omitted.` : "",
+    invalidCoordinates ? `${invalidCoordinates} invalid locations break the path.` : "",
+    duplicates ? "Duplicate sequence values follow spreadsheet row order." : ""].filter(Boolean).join(" ");
+  scheduleSequenceRender();
+}
+
+function renderSequenceLayer() {
+  const toggle = document.getElementById("sequenceLayerToggle");
+  const status = document.getElementById("sequenceLayerStatus");
+  document.getElementById("sequenceLayerOptions").hidden = !toggle.checked;
+  if (!toggle.checked || toggle.disabled) {
+    map.removeLayer(sequenceLayer);
+    status.textContent = toggle.disabled
+      ? `No drawable sequence. Need at least two stops in one route/day with numeric SEQNO values and distinct valid locations. ${sequenceDataNote}`.trim()
+      : "Turn on to see the delivery sequence.";
+    return;
+  }
+  const pending = [], completed = [], pendingArrows = [], completedArrows = [];
+  const badges = [], checks = [];
+  const selected = document.getElementById("sequenceRouteSelect").value;
+  const delivered = stop => String(stop.row.del_status || "").trim().toLowerCase() === "delivered";
+  const bounds = map.getPixelBounds();
+  const zoom = map.getZoom();
+  let arrowCount = 0;
+  let segmentCount = 0;
+  sequenceGroups.forEach((group, key) => {
+    if (selected !== "all" && selected !== key) return;
+    const stops = group.stops;
+    stops.forEach(stop => {
+      if (!stop.latlng || !delivered(stop)) return;
+      const point = map.project(stop.latlng, zoom);
+      if (!bounds.contains(point)) return;
+      const at = (x, y) => map.unproject(L.point(point.x + x, point.y + y), zoom);
+      badges.push([at(-6, -6), at(6, -6), at(6, 6), at(-6, 6)]);
+      checks.push([at(-3, 0), at(-1, 2.5), at(3.5, -3)]);
+    });
+    for (let i = 1; i < stops.length; i++) {
+      const from = stops[i - 1], to = stops[i];
+      if (!from.latlng || !to.latlng || from.latlng.equals(to.latlng)) continue;
+      const done = delivered(from) && delivered(to);
+      (done ? completed : pending).push([from.latlng, to.latlng]);
+      segmentCount++;
+      const a = map.project(from.latlng, zoom), b = map.project(to.latlng, zoom);
+      if (a.distanceTo(b) < 24 || arrowCount >= 1500) continue;
+      const clipped = L.LineUtil.clipSegment(a, b, bounds, false);
+      if (!clipped) continue;
+      const length = clipped[0].distanceTo(clipped[1]);
+      if (length < 16) continue;
+      const dx = (b.x - a.x) / a.distanceTo(b), dy = (b.y - a.y) / a.distanceTo(b);
+      for (let distance = length < 100 ? length / 2 : 45; distance < length && arrowCount < 1500; distance += 100) {
+        const tip = L.point(clipped[0].x + dx * distance, clipped[0].y + dy * distance);
+        const left = L.point(tip.x - dx * 9 - dy * 4, tip.y - dy * 9 + dx * 4);
+        const right = L.point(tip.x - dx * 9 + dy * 4, tip.y - dy * 9 - dx * 4);
+        (done ? completedArrows : pendingArrows).push([tip, left, right].map(point => map.unproject(point, zoom)));
+        arrowCount++;
+      }
+    }
+  });
+  sequenceHalo.setLatLngs([...pending, ...completed]);
+  sequencePendingLine.setLatLngs(pending);
+  sequenceCompletedLine.setLatLngs(completed);
+  sequencePendingArrows.setLatLngs(pendingArrows);
+  sequenceCompletedArrows.setLatLngs(completedArrows);
+  sequenceDeliveredBadges.setLatLngs(badges);
+  sequenceDeliveredChecks.setLatLngs(checks);
+  if (!map.hasLayer(sequenceLayer)) sequenceLayer.addTo(map);
+  status.textContent = `${segmentCount} connections · original sequence, including delivered stops. ${sequenceDataNote}`.trim();
+}
+
+document.getElementById("sequenceLayerToggle").addEventListener("change", scheduleSequenceRender);
+document.getElementById("sequenceRouteSelect").addEventListener("change", scheduleSequenceRender);
+map.on("zoomend moveend resize", scheduleSequenceRender);
+
 // ================= PROCESS ROUTE EXCEL =================
 // Core data flow: first sheet -> row objects -> one Leaflet marker per row.
 // Required columns: LATITUDE, LONGITUDE, ROUTE, DAY. Optional: CSADR#, CSSDIR, CSSTRT, CSSFUX
@@ -1540,6 +1675,7 @@ function processExcelBuffer(buffer) {
   const ws = wb.Sheets[wb.SheetNames[0]];
 
   const rows = XLSX.utils.sheet_to_json(ws);
+  rebuildSequenceData(rows);
 
   // store globally for saving later
   window._currentRows = rows;
@@ -1601,6 +1737,7 @@ const popupContent = `
 
     <div><strong>Container Size:</strong> ${row["SIZE"] || "-"}</div>
     <div><strong>Quantity:</strong> ${row["QTY"] || "-"}</div>
+    ${rowSequence(row) !== null ? `<div><strong>Sequence:</strong> ${rowSequence(row)}</div>` : ""}
     <div><strong>Bin #:</strong> ${row["BINNO"] || "-"}</div>
   </div>
 `;
@@ -2650,6 +2787,7 @@ if (resetBtn) {
 
     // 7. Reset bounds tracker
     globalBounds = L.latLngBounds();
+    rebuildSequenceData([]);
 
 
   });
@@ -3167,6 +3305,7 @@ async function saveSelectedDeliveryStatus(markDelivered) {
     individuallySelectedMarkers.clear();
     individuallyDeselectedMarkers.clear();
     buildRouteDayLayerControls();
+    scheduleSequenceRender();
     updateSelectionCount();
     updateUndoButtonState();
   }

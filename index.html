@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261007-load-export" />
+  <link rel="stylesheet" href="style.css?v=20261007-sequence-2" />
 
   <link rel="icon" href="favicon.ico" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -116,6 +116,17 @@
 
     
     
+<div class="filter-group sequence-controls">
+  <label class="sequence-toggle" for="sequenceLayerToggle"><input id="sequenceLayerToggle" type="checkbox" disabled>Sequence arrows · SEQNO</label>
+  <div id="sequenceLayerOptions" hidden>
+    <label for="sequenceRouteSelect">Sequence route / day</label>
+    <select id="sequenceRouteSelect" aria-label="Sequence route and day"></select>
+    <p>Keeps the original path, including delivered stops. Independent of marker layers. Lines connect stops directly; they do not follow roads.</p>
+    <div class="sequence-legend"><span>→ Sequence</span><span>⇢ Between delivered stops</span><span>✓ Delivered stop</span></div>
+  </div>
+  <p id="sequenceLayerStatus" role="status" aria-live="polite">Open a file with a numeric SEQNO column to see its sequence.</p>
+</div>
+
 <div class="filter-group">
   <strong>Delivered</strong>
   <div id="deliveredControls"></div>
@@ -344,7 +355,7 @@
   </div>
 </div>
 
-<script src="app.js?v=20261007-load-export" defer></script>
+<script src="app.js?v=20261007-sequence-2" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">

@@ -4407,3 +4407,37 @@ body .load-log-dialog #exportLoadLogBtn {
 #loadLogDialog[data-editing="true"] > :is(.load-log-filters, #newLoadProfileBtn, #loadLogTotals, #loadLogSyncStatus, .load-log-actions, #exportLoadLogBtn, h3, #loadLogList, #loadLogShowMore) {
   display: none;
 }
+
+.sequence-controls .sequence-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.sequence-toggle input { width: 20px; height: 20px; margin: 0; accent-color: #244be8; }
+#sequenceLayerOptions[hidden] { display: none; }
+#sequenceLayerOptions label { display: block; font-size: 13px; margin-top: 10px; }
+body .sequence-controls select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  margin-top: 5px;
+  padding: 8px;
+  border: 1px solid var(--tool-edge);
+  border-radius: 8px;
+  background: var(--tool-bg);
+  color: var(--tool-ink);
+  font-size: 16px;
+}
+.sequence-controls p { font-size: 12px; line-height: 1.5; margin: 10px 0 0; overflow-wrap: anywhere; }
+.sequence-legend { display: flex; flex-direction: column; gap: 5px; font-size: 12px; margin-top: 10px; }
+.sequence-legend span:first-child { color: #a8c5ff; }
+.sequence-legend span:nth-child(2) { color: #c2cbd7; }
+.sequence-legend span:last-child { color: #8fe6ad; }
+body.sun-mode .sequence-legend span:first-child { color: #173dff; }
+body.sun-mode .sequence-legend span:nth-child(2) { color: #526176; }
+body.sun-mode .sequence-legend span:last-child { color: #137442; }
+.sequence-controls :is(input, select):focus-visible { outline: 3px solid #e6ad22; outline-offset: 2px; }
