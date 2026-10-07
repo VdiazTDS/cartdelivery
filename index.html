@@ -1,4 +1,6 @@
 <!DOCTYPE html>
+<!-- Structure guide: see README.md. Phone controls live in #deliveryControls (below #map); on desktop
+     app.js (placeDeliveryControls) moves them into #selectionBox. Bump ?v= on app.js/style.css when editing them. -->
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
@@ -10,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261007-copy-location" />
+  <link rel="stylesheet" href="style.css?v=20261007-delivery-controls" />
 
   <link rel="icon" href="favicon.ico" />
 
@@ -58,11 +60,6 @@
 
   <div class="mobile-header-buttons">
     <button id="hardRefreshBtn" class="primary-btn" title="Reload app data and clear cached view">Refresh App</button>
-    <button id="mobileMenuBtn">☰ Menu</button>
-    <button id="locateMeBtn" class="primary-btn">📍</button>
-    <button id="copyLocationBtn" class="primary-btn" type="button" aria-haspopup="dialog">Copy Location</button>
-    <button id="completeStopsBtnMobile" class="primary-btn" disabled>Mark Stops Delivered</button>
-    <div id="deliverySaveStatus" class="delivery-save-status" role="status" aria-live="polite" aria-atomic="true"></div>
   </div>
 
 </header>
@@ -92,14 +89,14 @@
   <span class="file-manager-icon" aria-hidden="true"></span>
   <span class="file-manager-copy">
     <span class="file-manager-title">Open Saved Files</span>
-    <span class="file-manager-subtitle">Load a saved route into the map + route summary</span>
+    <span class="file-manager-subtitle">Load a trash or recycling delivery file into the map</span>
   </span>
 </button>
 </div>
     <div id="savedFilesGuide" class="saved-files-guide">
       <div class="saved-files-guide-title">Quick Start</div>
       <div class="saved-files-guide-step"><span class="saved-files-guide-num">1</span>Open <strong>Saved Files</strong></div>
-      <div class="saved-files-guide-step"><span class="saved-files-guide-num">2</span><strong>Open Map</strong> or <strong>Summary</strong></div>
+      <div class="saved-files-guide-step"><span class="saved-files-guide-num">2</span>Choose a delivery file and select <strong>Open Map</strong></div>
     </div>
     <div class="map-view-group">
       <label for="baseMapSelect" class="map-view-label">Map View</label>
@@ -286,38 +283,21 @@
 <button id="toggleSelectionBtn" class="sidebar-toggle-right">❯</button>
 
 </div> <!-- end app-container -->
-<!-- ===== BOTTOM ROUTE SUMMARY PANEL ===== -->
-<div id="bottomSummary" class="bottom-summary">
-
-  <div class="bottom-summary-header">
-  <div class="resize-hint">
-    ⠿ Drag up to resize
+<!-- Phone controls stay below the map. Shared actions move to the sidebar on desktop. -->
+<section id="deliveryControls" class="delivery-controls" aria-label="Delivery controls">
+  <div class="delivery-controls-main">
+    <button id="mobileSelectionBtn" class="primary-btn" type="button" aria-pressed="false">Select Stops</button>
+    <button id="completeStopsBtnMobile" class="primary-btn" type="button" disabled>Mark Stops Delivered</button>
   </div>
-
-
-    <button id="popoutSummaryBtn" class="primary-btn">
-  ↗ Open Summary
-</button>
-
-    <button id="visualizeSummaryBtn" class="primary-btn">Visualize Summary</button>
-
-
-    <span class="summary-title">Route Summary</span>
-
-    <button id="summaryToggleBtn" class="primary-btn collapse-btn">▲</button>
-
-
+  <div id="deliverySaveStatus" class="delivery-save-status" role="status" aria-live="polite" aria-atomic="true"></div>
+  <div id="deliveryQuickActions" class="delivery-quick-actions">
+    <button id="mobileMenuBtn" class="primary-btn" type="button" aria-expanded="false">Menu</button>
+    <button id="locateMeBtn" class="primary-btn" type="button" aria-label="Locate me and follow my position" aria-pressed="false">Locate</button>
+    <button id="copyLocationBtn" class="primary-btn" type="button" aria-haspopup="dialog">Copy Location</button>
+    <button id="deliveryMoreBtn" class="primary-btn" type="button" aria-expanded="false" aria-controls="deliveryMoreActions">More</button>
   </div>
-
-  <div id="routeSummaryTable" class="bottom-summary-content">
-    No summary loaded
-  </div>
-
-</div>
-
-
-
-
+  <div id="deliveryMoreActions" class="delivery-more-actions" hidden></div>
+</section>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
@@ -331,7 +311,7 @@
 <div id="fileManagerModal" class="modal">
   <div class="modal-content">
     <h3>Saved Excel Files (Open Here)</h3>
-    <p class="saved-files-modal-help">Choose <strong>Open Map</strong> to load the map and route summary, or <strong>Summary</strong> for summary only. Cart Delivery picks are saved in this browser.</p>
+    <p class="saved-files-modal-help">Choose <strong>Open Map</strong> to load your delivery stops. Use your trash or recycling file in whichever order you need. Cart Delivery picks are saved in this browser.</p>
 
     <div class="saved-file-tabs" role="tablist" aria-label="Saved file categories">
       <button id="cartDeliveryFilesTab" class="saved-file-tab active" type="button" role="tab" aria-selected="true" aria-controls="savedFiles">Cart Delivery</button>
@@ -355,9 +335,7 @@
   </div>
 </div>
 
-<script src="app.js?v=20261007-copy-location" defer></script>
-<!-- MOBILE Selected Stops Button -->
-<button id="mobileSelectionBtn" aria-label="0 stops selected; open selection actions">Selected: 0</button>
+<script src="app.js?v=20261007-delivery-controls" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">

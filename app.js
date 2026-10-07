@@ -1,3 +1,31 @@
+/*
+ * Cart Delivery app - single-file client logic (no build step, no modules).
+ * See README.md for the architecture guide and AGENTS.md for editing rules.
+ *
+ * Map of this file (search for the "=====" section banners):
+ *   1. Delivery button/status helpers (top of file)
+ *   2. Supabase config + global state (window._currentRows / _currentWorkbook / _currentFilePath)
+ *   3. Header tools menu, Sun Mode, GPS locate / live tracking / Copy Location
+ *   4. Leaflet map setup, base layers, Leaflet.Draw polygon selection
+ *   5. Selection engine: createSelectionTester, isStopSelected, toggleIndividualStopSelection,
+ *      nearby-stop chooser (phone tap selection), updateSelectionCount
+ *   6. Marker creation, route/day filters, statistics
+ *   7. processExcelBuffer: turns a workbook into markers (core data flow)
+ *   8. Saved files (Supabase storage list/upload, Cart Delivery tab in localStorage)
+ *   9. placeDeliveryControls + initApp: layout wiring, mobile menu, selection mode, reset, search
+ *  10. Cloud save of delivery status (saveSelectedDeliveryStatus), collapsibles, button events
+ *
+ * Key invariants:
+ *   - Every marker has marker._rowRef (the spreadsheet row object) and marker._base ({lat, lon, symbol}).
+ *   - routeDayGroups["ROUTE|DAY"] or ["ROUTE|Delivered"] = { layers: [markers] } is the source of truth for markers.
+ *   - A stop is "selected" if it is in individuallySelectedMarkers, or inside the drawn polygon and not in
+ *     individuallyDeselectedMarkers. Always use isStopSelected(); never read marker styles to decide.
+ *   - del_status === "Delivered" (case-insensitive) in a row means delivered. Saving rewrites the whole sheet.
+ *   - updateSelectionCount is re-assigned later (mobile selection section) to also refresh the phone button;
+ *     call it by name after any selection change, plus updateUndoButtonState().
+ *   - Layout is "mobile" at window.innerWidth <= 900; placeDeliveryControls moves the same DOM nodes between
+ *     the phone dock (#deliveryControls) and the desktop sidebar, so do not duplicate buttons.
+ */
 window.addEventListener("error", e => {
   console.error("JS ERROR:", e.message, "at line", e.lineno);
 });
@@ -51,8 +79,6 @@ const BUCKET = "excel-files";
 window._currentRows = null;
 window._currentWorkbook = null;
 window._currentFilePath = null;
-window._summaryRows = [];
-window._summaryHeaders = [];
 
 window.streetLabelsEnabled = false;
 
@@ -111,6 +137,7 @@ function setupHeaderToolsMenu() {
 
 //======
 // 🔐 Delete protection password I know this is not secure, I just wanted to make it harder for ppl to accidentally delete files. You can change or remove this as needed.
+// NOTE: client-side only; anyone can read it in the source. Not real security.
 const DELETE_PASSWORD = "Austin1";  // ← change to whatever you want
 
 
@@ -152,7 +179,7 @@ setupHeaderToolsMenu();
 
   });
 /* ⭐ Ensures mobile buttons move AFTER full page load */
-window.addEventListener("load", placeLocateButton);
+window.addEventListener("load", placeDeliveryControls);
 
 // ===== USER GEOLOCATION =====
 function locateUser() {
@@ -546,19 +573,6 @@ if (hardRefreshBtn) {
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 
-// ================= FILE NAME MATCHING =================
-// Makes route files and route summary files match even if
-// spacing, punctuation, or "RouteSummary" text is different.
-function normalizeName(name) {
-  return name
-    .toLowerCase()
-    .replace(".xlsx", "")
-    .replace("route summary", "")   // handles "Route Summary"
-    .replace("routesummary", "")    // handles "RouteSummary"
-    .replace(/[_\s.-]/g, "")        // ignore spaces, _, ., -
-    .trim();
-}
-
 // Prevent recursive growth like "..._Downloaded_<ts>_Downloaded_<ts>".
 function getDownloadBaseName(filePath) {
   const rawName = (filePath || "Export").replace(/\.[^/.]+$/, "");
@@ -674,6 +688,8 @@ function pointIsInsideRing(point, ring) {
   return inside;
 }
 
+// Returns a function(latlng) => boolean that tests the drawn polygon/rectangle geometry
+// (holes supported) in projected pixel space. Returns () => false when nothing is drawn.
 function createSelectionTester() {
   const selection = drawnLayer.getLayers()[0];
   if (!selection) return () => false;
@@ -718,6 +734,8 @@ function createSelectionTester() {
   };
 }
 
+// Single source of truth for "is this stop selected?". Pass a shared tester when looping
+// over many markers so the polygon is only projected once.
 function isStopSelected(marker, selectionTester = createSelectionTester()) {
   if (!map.hasLayer(marker)) return false;
   if (individuallySelectedMarkers.has(marker)) return true;
@@ -729,6 +747,8 @@ function isStopSelected(marker, selectionTester = createSelectionTester()) {
   return Boolean(latlng && selectionTester(latlng));
 }
 
+// Toggles one stop. Adds to individuallySelectedMarkers; if the stop is inside the drawn area,
+// deselecting records it in individuallyDeselectedMarkers instead.
 function toggleIndividualStopSelection(marker) {
   const wasSelected = isStopSelected(marker);
   const selectionTester = createSelectionTester();
@@ -749,6 +769,8 @@ function toggleIndividualStopSelection(marker) {
   }
 }
 
+// Phone tap selection: returns visible markers within the tap radius, nearest first.
+// Radius is max(32px, marker radius + 20px) in map container pixels.
 function getNearbyVisibleStops(latlng) {
   const tapPoint = map.latLngToContainerPoint(latlng);
   const nearby = [];
@@ -825,6 +847,8 @@ function showNearbyStopPicker(stops) {
   picker.hidden = false;
 }
 
+// Selects the nearest stop directly, or opens the chooser (#mobileStopPicker) when the two
+// nearest candidates are within 12px of each other. Tune this threshold here.
 function handleMobileStopTap(latlng) {
   const nearby = getNearbyVisibleStops(latlng);
   if (!nearby.length) {
@@ -985,21 +1009,6 @@ const symbolMap = {};        // stores symbol for each route/day combo
 const routeDayGroups = {};   // stores map markers grouped by route/day
 // ===== DELIVERED STOPS LAYER =====
 
-function normalizeDayToken(value) {
-  const s = String(value ?? "").trim().toLowerCase();
-  if (!s) return "";
-  const dayMap = {
-    "1": "1", "mon": "1", "monday": "1",
-    "2": "2", "tue": "2", "tues": "2", "tuesday": "2",
-    "3": "3", "wed": "3", "wednesday": "3",
-    "4": "4", "thu": "4", "thur": "4", "thurs": "4", "thursday": "4",
-    "5": "5", "fri": "5", "friday": "5",
-    "6": "6", "sat": "6", "saturday": "6",
-    "7": "7", "sun": "7", "sunday": "7"
-  };
-  return dayMap[s] || s;
-}
-
 function getLayerLatLng(layer) {
   if (!layer) return null;
   if (typeof layer.getLatLng === "function") return layer.getLatLng();
@@ -1009,78 +1018,6 @@ function getLayerLatLng(layer) {
   }
   return null;
 }
-
-// Used by the visualization popup window (window.opener) to focus the matching route+day on the map.
-window.highlightRouteDayOnMap = function(routeValue, dayValue) {
-  const routeToken = String(routeValue ?? "").trim();
-  const dayToken = normalizeDayToken(dayValue);
-  if (!routeToken || !dayToken) {
-    return { ok: false, message: "Route/day value is missing." };
-  }
-
-  let matchingKey = null;
-  Object.keys(routeDayGroups).forEach(key => {
-    if (matchingKey) return;
-    const [kRoute, kDay] = key.split("|");
-    if (!kRoute || !kDay || kDay === "Delivered") return;
-    if (String(kRoute).trim() !== routeToken) return;
-
-    const keyDayToken = normalizeDayToken(kDay);
-    if (keyDayToken === dayToken) matchingKey = key;
-  });
-
-  if (!matchingKey || !routeDayGroups[matchingKey]) {
-    return { ok: false, message: `Could not find ${routeToken} | ${dayValue} on the map.` };
-  }
-
-  const group = routeDayGroups[matchingKey];
-  const markers = group.layers || [];
-  if (!markers.length) {
-    return { ok: false, message: `No map points found for ${routeToken} | ${dayValue}.` };
-  }
-
-  layerVisibilityState[matchingKey] = true;
-  const layerCheckbox = document.querySelector(`input[data-key="${matchingKey}"]`);
-  if (layerCheckbox) layerCheckbox.checked = true;
-
-  const bounds = L.latLngBounds();
-  markers.forEach(marker => {
-    map.addLayer(marker);
-    const ll = getLayerLatLng(marker);
-    if (ll) bounds.extend(ll);
-
-    const sym = symbolMap[matchingKey] || { color: "#2f89df" };
-    marker.setStyle?.({
-      color: "#ffd54a",
-      fillColor: "#ffd54a",
-      fillOpacity: 1,
-      opacity: 1,
-      weight: 2
-    });
-
-    setTimeout(() => {
-      marker.setStyle?.({
-        color: sym.color,
-        fillColor: sym.color,
-        fillOpacity: 0.95,
-        opacity: 1,
-        weight: 1
-      });
-    }, 2200);
-  });
-
-  if (bounds.isValid()) {
-    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
-  }
-
-  return {
-    ok: true,
-    message: `Highlighted ${matchingKey} on the map.`,
-    key: matchingKey,
-    points: markers.length
-  };
-};
-
 
 let symbolIndex = 0;
 let globalBounds = L.latLngBounds(); // used to zoom map to all points
@@ -1509,6 +1446,10 @@ if (layerVisibilityState.hasOwnProperty(key)) {
 
 
 // ================= PROCESS ROUTE EXCEL =================
+// Core data flow: first sheet -> row objects -> one Leaflet marker per row.
+// Required columns: LATITUDE, LONGITUDE, NEWROUTE, NEWDAY. Optional: CSADR#, CSSDIR, CSSTRT, CSSFUX
+// (address), SIZE, QTY, BINNO (popup), del_status ("Delivered" marks completed stops).
+// Resets all map/selection state, then fills routeDayGroups keyed "ROUTE|DAY" or "ROUTE|Delivered".
 function processExcelBuffer(buffer) {
   const wb = XLSX.read(new Uint8Array(buffer), { type: "array" });
   const ws = wb.Sheets[wb.SheetNames[0]];
@@ -1641,6 +1582,8 @@ if (status === "delivered") {
 
 
 // ================= LIST FILES FROM CLOUD =================
+// Saved-files popup: "Cart Delivery" tab (default, shown first) lists files the user chose, stored
+// per browser in localStorage under CART_DELIVERY_FILES_KEY; "All Files" lists the whole bucket.
 const CART_DELIVERY_FILES_KEY = "cartdelivery.savedFiles.cartDelivery";
 let cartDeliveryFileNames = new Set();
 try {
@@ -1695,20 +1638,11 @@ async function listFiles() {
   const ul = document.getElementById("savedFiles");
   ul.innerHTML = "";
 
+  // Legacy summary files are not delivery datasets; keep them out of this list.
   const routeFiles = {};
-  const summaryFiles = {};
-
- // Separate route files and summary files
-data.forEach(file => {
-  const name = file.name.toLowerCase();
-
-  if (name.includes("routesummary")) {
-    summaryFiles[normalizeName(name)] = file.name;
-  } else {
-    routeFiles[normalizeName(name)] = file.name;
-  }
-});
-
+  data.forEach(file => {
+    if (!/route[\s_.-]*summary/i.test(file.name)) routeFiles[file.name] = file.name;
+  });
 
   // Build UI
   const visibleRouteKeys = Object.keys(routeFiles).filter(key =>
@@ -1727,7 +1661,6 @@ data.forEach(file => {
 
   visibleRouteKeys.forEach(key => {
     const routeName = routeFiles[key];
-    const summaryName = summaryFiles[key];
 
     const li = document.createElement("li");
 
@@ -1773,10 +1706,10 @@ data.forEach(file => {
     setCurrentFileDisplay(window._currentFilePath);
 
     processExcelBuffer(await r.arrayBuffer());
-    await loadSummaryFor(routeName);
 
     hideLoading("File Loaded Successfully ✅");
-    if (fileManagerModal) fileManagerModal.style.display = "none";
+    document.getElementById("fileManagerModal").style.display = "none";
+    closeMobileMenu();
 
   } catch (err) {
     console.error(err);
@@ -1788,18 +1721,6 @@ data.forEach(file => {
 
 
     li.appendChild(openBtn);
-
-    // SUMMARY BUTTON
-    if (summaryName) {
-      const summaryBtn = document.createElement("button");
-      summaryBtn.textContent = "Summary";
-      summaryBtn.style.marginLeft = "5px";
-      summaryBtn.onclick = async () => {
-        await loadSummaryFor(routeName);
-        if (fileManagerModal) fileManagerModal.style.display = "none";
-      };
-      li.appendChild(summaryBtn);
-    }
 
     // DELETE
     const delBtn = document.createElement("button");
@@ -1819,7 +1740,6 @@ data.forEach(file => {
   if (!confirmed) return;
 
   const toDelete = [routeName];
-  if (summaryName) toDelete.push(summaryName);
 
   const { error } = await sb.storage.from(BUCKET).remove(toDelete);
   if (error) {
@@ -1861,6 +1781,7 @@ async function uploadFile(file) {
     setCurrentFileDisplay(window._currentFilePath);
 
     processExcelBuffer(await file.arrayBuffer());
+    closeMobileMenu();
     listFiles();
 
     hideLoading("Upload Complete ✅");
@@ -1872,267 +1793,44 @@ async function uploadFile(file) {
   }
 }
 
-// ================= ROUTE SUMMARY DISPLAY =================
-function showRouteSummary(rows, headers)
- {
-  const tableBox = document.getElementById("routeSummaryTable");
-  const panel = document.getElementById("bottomSummary");
-  const btn = document.getElementById("summaryToggleBtn");
-
-  if (!tableBox || !panel || !btn) return;
-
-  tableBox.innerHTML = "";
-  window._summaryRows = Array.isArray(rows) ? rows : [];
-  window._summaryHeaders = Array.isArray(headers) ? headers : [];
-
-  if (!rows || !rows.length) {
-    tableBox.textContent = "No summary data found";
-    return;
-  }
-
-  // ✅ Get headers EXACTLY in Excel order
-  
-
-  const table = document.createElement("table");
-  const thead = document.createElement("thead");
-  const tbody = document.createElement("tbody");
-
-  // ===== HEADER ROW =====
-  const headerRow = document.createElement("tr");
-  headers.forEach(h => {
-    const th = document.createElement("th");
-    th.textContent = h ?? "";
-    headerRow.appendChild(th);
-  });
-  thead.appendChild(headerRow);
-
-  // ===== DATA ROWS =====
-  rows.forEach(r => {
-    const tr = document.createElement("tr");
-
-    headers.forEach(h => {
-      const td = document.createElement("td");
-      td.textContent = r[h] ?? "";
-      tr.appendChild(td);
-    });
-
-    tbody.appendChild(tr);
-  });
-
-  table.appendChild(thead);
-  table.appendChild(tbody);
-  tableBox.appendChild(table);
-
-// AUTO-OPEN + FORCE VISIBLE HEIGHT
-const savedHeight = localStorage.getItem("summaryHeight");
-
-// Always prepare a usable expanded height
-const defaultHeight = window.innerWidth <= 900 ? 300 : 250;
-panel.style.height = (savedHeight && savedHeight > 60 ? savedHeight : defaultHeight) + "px";
-
-// Only auto-open on desktop
-if (window.innerWidth > 900) {
-  panel.classList.remove("collapsed");
-  btn.textContent = "▼";
+// ===== PLACE DELIVERY CONTROLS BASED ON SCREEN SIZE =====
+// Moves existing buttons between the phone dock (#deliveryControls, below the map) and the
+// desktop right sidebar (#selectionBox). Runs on load and resize. Add new shared actions to
+// BOTH branches, or they will only appear on one layout.
+function closeMobileMenu() {
+  document.querySelector(".sidebar").classList.remove("open");
+  document.querySelector(".mobile-overlay").classList.remove("show");
+  const button = document.getElementById("mobileMenuBtn");
+  button.textContent = "Menu";
+  button.setAttribute("aria-expanded", "false");
 }
 
-
-}
-
-function autoCollapseSidebarsForSummary() {
-  const appContainer = document.querySelector(".app-container");
-  const toggleSidebarBtn = document.getElementById("toggleSidebarBtn");
-  const sidebar = document.querySelector(".sidebar");
-  const overlay = document.querySelector(".mobile-overlay");
-  const mobileMenuBtn = document.getElementById("mobileMenuBtn");
-
-  const selectionBox = document.getElementById("selectionBox");
-  const toggleSelectionBtn = document.getElementById("toggleSelectionBtn");
-
-  // Left sidebar: collapse desktop and close mobile drawer.
-  if (appContainer) appContainer.classList.add("collapsed");
-  if (toggleSidebarBtn) toggleSidebarBtn.setAttribute("aria-expanded", "false");
-  if (sidebar) sidebar.classList.remove("open");
-  if (overlay) overlay.classList.remove("show");
-  if (mobileMenuBtn) mobileMenuBtn.textContent = "☰";
-
-  // Right sidebar: collapse desktop and hide mobile panel.
-  if (selectionBox) {
-    selectionBox.classList.add("collapsed");
-    selectionBox.classList.remove("show");
-  }
-  if (toggleSelectionBtn) toggleSelectionBtn.textContent = "❮";
-
-  setTimeout(() => map.invalidateSize(), 180);
-}
-
-
-
-// Load matching summary file
-async function loadSummaryFor(routeFileName) {
-  const { data, error } = await sb.storage.from(BUCKET).list();
-  if (error) {
-    console.error("LIST ERROR:", error);
-    return;
-  }
-
-  console.log("ALL FILES:", data.map(f => f.name));
-  console.log("ROUTE FILE CLICKED:", routeFileName);
-
-  const normalizedRoute = normalizeName(routeFileName);
-  console.log("NORMALIZED ROUTE:", normalizedRoute);
-
-  const summary = data.find(f => {
-    const lower = f.name.toLowerCase();
-    const normalizedSummary = normalizeName(f.name);
-
-    console.log("CHECKING:", f.name, "→", normalizedSummary);
-
-    return (
-      lower.includes("routesummary") ||
-      lower.includes("route summary")
-    ) && normalizedSummary === normalizedRoute;
-  });
-
-  console.log("FOUND SUMMARY:", summary);
-
-  if (!summary) {
-    document.getElementById("routeSummaryTable").textContent = "No summary available";
-    return;
-  }
-
-  const { data: urlData } = sb.storage.from(BUCKET).getPublicUrl(summary.name);
-  const r = await fetch(urlData.publicUrl);
-
-  const wb = XLSX.read(new Uint8Array(await r.arrayBuffer()), { type: "array" });
-const ws = wb.Sheets[wb.SheetNames[0]];
-
-// Read entire sheet as grid
-const raw = XLSX.utils.sheet_to_json(ws, { header: 1 });
-
-// ===== FIND FIRST NON-EMPTY ROW =====
-let startRow = raw.findIndex(r =>
-  r && r.some(cell => String(cell || "").trim() !== "")
-);
-
-if (startRow === -1) {
-  showRouteSummary([], []);
-  return;
-}
-
-// ===== DETECT MULTI-ROW HEADERS (supports 1–3+) =====
-let headerRows = [raw[startRow]];
-let nextRow = raw[startRow + 1];
-let thirdRow = raw[startRow + 2];
-
-function looksLikeHeader(row) {
-  if (!row) return false;
-
-  const filled = row.filter(c => String(c || "").trim() !== "").length;
-  const numeric = row.filter(c => !isNaN(parseFloat(c))).length;
-
-  return filled > 0 && numeric < filled / 2;
-}
-
-if (looksLikeHeader(nextRow)) headerRows.push(nextRow);
-if (looksLikeHeader(thirdRow)) headerRows.push(thirdRow);
-
-// ===== BUILD SAFE COLUMN NAMES =====
-const columnCount = Math.max(...headerRows.map(r => r.length));
-
-const headers = Array.from({ length: columnCount }, (_, col) => {
-  const parts = headerRows
-    .map(r => String(r[col] || "").trim())
-    .filter(Boolean);
-
-  return parts.join(" ") || `Column ${col + 1}`;
-});
-
-// ===== DATA STARTS AFTER HEADER =====
-const dataStartIndex = startRow + headerRows.length;
-
-// ===== BUILD ROW OBJECTS =====
-const rows = raw.slice(dataStartIndex).map(r => {
-  const obj = {};
-  headers.forEach((h, i) => {
-    obj[h] = r?.[i] ?? "";
-  });
-  return obj;
-});
-
-
-
-
-showRouteSummary(rows, headers);
-autoCollapseSidebarsForSummary();
-
-
-// 🔽 FORCE the panel open when a summary exists
-const panel = document.getElementById("bottomSummary");
-const btn = document.getElementById("summaryToggleBtn");
-
-const isMobile = window.innerWidth <= 900;
-
-if (panel && btn && !isMobile) {
-  panel.classList.remove("collapsed");
-  btn.textContent = "▼";
-}
-
-
-
-}
-
-
-
-// ================= START APP =================
-// ===== TOGGLE BOTTOM SUMMARY =====
-function toggleSummary() {
-  const panel = document.getElementById("bottomSummary");
-  const btn = document.getElementById("summaryToggleBtn");
-
-  panel.classList.toggle("collapsed");
-
-  // flip arrow direction
-  btn.textContent = panel.classList.contains("collapsed") ? "▲" : "▼";
-}
-// ===== PLACE LOCATE BUTTON BASED ON SCREEN SIZE =====
-function placeLocateButton() {
+function placeDeliveryControls() {
   const locateBtn = document.getElementById("locateMeBtn");
   const completeBtn = document.getElementById("completeStopsBtn");
   const headerContainer = document.querySelector(".mobile-header-buttons");
   const desktopContainer = document.getElementById("desktopLocateContainer");
+  const selectionBox = document.getElementById("selectionBox");
+  const dock = document.getElementById("deliveryControls");
+  const quickActions = document.getElementById("deliveryQuickActions");
+  const moreActions = document.getElementById("deliveryMoreActions");
+  const moreBtn = document.getElementById("deliveryMoreBtn");
+  const clearBtn = document.getElementById("clearSelectionBtn");
+  const refreshBtn = document.getElementById("hardRefreshBtn");
   const undoBtn = document.getElementById("undoDeliveredBtn");
-  const streetToggle = document.getElementById("streetLabelToggle");
+  const streetLabel = document.getElementById("streetLabelToggle").parentElement;
   const saveStatus = document.getElementById("deliverySaveStatus");
   const copyLocationBtn = document.getElementById("copyLocationBtn");
 
-  if (!locateBtn || !completeBtn || !headerContainer || !desktopContainer) return;
-
   if (window.innerWidth <= 900) {
-    // 📱 MOBILE
-    headerContainer.appendChild(locateBtn);
-    headerContainer.appendChild(copyLocationBtn);
-    headerContainer.appendChild(completeBtn);
-    if (undoBtn) headerContainer.appendChild(undoBtn);
-
-    if (streetToggle) {
-      headerContainer.appendChild(streetToggle.parentElement);
-    }
-
-    headerContainer.appendChild(saveStatus);
-
+    quickActions.insertBefore(locateBtn, moreBtn);
+    quickActions.insertBefore(copyLocationBtn, moreBtn);
+    moreActions.append(clearBtn, undoBtn, streetLabel, refreshBtn);
+    dock.insertBefore(saveStatus, quickActions);
   } else {
-    // 🖥 DESKTOP
-    desktopContainer.appendChild(locateBtn);
-    desktopContainer.appendChild(copyLocationBtn);
-    desktopContainer.appendChild(completeBtn);
-    if (undoBtn) desktopContainer.appendChild(undoBtn);
-
-    if (streetToggle) {
-      desktopContainer.appendChild(streetToggle.parentElement);
-    }
-
-    desktopContainer.insertBefore(saveStatus, completeBtn.nextSibling);
+    selectionBox.insertBefore(clearBtn, desktopContainer);
+    desktopContainer.append(locateBtn, copyLocationBtn, completeBtn, saveStatus, undoBtn, streetLabel);
+    headerContainer.appendChild(refreshBtn);
   }
   updateDeliveryButtons();
 }
@@ -2183,8 +1881,6 @@ const clearBtn = document.getElementById("clearSelectionBtn");
 const pageHeader = document.querySelector("header");
 
 // ===== COMPLETE STOPS BUTTON =====
-const completeBtnDesktop = document.getElementById("completeStopsBtn");
-const completeBtnMobile  = document.getElementById("completeStopsBtnMobile");
 
 
   
@@ -2344,13 +2040,21 @@ function syncMobileSidebarLayout() {
 syncMobileSidebarLayout();
 window.addEventListener("resize", syncMobileSidebarLayout);
 
-// Anchor mobile selection actions to the summary's actual height, including
-// the iPhone home-indicator inset and changes while resizing the summary.
-const mobileSummaryPanel = document.getElementById("bottomSummary");
+// Keep the nearby-stop picker above the dock, including the home-indicator inset.
+const deliveryControls = document.getElementById("deliveryControls");
+const moreActions = document.getElementById("deliveryMoreActions");
+const moreBtn = document.getElementById("deliveryMoreBtn");
+moreBtn.addEventListener("click", () => {
+  const expanded = moreActions.hidden;
+  moreActions.hidden = !expanded;
+  moreBtn.textContent = expanded ? "Less" : "More";
+  moreBtn.setAttribute("aria-expanded", String(expanded));
+});
+
 function syncMobileSelectionLayout() {
   if (window.innerWidth > 900) return;
   const root = document.documentElement;
-  root.style.setProperty("--mobile-summary-height", `${mobileSummaryPanel.offsetHeight}px`);
+  root.style.setProperty("--mobile-controls-height", `${deliveryControls.offsetHeight}px`);
   root.style.setProperty("--mobile-header-height", `${pageHeader.offsetHeight}px`);
 }
 
@@ -2360,7 +2064,7 @@ const mobileLayoutObserver = new ResizeObserver(() => {
   syncSelectionBoxTop();
   map.invalidateSize({ pan: false });
 });
-mobileLayoutObserver.observe(mobileSummaryPanel);
+mobileLayoutObserver.observe(deliveryControls);
 mobileLayoutObserver.observe(pageHeader);
 window.addEventListener("resize", syncMobileSelectionLayout);
 syncMobileSelectionLayout();
@@ -2371,7 +2075,8 @@ if (mobileMenuBtn && sidebar && overlay) {
     syncMobileSidebarLayout();
     const open = sidebar.classList.toggle("open");
 
-    mobileMenuBtn.textContent = open ? "✕" : "☰";
+    mobileMenuBtn.textContent = open ? "Close" : "Menu";
+    mobileMenuBtn.setAttribute("aria-expanded", String(open));
     overlay.classList.toggle("show", open);
     if (open) {
       sidebar.scrollTop = 0;
@@ -2383,11 +2088,7 @@ if (mobileMenuBtn && sidebar && overlay) {
     setTimeout(() => map.invalidateSize(), 200);
   });
 
-  overlay.addEventListener("click", () => {
-    sidebar.classList.remove("open");
-    overlay.classList.remove("show");
-    mobileMenuBtn.textContent = "☰";
-  });
+  overlay.addEventListener("click", closeMobileMenu);
 }
 // ===== MOBILE SELECTION TOGGLE =====
 const mobileSelBtn = document.getElementById("mobileSelectionBtn");
@@ -2400,26 +2101,12 @@ if (mobileSelBtn && selectionBox) {
     mobileSelBtn.classList.toggle("selection-mode", isActive);
     document.getElementById("mobileStopPicker").hidden = true;
     if (isActive) map.closePopup();
-    if (isActive) selectionBox.classList.remove("show");
+    selectionBox.classList.remove("show");
     updateSelectionCount();
   }
 
   mobileSelBtn.addEventListener("click", () => {
-    const selectedCount = Number(document.getElementById("selectionCount").textContent);
-    if (mobileStopSelectionMode) {
-      setMobileStopSelectionMode(false);
-      if (selectedCount) selectionBox.classList.add("show");
-      return;
-    }
-
-    if (selectionBox.classList.contains("show")) {
-      selectionBox.classList.remove("show");
-    } else if (selectedCount) {
-      selectionBox.classList.add("show");
-      return;
-    }
-
-    setMobileStopSelectionMode(true);
+    setMobileStopSelectionMode(!mobileStopSelectionMode);
   });
 
   document.getElementById("mobileStopPickerClose").addEventListener("click", () => {
@@ -2436,830 +2123,23 @@ if (mobileSelBtn && selectionBox) {
       : count
         ? `Selected: ${count}`
         : "Select Stops";
+    mobileSelBtn.setAttribute("aria-pressed", String(mobileStopSelectionMode));
     mobileSelBtn.setAttribute(
       "aria-label",
       mobileStopSelectionMode
         ? `Finish selecting ${count} stops`
         : count
-          ? `Open actions for ${count} selected stops`
+          ? `Edit selection of ${count} stops`
           : "Start tap selection for closely spaced stops"
     );
     mobileSelBtn.title = mobileStopSelectionMode
       ? "Tap stops on the map, then tap here when finished."
-      : "Start precise tap selection, or open actions for selected stops.";
+      : "Tap to select or deselect stops. Delivery actions are below the map.";
   };
   updateSelectionCount();
 }
 
 
-  // ===== RESIZABLE BOTTOM SUMMARY PANEL =====
-  const panel = document.getElementById("bottomSummary");
-  const header = document.querySelector(".bottom-summary-header");
-  const toggleBtn = document.getElementById("summaryToggleBtn");
-
-  if (panel && header) {
-    let isDragging = false;
-    let startY = 0;
-    let startHeight = 0;
-
-    // Restore saved height
-    const savedHeight = localStorage.getItem("summaryHeight");
-    if (savedHeight) panel.style.height = savedHeight + "px";
-
-    // Start collapsed on initial load (desktop + mobile)
-    panel.classList.add("collapsed");
-    panel.style.height = "40px";
-    if (toggleBtn) toggleBtn.textContent = "▲";
-
-    // Drag resize (mouse + touch/pen) while preserving button clicks in header
-    header.addEventListener("pointerdown", e => {
-      if (e.target.closest("button")) return;
-      isDragging = true;
-      startY = e.clientY;
-      startHeight = panel.offsetHeight;
-      document.body.style.userSelect = "none";
-    });
-
-    document.addEventListener("pointermove", e => {
-      if (!isDragging) return;
-
-      const delta = startY - e.clientY;
-      let newHeight = startHeight + delta;
-
-      const minHeight = 40;
-      const maxHeight = window.innerHeight - 100;
-
-      newHeight = Math.max(minHeight, Math.min(maxHeight, newHeight));
-      panel.style.height = newHeight + "px";
-    });
-
-    document.addEventListener("pointerup", () => {
-      if (!isDragging) return;
-      isDragging = false;
-      document.body.style.userSelect = "";
-      localStorage.setItem("summaryHeight", panel.offsetHeight);
-
-      // Hide resize hint after first drag
-      const hint = document.querySelector(".resize-hint");
-      if (hint) hint.style.display = "none";
-    });
-
-
-    // Collapse toggle
-if (toggleBtn) {
-  toggleBtn.onclick = () => {
-    const isCollapsed = panel.classList.toggle("collapsed");
-
-   if (isCollapsed) {
-  localStorage.setItem("summaryHeight", panel.offsetHeight);
-  panel.style.height = "40px";
-  toggleBtn.textContent = "▲";
-} else {
-  let restored = localStorage.getItem("summaryHeight");
-
-  if (!restored || restored <= 60) {
-    restored = window.innerWidth <= 900 ? 300 : 250;
-  }
-
-  panel.style.height = restored + "px";
-  toggleBtn.textContent = "▼";
-}
-
-  };
-}
-
-  }
-
-  // ===== POP-OUT SUMMARY WINDOW =====
-  const popoutBtn = document.getElementById("popoutSummaryBtn");
-
-  if (popoutBtn) {
-    popoutBtn.onclick = () => {
-      const tableHTML = document.getElementById("routeSummaryTable")?.innerHTML;
-
-      if (!tableHTML || tableHTML.includes("No summary")) {
-        alert("No route summary loaded.");
-        return;
-      }
-
-      const win = window.open("", "_blank", "width=900,height=600,resizable=yes,scrollbars=yes");
-
-      win.document.write(`
-        <html>
-          <head>
-            <title>Route Summary</title>
-            <style>
-              :root {
-                --bg: #f3f7fb;
-                --panel: #ffffff;
-                --line: #d6e2ee;
-                --head: #e9f2fb;
-                --text: #16324d;
-                --muted: #4e6a86;
-                --accent: #2f89df;
-              }
-              * { box-sizing: border-box; }
-              body {
-                margin: 0;
-                padding: 18px;
-                background: radial-gradient(circle at 10% 0%, #eaf2fb 0%, var(--bg) 42%);
-                color: var(--text);
-                font-family: "Segoe UI", Roboto, Arial, sans-serif;
-              }
-              .summary-shell {
-                max-width: 1300px;
-                margin: 0 auto;
-                background: var(--panel);
-                border: 1px solid var(--line);
-                border-radius: 14px;
-                box-shadow: 0 14px 30px rgba(16, 42, 68, 0.12);
-                overflow: hidden;
-              }
-              .summary-header {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                padding: 12px 14px;
-                border-bottom: 1px solid var(--line);
-                background: linear-gradient(180deg, #f9fcff 0%, #eef5fc 100%);
-              }
-              .summary-title {
-                margin: 0;
-                font-size: 18px;
-                font-weight: 700;
-                letter-spacing: 0.01em;
-              }
-              .summary-note {
-                font-size: 12px;
-                color: var(--muted);
-              }
-              .summary-table-wrap {
-                max-height: calc(100vh - 140px);
-                overflow: auto;
-              }
-              table {
-                border-collapse: separate;
-                border-spacing: 0;
-                width: 100%;
-                font-size: 13px;
-              }
-              th, td {
-                border-right: 1px solid var(--line);
-                border-bottom: 1px solid var(--line);
-                padding: 8px 10px;
-                text-align: left;
-                white-space: nowrap;
-              }
-              th {
-                position: sticky;
-                top: 0;
-                z-index: 1;
-                background: var(--head);
-                color: var(--text);
-                font-size: 12px;
-                font-weight: 700;
-                text-transform: uppercase;
-                letter-spacing: 0.03em;
-              }
-              tr:nth-child(even) td {
-                background: #f8fbff;
-              }
-              tr:hover td {
-                background: #edf5ff;
-              }
-              th:first-child, td:first-child { border-left: 1px solid var(--line); }
-            </style>
-          </head>
-          <body>
-            <div class="summary-shell">
-              <div class="summary-header">
-                <h2 class="summary-title">Route Summary</h2>
-                <span class="summary-note">Scroll to view all columns and rows</span>
-              </div>
-              <div class="summary-table-wrap">
-                ${tableHTML}
-              </div>
-            </div>
-          </body>
-        </html>
-      `);
-
-      win.document.close();
-    };
-  }
-
-  // ===== SUMMARY VISUALIZATION WINDOW =====
-  const visualizeBtn = document.getElementById("visualizeSummaryBtn");
-
-  if (visualizeBtn) {
-    visualizeBtn.onclick = () => {
-      const rows = window._summaryRows || [];
-      const headers = window._summaryHeaders || [];
-
-      if (!rows.length || !headers.length) {
-        alert("No route summary loaded.");
-        return;
-      }
-
-      const toNumber = v => {
-        if (v === null || v === undefined) return NaN;
-        const s = String(v).replace(/,/g, "").trim();
-        if (!s) return NaN;
-        const n = Number(s);
-        return Number.isFinite(n) ? n : NaN;
-      };
-      const toHours = v => {
-        if (v === null || v === undefined) return NaN;
-        if (typeof v === "number" && Number.isFinite(v)) {
-          // Excel time values may be stored as fractions of a day.
-          if (v > 0 && v < 1) return v * 24;
-          return v;
-        }
-
-        const s = String(v).trim();
-        if (!s) return NaN;
-
-        const direct = toNumber(s);
-        if (Number.isFinite(direct)) {
-          if (direct > 0 && direct < 1) return direct * 24;
-          return direct;
-        }
-
-        // HH:MM or HH:MM:SS
-        const colonMatch = s.match(/^(-?\d+):(\d{1,2})(?::(\d{1,2}))?$/);
-        if (colonMatch) {
-          const h = Number(colonMatch[1]) || 0;
-          const m = Number(colonMatch[2]) || 0;
-          const sec = Number(colonMatch[3] || 0) || 0;
-          return h + m / 60 + sec / 3600;
-        }
-
-        // "11h 30m", "11 hr", "45 min"
-        const lower = s.toLowerCase();
-        const hMatch = lower.match(/(-?\d+(?:\.\d+)?)\s*(h|hr|hrs|hour|hours)/);
-        const mMatch = lower.match(/(-?\d+(?:\.\d+)?)\s*(m|min|mins|minute|minutes)/);
-        if (hMatch || mMatch) {
-          const h = hMatch ? Number(hMatch[1]) : 0;
-          const m = mMatch ? Number(mMatch[1]) : 0;
-          return (Number.isFinite(h) ? h : 0) + (Number.isFinite(m) ? m : 0) / 60;
-        }
-
-        return NaN;
-      };
-
-      const escapeHtml = value =>
-        String(value ?? "")
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/\"/g, "&quot;")
-          .replace(/'/g, "&#39;");
-      const normalize = s => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-      const normalizedHeaders = headers.map(h => ({ original: h, norm: normalize(h) }));
-
-      function findHeader(candidates) {
-        const direct = normalizedHeaders.find(h => candidates.includes(h.norm));
-        if (direct) return direct.original;
-
-        const loose = normalizedHeaders.find(h =>
-          candidates.some(c => h.norm.includes(c) || c.includes(h.norm))
-        );
-        return loose ? loose.original : null;
-      }
-
-      const fieldSpec = [
-        { key: "route", label: "Route", aliases: ["route", "newroute", "routeid", "rte"] },
-        { key: "day", label: "Day", aliases: ["day", "routeday", "dispatchday", "newday"] },
-        { key: "start", label: "Start Location", aliases: ["startlocation", "start", "origin", "startdepot", "startfacility"] },
-        { key: "end", label: "End Location", aliases: ["endlocation", "end", "destination", "enddepot", "endfacility"] },
-        { key: "stops", label: "Total Stops", aliases: ["totalstops", "stops", "stopcount", "numberofstops"] },
-        { key: "breakTime", label: "Break Time", aliases: ["breaktime", "totbreaktime", "totalbreaktime", "break"] },
-        { key: "facilityTime", label: "Facility Time", aliases: ["facilitytime", "totfacilitytime", "totalfacilitytime"] },
-        { key: "totalTime", label: "Total Time", aliases: ["totaltime", "totalroutetime", "routetime", "hours"] },
-        { key: "miles", label: "Miles", aliases: ["miles", "totalmiles", "route miles", "distance", "distancemiles"] },
-        { key: "demand", label: "Demand", aliases: ["demand", "totaldemand", "volume", "load"] },
-        { key: "trips", label: "Number of Trips", aliases: ["numberoftrips", "trips", "tripcount", "totaltrips"] }
-      ];
-
-      const selectedHeaders = {};
-      fieldSpec.forEach(f => {
-        selectedHeaders[f.key] = findHeader(f.aliases.map(normalize));
-      });
-
-      const focusedRows = rows.map(r => {
-        const out = {};
-        fieldSpec.forEach(f => {
-          const h = selectedHeaders[f.key];
-          out[f.key] = h ? r[h] : "";
-        });
-        return out;
-      });
-
-      // Aggregate at route+day level so the visualization centers on route/day units.
-      const routeDayMap = new Map();
-      focusedRows.forEach(r => {
-        const route = String(r.route || "").trim() || "Unknown Route";
-        const day = String(r.day || "").trim() || "Unknown Day";
-        const key = `${route} | ${day}`;
-        if (!routeDayMap.has(key)) {
-          routeDayMap.set(key, {
-            route,
-            day,
-            routeDay: key,
-            start: String(r.start || "").trim(),
-            end: String(r.end || "").trim(),
-            stops: 0,
-            breakTime: 0,
-            facilityTime: 0,
-            totalTime: 0,
-            miles: 0,
-            demand: 0,
-            trips: 0
-          });
-        }
-        const bucket = routeDayMap.get(key);
-
-        const stops = toNumber(r.stops);
-        const breakTime = toHours(r.breakTime);
-        const facilityTime = toHours(r.facilityTime);
-        const totalTime = toHours(r.totalTime);
-        const miles = toNumber(r.miles);
-        const demand = toNumber(r.demand);
-        const trips = toNumber(r.trips);
-
-        bucket.stops += Number.isFinite(stops) ? stops : 0;
-        bucket.breakTime += Number.isFinite(breakTime) ? breakTime : 0;
-        bucket.facilityTime += Number.isFinite(facilityTime) ? facilityTime : 0;
-        bucket.totalTime += Number.isFinite(totalTime) ? totalTime : 0;
-        bucket.miles += Number.isFinite(miles) ? miles : 0;
-        bucket.demand += Number.isFinite(demand) ? demand : 0;
-        bucket.trips += Number.isFinite(trips) ? trips : 0;
-
-        if (!bucket.start && r.start) bucket.start = String(r.start);
-        if (!bucket.end && r.end) bucket.end = String(r.end);
-      });
-
-      const routeDayRows = Array.from(routeDayMap.values());
-
-      const dayTotalsMap = new Map();
-      routeDayRows.forEach(r => {
-        const day = r.day || "Unknown Day";
-        if (!dayTotalsMap.has(day)) {
-          dayTotalsMap.set(day, {
-            day,
-            routeDayCount: 0,
-            demand: 0,
-            miles: 0,
-            stops: 0,
-            trips: 0
-          });
-        }
-        const d = dayTotalsMap.get(day);
-        d.routeDayCount += 1;
-        d.demand += r.demand;
-        d.miles += r.miles;
-        d.stops += r.stops;
-        d.trips += r.trips;
-      });
-
-      const dayTotals = Array.from(dayTotalsMap.values()).sort((a, b) => b.routeDayCount - a.routeDayCount);
-
-      function makeBars(items, labelKey, valueKey, alt, kind) {
-        if (!items.length) return '<div class="empty">No data available.</div>';
-        const max = Math.max(1, ...items.map(i => i[valueKey]));
-        return items
-          .slice()
-          .sort((a, b) => b[valueKey] - a[valueKey])
-          .map(i => `
-            <div class="bar-row section-route-row" data-kind="${escapeHtml(kind || "")}" data-key="${encodeURIComponent(String(i[labelKey] ?? ""))}">
-              <div class="bar-label">${escapeHtml(i[labelKey])}</div>
-              <div class="bar-track ${alt ? "alt" : ""}"><div class="bar-fill ${alt ? "alt" : ""}" style="width:${(i[valueKey] / max) * 100}%"></div></div>
-              <div class="bar-value">${i[valueKey].toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
-            </div>
-          `)
-          .join("");
-      }
-
-      const dayDemandBars = makeBars(dayTotals, "day", "demand", false, "day");
-      const dayMilesBars = makeBars(dayTotals, "day", "miles", true, "day");
-      const dayStopsBars = makeBars(dayTotals, "day", "stops", false, "day");
-      const dayTripsBars = makeBars(dayTotals, "day", "trips", true, "day");
-
-      const totalDemand = routeDayRows.reduce((a, r) => a + r.demand, 0);
-      const totalMiles = routeDayRows.reduce((a, r) => a + r.miles, 0);
-      const totalStops = routeDayRows.reduce((a, r) => a + r.stops, 0);
-      const topDemandDay = dayTotals.slice().sort((a, b) => b.demand - a.demand)[0]?.day || "N/A";
-      const targetHours = 11;
-      const totalTimeSum = routeDayRows.reduce((a, r) => a + r.totalTime, 0);
-      const avgTotalTime = routeDayRows.length ? totalTimeSum / routeDayRows.length : 0;
-
-      let overTargetCount = 0;
-      let underOrAtTargetCount = 0;
-      routeDayRows.forEach(r => {
-        if (r.totalTime > targetHours) overTargetCount += 1;
-        else underOrAtTargetCount += 1;
-      });
-
-      const timeTargetBars = makeBars(
-        [
-          { label: `Over ${targetHours} Hours`, count: overTargetCount },
-          { label: `${targetHours} Hours or Less`, count: underOrAtTargetCount }
-        ],
-        "label",
-        "count",
-        true,
-        "target"
-      );
-
-      const uniqueRoutes = new Set(routeDayRows.map(r => String(r.route || "").trim()).filter(Boolean)).size;
-      const scatterDataJson = JSON.stringify(
-        routeDayRows.map(r => ({
-          routeDay: r.routeDay,
-          route: r.route,
-          day: r.day,
-          stops: Number(r.stops) || 0,
-          miles: Number(r.miles) || 0,
-          totalTime: Number(r.totalTime) || 0
-        }))
-      ).replace(/</g, "\\u003c");
-
-      const missingFields = fieldSpec
-        .filter(f => !selectedHeaders[f.key])
-        .map(f => f.label);
-
-      const routeDayTable = routeDayRows
-        .slice()
-        .sort((a, b) => (a.day === b.day ? String(a.route).localeCompare(String(b.route)) : String(a.day).localeCompare(String(b.day))))
-        .slice(0, 600)
-        .map(r => `
-          <tr>
-            <td>${escapeHtml(r.route)}</td>
-            <td>${escapeHtml(r.day)}</td>
-            <td>${escapeHtml(r.start)}</td>
-            <td>${escapeHtml(r.end)}</td>
-            <td>${r.stops.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-            <td>${r.breakTime.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-            <td>${r.facilityTime.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-            <td>${r.totalTime.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-            <td>${r.miles.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-            <td>${r.demand.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-            <td>${r.trips.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-          </tr>
-        `)
-        .join("");
-
-      const win = window.open("", "_blank", "width=1080,height=760,resizable=yes,scrollbars=yes");
-      if (!win) return;
-
-      win.document.write(`
-        <html>
-          <head>
-            <title>Route Summary Visualization</title>
-            <style>
-              :root { --bg:#f3f7fb; --panel:#ffffff; --line:#d8e3ee; --text:#14314d; --muted:#4f6883; --a:#2f89df; --b:#20a38e; }
-              * { box-sizing: border-box; }
-              body { margin:0; padding:18px; font-family:"Segoe UI",Roboto,Arial,sans-serif; background:radial-gradient(circle at 10% 0%, #eaf2fb 0%, var(--bg) 45%); color:var(--text); }
-              .shell { max-width:1200px; margin:0 auto; background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:0 14px 30px rgba(16,42,68,.12); overflow:hidden; }
-              .head { display:flex; justify-content:space-between; align-items:center; padding:12px 14px; border-bottom:1px solid var(--line); background:linear-gradient(180deg,#f9fcff 0%,#eef5fc 100%); }
-              .title { margin:0; font-size:18px; font-weight:700; }
-              .meta { font-size:12px; color:var(--muted); }
-              .grid { display:grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap:10px; padding:12px; border-bottom:1px solid var(--line); }
-              .card { border:1px solid var(--line); border-radius:10px; padding:10px; background:#fbfdff; }
-              .card-label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
-              .card-value { margin-top:4px; font-size:22px; font-weight:700; }
-              .section { padding:12px; border-bottom:1px solid var(--line); }
-              .section h3 { margin:0 0 10px 0; font-size:14px; }
-              .bar-row { display:grid; grid-template-columns: 240px 1fr 120px; gap:10px; align-items:center; margin-bottom:8px; }
-              .section-route-row { cursor:pointer; border-radius:8px; padding:4px 6px; margin-left:-6px; margin-right:-6px; }
-              .section-route-row:hover { background:#f1f7ff; }
-              .bar-label { font-size:12px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-              .bar-track { height:12px; border-radius:999px; background:#e5eef8; overflow:hidden; }
-              .bar-fill { height:100%; background:linear-gradient(90deg,#47a2f8 0%,var(--a) 100%); }
-              .bar-track.alt { background:#e8f5f2; }
-              .bar-fill.alt { background:linear-gradient(90deg,#36c3ab 0%,var(--b) 100%); }
-              .bar-value { text-align:right; font-size:12px; color:var(--muted); font-weight:700; }
-              .empty { color:var(--muted); font-size:13px; }
-              .note { margin: 0 0 10px 0; color: var(--muted); font-size: 12px; }
-              .legend { display:flex; gap:14px; align-items:center; margin: 0 0 10px 0; color:var(--muted); font-size:12px; flex-wrap:wrap; }
-              .dot { width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:6px; vertical-align:middle; }
-              .dot-blue { background:#2f89df; }
-              .dot-red { background:#e25b53; }
-              .chart-wrap { border:1px solid var(--line); border-radius:10px; background:#fff; padding:8px; overflow:auto; }
-              .chart-controls { display:flex; gap:10px; flex-wrap:wrap; margin:0 0 10px 0; }
-              .chart-controls label { font-size:12px; color:var(--muted); display:flex; gap:6px; align-items:center; }
-              .chart-controls select, .chart-controls input { border:1px solid #c8d8e8; border-radius:8px; padding:6px 8px; font-size:12px; }
-              .scatter-tooltip { position:fixed; pointer-events:none; background:#102a44; color:#fff; padding:8px 10px; border-radius:8px; font-size:12px; z-index:99999; box-shadow:0 10px 24px rgba(0,0,0,.22); display:none; white-space:nowrap; }
-              .chart-toast { position:fixed; right:18px; bottom:18px; z-index:99999; background:#1f7a3f; color:#fff; border-radius:10px; padding:9px 12px; font-size:12px; box-shadow:0 10px 24px rgba(0,0,0,.2); opacity:0; transform:translateY(8px); transition:opacity .2s ease, transform .2s ease; pointer-events:none; }
-              .chart-toast.show { opacity:1; transform:translateY(0); }
-              .chart-toast.error { background:#a83f3a; }
-              .section-modal { position:fixed; inset:0; background:rgba(16,42,68,.45); display:flex; align-items:center; justify-content:center; padding:18px; z-index:99998; }
-              .section-modal.hidden { display:none; }
-              .section-modal-card { width:min(760px, 100%); max-height:80vh; background:#fff; border:1px solid var(--line); border-radius:12px; overflow:hidden; box-shadow:0 18px 36px rgba(16,42,68,.25); }
-              .section-modal-head { display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border-bottom:1px solid var(--line); background:#f7fbff; }
-              .section-modal-title { margin:0; font-size:14px; }
-              .section-modal-close { border:1px solid #b7cce1; background:#fff; border-radius:8px; padding:5px 10px; cursor:pointer; }
-              .section-modal-body { padding:10px 12px; max-height:calc(80vh - 52px); overflow:auto; }
-              .section-modal-list { margin:0; padding-left:18px; }
-              .section-modal-list li { margin:6px 0; font-size:13px; }
-              .table-wrap { overflow:auto; border:1px solid var(--line); border-radius:10px; background:#fff; }
-              table { width:100%; border-collapse:collapse; min-width:1160px; }
-              th, td { border-bottom:1px solid var(--line); border-right:1px solid var(--line); padding:8px 10px; text-align:left; font-size:12px; white-space:nowrap; }
-              th { position:sticky; top:0; background:#f4f9ff; z-index:2; text-transform:uppercase; letter-spacing:.03em; font-size:11px; }
-              tr:nth-child(even) td { background:#fbfdff; }
-              tr:hover td { background:#eef6ff; }
-              @media (max-width: 980px) {
-                .grid { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
-                .bar-row { grid-template-columns: 170px 1fr 90px; }
-              }
-            </style>
-          </head>
-          <body>
-            <div class="shell">
-              <div class="head">
-                <h2 class="title">Route Summary Visualization</h2>
-                <span class="meta">Rows: ${rows.length.toLocaleString()} | Columns: ${headers.length.toLocaleString()}</span>
-              </div>
-              <div class="grid">
-                <div class="card"><div class="card-label">Total Routes</div><div class="card-value">${uniqueRoutes.toLocaleString()}</div></div>
-                <div class="card"><div class="card-label">Avg Total Time</div><div class="card-value">${avgTotalTime.toLocaleString(undefined, { maximumFractionDigits: 2 })}h</div></div>
-                <div class="card"><div class="card-label">Over 11h</div><div class="card-value">${overTargetCount.toLocaleString()}</div></div>
-                <div class="card"><div class="card-label">11h or Less</div><div class="card-value">${underOrAtTargetCount.toLocaleString()}</div></div>
-              </div>
-              <div class="section">
-                <h3>Stops vs Miles by Route + Day</h3>
-                <p class="note">Use filters below and hover any point to see details. Red points are over the 11-hour total-time target.</p>
-                <div class="chart-controls">
-                  <label>Day
-                    <select id="scatterDayFilter">
-                      <option value="all">All Days</option>
-                    </select>
-                  </label>
-                  <label><input type="checkbox" id="scatterOverOnly" /> Show only over 11h</label>
-                </div>
-                <div class="legend">
-                  <span><span class="dot dot-blue"></span>At or under ${targetHours}h total time</span>
-                  <span><span class="dot dot-red"></span>Over ${targetHours}h total time</span>
-                </div>
-                <div id="stopsMilesScatterHost" class="chart-wrap"></div>
-                <div id="scatterTooltip" class="scatter-tooltip"></div>
-                <div id="chartToast" class="chart-toast"></div>
-              </div>
-              <div class="section">
-                <h3>Total Time vs ${targetHours}-Hour Target</h3>
-                <p class="note">Average total time per route+day: ${avgTotalTime.toLocaleString(undefined, { maximumFractionDigits: 2 })} hours</p>
-                ${timeTargetBars}
-              </div>
-              <div class="section">
-                <h3>Distribution of Demand Per Day</h3>
-                ${dayDemandBars}
-              </div>
-              <div class="section">
-                <h3>Distribution of Miles Per Day</h3>
-                ${dayMilesBars}
-              </div>
-              <div class="section">
-                <h3>Distribution of Stops Per Day</h3>
-                ${dayStopsBars}
-              </div>
-              <div class="section">
-                <h3>Distribution of Trips Per Day</h3>
-                ${dayTripsBars}
-              </div>
-              <div class="section">
-                <h3>Route + Day Detail</h3>
-                <p class="note">Each row below is grouped by route and day to make day-level performance easier to interpret.</p>
-                ${missingFields.length ? `<p class="note">Missing in this file: ${escapeHtml(missingFields.join(", "))}</p>` : ""}
-                <p class="note">Totals: Stops ${totalStops.toLocaleString(undefined, { maximumFractionDigits: 2 })}, Demand ${totalDemand.toLocaleString(undefined, { maximumFractionDigits: 2 })}, Miles ${totalMiles.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
-                <div class="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Route</th>
-                        <th>Day</th>
-                        <th>Start Location</th>
-                        <th>End Location</th>
-                        <th>Total Stops</th>
-                        <th>Break Time</th>
-                        <th>Facility Time</th>
-                        <th>Total Time</th>
-                        <th>Miles</th>
-                        <th>Demand</th>
-                        <th>Number of Trips</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      ${routeDayTable || '<tr><td colspan="11">No route rows found.</td></tr>'}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-            <div id="sectionRouteDayModal" class="section-modal hidden">
-              <div class="section-modal-card">
-                <div class="section-modal-head">
-                  <h4 id="sectionRouteDayTitle" class="section-modal-title">Route+Day List</h4>
-                  <button id="sectionRouteDayClose" class="section-modal-close">Close</button>
-                </div>
-                <div class="section-modal-body">
-                  <ul id="sectionRouteDayList" class="section-modal-list"></ul>
-                </div>
-              </div>
-            </div>
-            <script>
-              (() => {
-                const data = ${scatterDataJson};
-                const host = document.getElementById("stopsMilesScatterHost");
-                const tooltip = document.getElementById("scatterTooltip");
-                const chartToast = document.getElementById("chartToast");
-                const dayFilter = document.getElementById("scatterDayFilter");
-                const overOnly = document.getElementById("scatterOverOnly");
-                const targetHours = ${targetHours};
-                const sectionRows = Array.from(document.querySelectorAll(".section-route-row"));
-                const modal = document.getElementById("sectionRouteDayModal");
-                const modalTitle = document.getElementById("sectionRouteDayTitle");
-                const modalList = document.getElementById("sectionRouteDayList");
-                const modalClose = document.getElementById("sectionRouteDayClose");
-
-                function escapeHtmlLocal(value) {
-                  return String(value ?? "")
-                    .replace(/&/g, "&amp;")
-                    .replace(/</g, "&lt;")
-                    .replace(/>/g, "&gt;")
-                    .replace(/\"/g, "&quot;")
-                    .replace(/'/g, "&#39;");
-                }
-
-                function openRouteDayModal(title, rows) {
-                  modalTitle.textContent = title;
-                  if (!rows.length) {
-                    modalList.innerHTML = "<li>No route+day entries found.</li>";
-                  } else {
-                    const sorted = rows.slice().sort((a, b) => String(a.routeDay || "").localeCompare(String(b.routeDay || "")));
-                    modalList.innerHTML = sorted.map(r =>
-                      "<li><strong>" + escapeHtmlLocal(r.routeDay) + "</strong> - Stops: " + Number(r.stops || 0).toLocaleString(undefined, { maximumFractionDigits: 2 }) +
-                      ", Miles: " + Number(r.miles || 0).toLocaleString(undefined, { maximumFractionDigits: 2 }) +
-                      ", Time: " + Number(r.totalTime || 0).toLocaleString(undefined, { maximumFractionDigits: 2 }) + "h</li>"
-                    ).join("");
-                  }
-                  modal.classList.remove("hidden");
-                }
-
-                function closeRouteDayModal() {
-                  modal.classList.add("hidden");
-                }
-
-                function showChartToast(message, isError) {
-                  if (!chartToast) return;
-                  chartToast.textContent = message;
-                  chartToast.classList.toggle("error", !!isError);
-                  chartToast.classList.add("show");
-                  setTimeout(() => {
-                    chartToast.classList.remove("show");
-                  }, 1900);
-                }
-
-                modalClose.addEventListener("click", closeRouteDayModal);
-                modal.addEventListener("click", e => {
-                  if (e.target === modal) closeRouteDayModal();
-                });
-
-                sectionRows.forEach(row => {
-                  row.addEventListener("click", () => {
-                    const kind = row.getAttribute("data-kind") || "";
-                    const rawKey = row.getAttribute("data-key") || "";
-                    const key = decodeURIComponent(rawKey);
-
-                    if (kind === "day") {
-                      const matched = data.filter(d => String(d.day || "") === key);
-                      openRouteDayModal("Route+Day entries for " + key, matched);
-                      return;
-                    }
-
-                    if (kind === "target") {
-                      const isOverBucket = key.toLowerCase().startsWith("over ");
-                      const matched = data.filter(d => isOverBucket ? Number(d.totalTime) > targetHours : Number(d.totalTime) <= targetHours);
-                      openRouteDayModal("Route+Day entries: " + key, matched);
-                    }
-                  });
-                });
-
-                const days = Array.from(new Set(data.map(d => String(d.day || "").trim()).filter(Boolean))).sort();
-                days.forEach(day => {
-                  const opt = document.createElement("option");
-                  opt.value = day;
-                  opt.textContent = day;
-                  dayFilter.appendChild(opt);
-                });
-
-                function render() {
-                  const selectedDay = dayFilter.value;
-                  const filtered = data.filter(d => {
-                    if (selectedDay !== "all" && String(d.day) !== selectedDay) return false;
-                    if (overOnly.checked && !(d.totalTime > targetHours)) return false;
-                    return true;
-                  });
-
-                  if (!filtered.length) {
-                    host.innerHTML = '<div class="empty">No points match the selected filters.</div>';
-                    return;
-                  }
-
-                  const width = 980;
-                  const height = 360;
-                  const padL = 56;
-                  const padR = 24;
-                  const padT = 20;
-                  const padB = 46;
-                  const plotW = width - padL - padR;
-                  const plotH = height - padT - padB;
-                  const maxX = Math.max(1, ...filtered.map(p => p.stops));
-                  const maxY = Math.max(1, ...filtered.map(p => p.miles));
-                  const x = v => padL + (v / maxX) * plotW;
-                  const y = v => padT + plotH - (v / maxY) * plotH;
-
-                  const xTicks = Array.from({ length: 6 }, (_, i) => {
-                    const val = (maxX * i) / 5;
-                    const px = x(val);
-                    return '<line x1="' + px + '" y1="' + padT + '" x2="' + px + '" y2="' + (padT + plotH) + '" stroke="#e6edf6" stroke-width="1" />' +
-                      '<text x="' + px + '" y="' + (padT + plotH + 18) + '" text-anchor="middle" fill="#627d97" font-size="11">' + val.toFixed(0) + '</text>';
-                  }).join("");
-
-                  const yTicks = Array.from({ length: 6 }, (_, i) => {
-                    const val = (maxY * i) / 5;
-                    const py = y(val);
-                    return '<line x1="' + padL + '" y1="' + py + '" x2="' + (padL + plotW) + '" y2="' + py + '" stroke="#e6edf6" stroke-width="1" />' +
-                      '<text x="' + (padL - 8) + '" y="' + (py + 4) + '" text-anchor="end" fill="#627d97" font-size="11">' + val.toFixed(0) + '</text>';
-                  }).join("");
-
-                  const circles = filtered.map((p, idx) => {
-                    const color = p.totalTime > targetHours ? "#e25b53" : "#2f89df";
-                    const info = (String(p.routeDay || "") + " | Stops: " + p.stops.toFixed(2) + " | Miles: " + p.miles.toFixed(2) + " | Total Time: " + p.totalTime.toFixed(2) + "h")
-                      .replace(/&/g, "&amp;")
-                      .replace(/</g, "&lt;")
-                      .replace(/>/g, "&gt;");
-                    const routeSafe = String(p.route || "").replace(/"/g, "&quot;");
-                    const daySafe = String(p.day || "").replace(/"/g, "&quot;");
-                    return '<circle class="scatter-point" data-route="' + routeSafe + '" data-day="' + daySafe + '" data-info="' + info + '" cx="' + x(p.stops) + '" cy="' + y(p.miles) + '" r="5" fill="' + color + '" fill-opacity="0.85" stroke="#ffffff" stroke-width="1.2" />';
-                  }).join("");
-
-                  host.innerHTML =
-                    '<svg viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="Stops vs miles scatter plot by route and day">' +
-                    xTicks + yTicks +
-                    '<line x1="' + padL + '" y1="' + (padT + plotH) + '" x2="' + (padL + plotW) + '" y2="' + (padT + plotH) + '" stroke="#8ea4bb" stroke-width="1.2" />' +
-                    '<line x1="' + padL + '" y1="' + padT + '" x2="' + padL + '" y2="' + (padT + plotH) + '" stroke="#8ea4bb" stroke-width="1.2" />' +
-                    circles +
-                    '<text x="' + (padL + plotW / 2) + '" y="' + (height - 8) + '" text-anchor="middle" fill="#3e5f7d" font-size="12">Total Stops</text>' +
-                    '<text x="16" y="' + (padT + plotH / 2) + '" text-anchor="middle" fill="#3e5f7d" font-size="12" transform="rotate(-90 16 ' + (padT + plotH / 2) + ')">Miles</text>' +
-                    '</svg>';
-
-                  host.querySelectorAll(".scatter-point").forEach(el => {
-                    el.addEventListener("mousemove", e => {
-                      tooltip.style.display = "block";
-                      tooltip.style.left = (e.clientX + 12) + "px";
-                      tooltip.style.top = (e.clientY + 12) + "px";
-                      tooltip.innerHTML = el.getAttribute("data-info") || "";
-                    });
-                    el.addEventListener("mouseleave", () => {
-                      tooltip.style.display = "none";
-                    });
-                    el.addEventListener("click", () => {
-                      const route = el.getAttribute("data-route") || "";
-                      const day = el.getAttribute("data-day") || "";
-
-                      if (!window.opener || typeof window.opener.highlightRouteDayOnMap !== "function") {
-                        showChartToast("Could not connect to map window.", true);
-                        return;
-                      }
-
-                      let result = null;
-                      try {
-                        result = window.opener.highlightRouteDayOnMap(route, day);
-                      } catch (err) {
-                        showChartToast("Failed to highlight on map.", true);
-                        return;
-                      }
-
-                      if (result && result.ok) {
-                        showChartToast("Route+Day highlighted on map.", false);
-                      } else {
-                        showChartToast((result && result.message) ? result.message : "No matching Route+Day found.", true);
-                      }
-                    });
-                  });
-                }
-
-                dayFilter.addEventListener("change", render);
-                overOnly.addEventListener("change", render);
-                render();
-              })();
-            </script>
-          </body>
-        </html>
-      `);
-      win.document.close();
-    };
-  }
-//======
 // ===== RESET MAP BUTTON (TRUE HARD RESET FOR THIS APP) =====
 const resetBtn = document.getElementById("resetMapBtn");
 
@@ -3297,18 +2177,7 @@ if (resetBtn) {
     // 7. Reset bounds tracker
     globalBounds = L.latLngBounds();
 
-    // 8. Clear bottom summary
-    const summary = document.getElementById("routeSummaryTable");
-    if (summary) summary.innerHTML = "No summary loaded";
 
-    // 9. Collapse summary panel
-    const panel = document.getElementById("bottomSummary");
-    const btn = document.getElementById("summaryToggleBtn");
-    if (panel && btn) {
-      panel.classList.add("collapsed");
-      panel.style.height = "40px";
-      btn.textContent = "▲";
-    }
   });
 }
 
@@ -3322,7 +2191,9 @@ if (locateBtn) {
   locateBtn.addEventListener("click", () => {
     if (!tracking) {
       startLiveTracking();
-      locateBtn.textContent = "■";
+      locateBtn.textContent = "Stop GPS";
+      locateBtn.setAttribute("aria-pressed", "true");
+      locateBtn.setAttribute("aria-label", "Stop following my position");
       locateBtn.classList.add("tracking");   // 🔴 turns button red
       tracking = true;
     } else {
@@ -3338,7 +2209,9 @@ if (locateBtn) {
 window.removeEventListener("deviceorientation", updateHeading);
 
 
-      locateBtn.textContent = "📍";
+      locateBtn.textContent = "Locate";
+      locateBtn.setAttribute("aria-pressed", "false");
+      locateBtn.setAttribute("aria-label", "Locate me and follow my position");
       locateBtn.classList.remove("tracking"); // 🔵 back to blue
       tracking = false;
     }
@@ -3528,13 +2401,9 @@ if (layer._hasStreetLabel) {
 });
 
   
-// Position Locate button correctly for desktop/mobile
-placeLocateButton();
-window.addEventListener("resize", placeLocateButton);
-
-  // Position Locate button correctly for desktop/mobile
-placeLocateButton();
-window.addEventListener("resize", placeLocateButton);
+// Position shared controls for the current screen size.
+placeDeliveryControls();
+window.addEventListener("resize", placeDeliveryControls);
 
 
 // ===== STREET LABEL TOGGLE =====
@@ -3698,6 +2567,10 @@ async function saveWorkbookToCloud(rows, workbook, filePath) {
   return nextWorkbook;
 }
 
+// Marks selected stops Delivered (markDelivered=true) or restores them (false).
+// Flow: collect selected rows -> upload a new workbook to Supabase -> only on success mutate
+// row.del_status, move markers between routeDayGroups keys, rebuild layer controls.
+// Uploads overwrite the whole file, so never mutate rows before the upload succeeds.
 async function saveSelectedDeliveryStatus(markDelivered) {
   if (deliverySaveInProgress) return;
   const rows = window._currentRows;

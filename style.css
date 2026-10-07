@@ -1,3 +1,7 @@
+/* Cart Delivery styles. Rules are layered: base styles first, then many "FINAL OVERRIDE" blocks later in the file.
+ * When changing a rule, search for every selector occurrence; the LAST matching rule (or !important) wins.
+ * Phone layout lives in @media (max-width: 900px) blocks; Sun Mode (light theme) uses body.sun-mode overrides.
+ * Mobile CSS vars set from app.js: --mobile-controls-height, --mobile-header-height. */
 /* ================= GLOBAL ================= */
 html,
 body {
@@ -4264,4 +4268,163 @@ body.sun-mode #copyLocationStatus[data-state="error"] {
 
 body.sun-mode #copyLocationStatus[data-state="copied"] {
   color: #176c37;
+}
+
+/* The phone keeps its controls below the map instead of over the map. */
+.delivery-controls {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  header > p,
+  header .mobile-header-buttons,
+  .app-container #selectionBox {
+    display: none !important;
+  }
+
+  .delivery-controls {
+    display: block;
+    flex: 0 0 auto;
+    position: relative;
+    z-index: 1400;
+    width: 100%;
+    max-height: 50dvh;
+    box-sizing: border-box;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 10px max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+    border-top: 1px solid #40566e;
+    background: #1b2836;
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.24);
+  }
+
+  .delivery-controls-main,
+  .delivery-quick-actions,
+  .delivery-more-actions {
+    display: grid;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .delivery-controls-main {
+    grid-template-columns: minmax(110px, 0.9fr) minmax(0, 1.8fr);
+  }
+
+  .delivery-quick-actions {
+    grid-template-columns: 0.8fr 0.9fr 1.35fr 0.7fr;
+    margin-top: 8px;
+  }
+
+  .delivery-more-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #40566e;
+  }
+
+  .delivery-more-actions[hidden] {
+    display: none;
+  }
+
+  .delivery-controls button,
+  .delivery-controls #locateMeBtn,
+  .delivery-controls #mobileMenuBtn,
+  .delivery-controls #mobileSelectionBtn,
+  .delivery-controls #completeStopsBtnMobile {
+    position: static;
+    inset: auto;
+    z-index: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: auto;
+    min-width: 0;
+    min-height: 44px;
+    margin: 0;
+    padding: 8px 6px;
+    box-sizing: border-box;
+    border-radius: 10px;
+    white-space: normal;
+    line-height: 1.25;
+    font-size: 13px;
+    font-weight: 600;
+    order: 0;
+    box-shadow: none;
+    touch-action: manipulation;
+  }
+
+  .delivery-controls-main #mobileSelectionBtn,
+  .delivery-controls-main #completeStopsBtnMobile {
+    min-height: 48px;
+    font-size: 14px;
+  }
+
+  #deliveryQuickActions > button,
+  .delivery-controls #mobileSelectionBtn {
+    order: 0;
+    border: 1px solid #4b627a;
+    background: #293c50;
+    color: #edf5ff;
+  }
+
+  .delivery-controls #mobileSelectionBtn.selection-mode,
+  .delivery-controls #locateMeBtn.tracking {
+    border-color: #56d386;
+    background: #157c45;
+    color: #ffffff;
+  }
+
+  .delivery-controls .street-toggle-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 44px;
+    margin: 0;
+    border: 1px solid #4b627a;
+    border-radius: 10px;
+    font-size: 13px;
+  }
+
+  .delivery-controls .street-toggle-label input {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+  }
+
+  .delivery-controls .delivery-save-status {
+    padding: 8px 2px 0;
+  }
+
+  .delivery-controls button:focus-visible,
+  .delivery-controls input:focus-visible {
+    outline: 2px solid #ffd54a;
+    outline-offset: 2px;
+  }
+
+  .mobile-stop-picker {
+    bottom: calc(var(--mobile-controls-height, 120px) + 10px);
+    max-height: min(38dvh, calc(100dvh - var(--mobile-header-height, 60px) - var(--mobile-controls-height, 120px) - 20px));
+  }
+
+  body.sun-mode .delivery-controls {
+    background: #f4f8fc;
+    border-color: #b9ccdf;
+  }
+
+  body.sun-mode #deliveryQuickActions > button,
+  body.sun-mode .delivery-controls #mobileSelectionBtn,
+  body.sun-mode .delivery-controls .street-toggle-label {
+    background: #e4eef8;
+    border-color: #b9ccdf;
+    color: #16324d;
+  }
+
+  body.sun-mode .delivery-controls #mobileSelectionBtn.selection-mode,
+  body.sun-mode .delivery-controls #locateMeBtn.tracking {
+    background: #157c45;
+    border-color: #157c45;
+    color: #ffffff;
+  }
 }
