@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261007-overlay-sections" />
+  <link rel="stylesheet" href="style.css?v=20261008-optimo-sequence" />
 
   <link rel="icon" href="favicon.ico" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -143,12 +143,15 @@
     <span class="map-overlay-switch" aria-hidden="true"></span>
   </label>
   <div id="sequenceLayerOptions" hidden>
+    <label for="sequenceSource">Sequence</label>
+    <select id="sequenceSource"><option value="original">Original Excel sequence</option><option value="optimo" disabled>New Optimo sequence</option></select>
     <label for="sequenceRouteSelect">Route / day</label>
     <select id="sequenceRouteSelect" aria-label="Sequence route and day"></select>
     <p>Keeps delivered stops in the path. Lines connect stops directly rather than following roads.</p>
     <div class="sequence-legend"><span><i class="sequence-key-line" aria-hidden="true"></i>Delivery order</span><span><i class="sequence-key-line sequence-key-completed" aria-hidden="true"></i>Both stops delivered</span><span><i class="sequence-key-check" aria-hidden="true">✓</i>Delivered stop</span></div>
   </div>
   <p id="sequenceLayerStatus" role="status" aria-live="polite">Open a route file with SEQNO to get started.</p>
+  <button id="openResequenceBtn" type="button">Generate new sequence</button>
 </div>
   </div>
 </details>
@@ -427,7 +430,35 @@
   </div>
 </div>
 
-<script src="app.js?v=20261007-overlay-sections" defer></script>
+<dialog id="resequenceDialog" aria-labelledby="resequenceTitle">
+  <div class="resequence-heading"><h2 id="resequenceTitle">Resequence remaining carts</h2><button id="closeResequenceBtn" type="button" aria-label="Close resequencing">Close</button></div>
+  <p id="resequenceSummary"></p>
+  <p>Choose one route/day or all groups. Only undelivered records are planned, including hidden stops in that scope. Saved only on this phone; your original Excel sequence remains available.</p>
+  <fieldset id="resequenceSettings">
+    <label for="optimoKey">OptimoRoute API key</label>
+    <input id="optimoKey" type="password" autocomplete="off" autocapitalize="none" spellcheck="false">
+    <label class="resequence-check"><input id="rememberOptimoKey" type="checkbox" checked> Remember key in this browser</label>
+    <button id="forgetOptimoKey" type="button">Forget key</button>
+    <p class="resequence-help">The key is sent only to OptimoRoute. Browser storage is not encrypted; use Remember only on a trusted phone.</p>
+    <label for="optimoDate">Planning date</label><input id="optimoDate" type="date" required>
+    <p id="optimoClearDateNotice" class="resequence-help" role="status"></p>
+    <label for="optimoScope">Route / day to plan</label>
+    <select id="optimoScope"><option value="">All route/day groups</option></select>
+    <label for="optimoSectionSize">Planning size</label>
+    <select id="optimoSectionSize"><option value="500">500-record sections (recommended)</option><option value="100">100-record sections</option><option value="0">All selected records at once</option></select>
+    <p class="resequence-help">Sections are optimized by OptimoRoute one at a time, then joined per route/day. Each section continues from the previous section's last stop. The combined sequence is not optimized as a whole. Keep this page open until all sections finish.</p>
+    <div id="optimoDrivers"></div>
+    <label for="optimoStart">Start location</label><select id="optimoStart"><option value="gps">My current GPS location</option><option value="depot">Driver's configured start location</option></select>
+    <p class="resequence-help">Each route/day stays separate. Uses all-day hours (00:00–23:59), zero service time, and zero load. Use dedicated drivers: their hours, starts, and plans for this date will be replaced.</p>
+    <p class="resequence-help">In OptimoRoute, turn off scheduled breaks and route distance limits, and set the drivers to end at the last stop. Travel time and account limits still apply; a complete sequence is not guaranteed.</p>
+  </fieldset>
+  <p id="resequenceStatus" role="status" aria-live="polite"></p>
+  <div id="resequencePreview" hidden><h3>New delivery order</h3><ol id="resequencePreviewList"></ol><p id="resequencePreviewMore"></p></div>
+  <div class="resequence-actions"><button id="generateSequenceBtn" type="button">Clear planning date &amp; generate</button><button id="resumeSequenceBtn" type="button" hidden>Check planning result</button><button id="saveSequenceBtn" type="button" hidden>Use sequence on this phone</button></div>
+  <p class="resequence-help">Generation sends coordinates and addresses to OptimoRoute. It does not mark carts delivered or send routes to drivers. Only a complete result can be saved.</p>
+</dialog>
+
+<script src="app.js?v=20261008-optimo-scope-clear" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">

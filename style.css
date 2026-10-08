@@ -4570,6 +4570,58 @@ body .sidebar #sequenceLayerStatus {
   .map-overlay-switch, .map-overlay-switch::after { transition: none; }
 }
 
+/* Phone-only sequence planning. Native dialog keeps focus above the map. */
+#resequenceDialog {
+  box-sizing: border-box;
+  width: min(620px, calc(100% - 24px));
+  max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px);
+  padding: 20px;
+  border: 1px solid #536880;
+  border-radius: 16px;
+  background: #1c2938;
+  color: #eef4fb;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+#resequenceDialog::backdrop { background: #07131dbb; }
+#resequenceDialog .resequence-heading {
+  display: flex; align-items: flex-start; gap: 12px; position: sticky; top: -20px;
+  margin: -20px -20px 0; padding: 20px; background: #1c2938; z-index: 1;
+  border-bottom: 1px solid #536880;
+}
+#resequenceDialog h2 { flex: 1; margin: 0; font-size: 21px; }
+#resequenceDialog p { font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+#resequenceDialog fieldset { min-width: 0; padding: 0; border: 0; margin: 16px 0; }
+#resequenceDialog label { display: block; margin: 14px 0 6px; font-size: 14px; }
+#resequenceDialog input:not([type="checkbox"]), #resequenceDialog select {
+  display: block; width: 100%; min-width: 0; min-height: 44px; box-sizing: border-box;
+  padding: 10px; border-radius: 8px; border: 1px solid #657b92;
+  background: #101e2d; color: #eef4fb; font: inherit; font-size: 16px;
+}
+#resequenceDialog input[type="checkbox"] { width: 24px; height: 24px; flex-shrink: 0; margin: 0; }
+#resequenceDialog .resequence-check { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+#resequenceDialog button, #openResequenceBtn {
+  min-height: 44px; padding: 10px 14px; border-radius: 8px; border: 1px solid #7790ab;
+  background: #28558b; color: #fff; font: inherit; font-size: 14px; cursor: pointer;
+  white-space: normal; overflow-wrap: anywhere;
+}
+#openResequenceBtn { width: 100%; margin-top: 10px; }
+#resequenceDialog button:disabled { opacity: .5; cursor: wait; }
+#resequenceDialog :focus-visible, #openResequenceBtn:focus-visible { outline: 3px solid #ffd166; outline-offset: 2px; }
+#resequenceDialog .resequence-help { font-size: 12px; color: #b9c9da; }
+#resequenceStatus { background: #101e2d; padding: 12px; border-radius: 8px; }
+#resequenceStatus:empty { display: none; }
+.resequence-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.resequence-actions button { flex: 1 1 180px; }
+#resequencePreviewList { padding-left: 24px; }
+#resequencePreviewList li { margin-bottom: 12px; }
+#resequenceDialog [hidden] { display: none !important; }
+body.sun-mode #resequenceDialog { background: #fff; color: #182c41; border-color: #a5b8cc; }
+body.sun-mode #resequenceDialog .resequence-heading { background: #fff; border-color: #a5b8cc; }
+body.sun-mode #resequenceDialog input:not([type="checkbox"]), body.sun-mode #resequenceDialog select,
+body.sun-mode #resequenceStatus { background: #edf3fa; color: #182c41; }
+body.sun-mode #resequenceDialog .resequence-help { color: #4b6178; }
+
 /* Independent disclosures keep delivery and reference overlays compact. */
 .sidebar .map-overlays { padding: 4px 10px; }
 .map-overlays > summary {

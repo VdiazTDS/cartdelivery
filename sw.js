@@ -1,7 +1,7 @@
 ﻿// Service worker: makes the app load fast and open without signal.
 // Never caches Supabase traffic, so saved/delivered data is always live.
-const SHELL_CACHE = "cartdelivery-shell-v3";
-const TILE_CACHE = "cartdelivery-tiles-v3";
+const SHELL_CACHE = "cartdelivery-shell-v4";
+const TILE_CACHE = "cartdelivery-tiles-v4";
 const MAX_TILES = 600;
 
 self.addEventListener("install", () => self.skipWaiting());
@@ -34,6 +34,7 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(req.url);
   if (!/^https?:$/.test(url.protocol)) return;
   if (url.hostname.endsWith("supabase.co")) return;
+  if (url.hostname === "api.optimoroute.com") return;
 
   // Live city queries have a small in-memory cache in the app, never a shell cache.
   if (url.hostname === "maps.austintexas.gov" && /\/query\/?$/.test(url.pathname)) return;
