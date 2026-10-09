@@ -38,6 +38,7 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
     const errors = [], calls = [];
     let mode = 'success', uploaded = [], planned = [], hold, deleteHold, planNumber = 0;
     const storedOrders = new Map();
+    const scheduledRoutes = new Map();
     page.on('pageerror', error => errors.push(error.message));
     // Never allow storage writes or real Optimo calls, including failures in the test itself.
     await context.route('**/*', async route => {
@@ -55,15 +56,21 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
           if (mode === 'delete-network') return route.abort();
           if (mode === 'delete-failure') result = { success: false, code: 'ERR_OPT_RUNNING' };
           else if (mode === 'delete-unconfirmed') result = {};
-          else for (const [id, order] of storedOrders) if (order.date === body.date) storedOrders.delete(id);
+          else {
+            for (const [id, order] of storedOrders) if (order.date === body.date) storedOrders.delete(id);
+            scheduledRoutes.clear();
+          }
         } else if (endpoint === 'update_drivers_parameters') {
           uploaded = [];
           result.updates = body.updates.map((update, i) => ({ success: !(mode === 'driver-failure' && i === 0), driver: update.driver, date: update.date }));
           for (const update of body.updates) {
+            scheduledRoutes.delete(update.driver.externalId);
             assert.equal(update.enabled, true);
             assert.deepEqual(update.workTime, { from: '00:00', to: '23:59' });
             if (update.startLocation.type === 'custom') assert(Number.isFinite(update.startLocation.latitude));
             else assert.deepEqual(update.startLocation, { type: 'employeeDefault' });
+            assert(['custom', 'employeeDefault', 'startLocation'].includes(update.endLocation.type));
+            if (update.endLocation.type === 'custom') assert(Number.isFinite(update.endLocation.latitude) && Number.isFinite(update.endLocation.longitude));
           }
         } else if (endpoint === 'create_or_update_orders') {
           assert(body.orders.length <= 500);
@@ -86,13 +93,14 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
           assert.deepEqual(new Set(body.useDrivers.map(driver => driver.driverExternalId)), new Set(planned.map(order => order.assignedTo.externalId)));
           result.planningId = ++planNumber;
           if (mode === 'order-limit' || (mode === 'bounded' && planned.length > 700)) result = { success: false, code: 'ERR_OPT_REQUESTS_EXCEEDED' };
+          else for (const driver of body.useDrivers) scheduledRoutes.set(driver.driverExternalId, planned.filter(order => order.assignedTo.externalId === driver.driverExternalId));
         } else if (endpoint === 'get_planning_status') result.status = mode === 'running' ? 'R' : 'F';
         else if (endpoint === 'get_routes') {
           const driver = url.searchParams.get('driverExternalId');
-          let stops = planned.filter(order => order.assignedTo.externalId === driver).reverse().map((order, i) => ({ orderNo: order.orderNo, stopNumber: i + 1 }));
-          if (mode === 'missing' || (mode === 'later-missing' && calls.filter(call => call.endpoint === 'start_planning').length === 2)) stops.pop();
-          if (mode === 'duplicate' && stops.length > 1) stops[1] = { ...stops[0] };
-          result.routes = [{ driverExternalId: driver, stops: stops.reverse() }];
+          let stops = (scheduledRoutes.get(driver) || []).slice().reverse().map((order, i) => ({ orderNo: order.orderNo, stopNumber: mode === 'gaps' ? i * 2 + 1 : i + 1 }));
+          if (mode === 'missing') stops.pop();
+          if ((mode === 'duplicate' || (mode === 'later-duplicate' && calls.filter(call => call.endpoint === 'start_planning').length === 2)) && stops.length > 1) stops[1] = { ...stops[0] };
+          result.routes = mode === 'none' ? [] : [{ driverExternalId: driver, stops: stops.reverse() }];
         } else throw new Error(`Unexpected Optimo request: ${endpoint}`);
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(result) });
       }
@@ -119,8 +127,50 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
       await page.locator('#generateSequenceBtn').click();
       await page.waitForFunction(() => !resequenceBusy);
     };
+    const drawnSequenceNumbers = () => page.evaluate(() => {
+      const labels = [], original = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function(text, ...args) {
+        if (this.canvas.classList.contains('sequence-number-canvas')) labels.push(text);
+        return original.call(this, text, ...args);
+      };
+      try { renderSequenceLayer(); } finally { CanvasRenderingContext2D.prototype.fillText = original; }
+      return labels;
+    });
     await load();
-    assert.equal(await page.locator('#optimoSectionSize').inputValue(), '500');
+    assert.equal(await page.locator('#optimoSectionSize').inputValue(), '0');
+    // Source and route choices remain visible with arrows off; choosing one shows it immediately.
+    await page.locator('#mobileMenuBtn').click();
+    await page.locator('#deliverySequenceDisclosure').click();
+    await page.locator('[data-sequence-source="optimo"]').click();
+    await page.waitForFunction(() => document.getElementById('sequenceRouteSelect').disabled);
+    assert.match(await page.locator('#sequenceLayerStatus').innerText(), /No saved Optimo sequence/);
+    assert.equal(await page.locator('#sequenceLayerToggle').isChecked(), false);
+    assert.equal(await page.evaluate(() => rowSequence(window._currentRows[0])), null);
+    await page.locator('[data-sequence-source="original"]').click();
+    await page.locator('#sequenceRouteSelect').selectOption(JSON.stringify(['TRASH', '1']));
+    await page.waitForFunction(() => document.getElementById('sequenceLayerStatus').textContent.includes('4 stops'));
+    assert.match(await page.locator('#sequenceLayerStatus').innerText(), /Showing Original file · 4 stops/);
+    await page.locator('#sequenceLayerToggle').uncheck();
+    await page.waitForFunction(() => !map.hasLayer(sequenceLayer));
+    assert.equal(await page.locator('#sequenceRouteSelect').isVisible(), true);
+    await page.evaluate(() => map.fitBounds([[30.755, -98.23], [30.757, -98.228]], { padding: [50, 50], animate: false }));
+    assert.deepEqual(new Set(await drawnSequenceNumbers()), new Set(['#0', '#2', '#10']));
+    await page.locator('#sequenceNumbersToggle').uncheck();
+    assert.deepEqual(await drawnSequenceNumbers(), []);
+    assert.equal(await page.evaluate(() => map.hasLayer(sequenceNumberLabels)), false);
+    await page.locator('#sequenceNumbersToggle').check();
+    await page.evaluate(() => {
+      const marker = Object.values(routeDayGroups).flatMap(group => group.layers).find(marker => marker._rowRef === window._currentRows[0]);
+      map.removeLayer(marker);
+    });
+    assert.deepEqual(new Set(await drawnSequenceNumbers()), new Set(['#0', '#2']));
+    await page.evaluate(() => {
+      const marker = Object.values(routeDayGroups).flatMap(group => group.layers).find(marker => marker._rowRef === window._currentRows[0]);
+      marker.addTo(map);
+    });
+    await page.locator('#sequenceRouteSelect').selectOption('all');
+    await page.waitForFunction(() => map.hasLayer(sequenceLayer));
+    await page.evaluate(() => closeMobileMenu());
     await page.evaluate(() => {
       const markers = Object.values(routeDayGroups).flatMap(group => group.layers);
       individuallySelectedMarkers.add(markers[0]);
@@ -151,10 +201,34 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
     assert.deepEqual(layout, { pageOverflow: false, dialogOverflow: false, shortTargets: [] });
     await page.screenshot({ path: path.join(root, 'local-artifacts/resequence-phone.png') });
     await page.locator('#closeResequenceBtn').click();
+    await page.locator('#mobileMenuBtn').click();
+    await page.locator('[data-sequence-source="optimo"]').click();
+    assert.match(await page.locator('#sequenceRouteSelect').innerText(), /TRASH.*3 stops/);
+    assert.match(await page.locator('#sequenceRouteSelect').innerText(), /RECYCLE.*3 stops/);
+    for (const [name, width, height] of [['phone', 440, 956], ['desktop', 1440, 1000]]) {
+      await page.setViewportSize({ width, height });
+      await page.locator('.sequence-controls').scrollIntoViewIfNeeded();
+      await page.waitForTimeout(250);
+      const pickerLayout = await page.evaluate(() => {
+        const panel = document.querySelector('.sequence-controls');
+        return { overflow: panel.scrollWidth > panel.clientWidth || document.documentElement.scrollWidth > innerWidth,
+          smallTargets: [...panel.querySelectorAll('button, select:not([hidden]), summary, input')].filter(el => el.getBoundingClientRect().height < 44).map(el => el.id) };
+      });
+      assert.deepEqual(pickerLayout, { overflow: false, smallTargets: [] });
+      for (const light of [false, true]) {
+        await page.evaluate(light => document.body.classList.toggle('sun-mode', light), light);
+        await page.screenshot({ path: path.join(root, `local-artifacts/sequence-picker-${name}-${light ? 'light' : 'dark'}.png`) });
+      }
+    }
+    await page.setViewportSize({ width: 440, height: 956 });
+    await page.evaluate(() => { document.body.classList.remove('sun-mode'); closeMobileMenu(); });
     await page.evaluate(() => { document.getElementById('sequenceSource').value = 'original'; document.getElementById('sequenceSource').dispatchEvent(new Event('change')); });
     assert.equal(await page.evaluate(() => rowSequence(window._currentRows[0])), 10);
     await page.evaluate(() => { document.getElementById('sequenceSource').value = 'optimo'; document.getElementById('sequenceSource').dispatchEvent(new Event('change')); });
     assert.equal(await page.evaluate(() => rowSequence(window._currentRows[0])), 3);
+    await page.evaluate(() => { closeMobileMenu(); map.fitBounds([[30.755, -98.23], [30.757, -98.228]], { padding: [60, 60], animate: false }); });
+    assert.deepEqual(new Set(await drawnSequenceNumbers()), new Set(['#1', '#3']));
+    await page.screenshot({ path: path.join(root, 'local-artifacts/sequence-numbers-map.png') });
     await page.evaluate(() => Object.values(routeDayGroups)[0].layers[0].openPopup());
     assert.match(await page.locator('.leaflet-popup-content').innerText(), /Sequence: 3/);
     // Reload restores only this file's local order, including after a delivery save.
@@ -178,7 +252,6 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
     storedOrders.set('old-same-date', { orderNo: 'old-same-date', date: plannedDate });
     storedOrders.set('unrelated-driver-same-date', { orderNo: 'unrelated-driver-same-date', date: plannedDate });
     storedOrders.set('other-date', { orderNo: 'other-date', date: '2001-02-03' });
-    const recycleBefore = await page.evaluate(key => JSON.stringify(optimoSequenceGroups.get(key).stops.map(stop => stop.index)), recycleScope);
     calls.length = 0; mode = 'delete-hold';
     await page.locator('#generateSequenceBtn').click();
     for (let i = 0; i < 100 && !deleteHold; i++) await new Promise(resolve => setTimeout(resolve, 20));
@@ -194,19 +267,20 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
     assert(uploaded.every(order => order.assignedTo.externalId === 'CART-TRASH-1'));
     assert.deepEqual(calls.find(call => call.endpoint === 'start_planning').body.useDrivers, [{ driverExternalId: 'CART-TRASH-1' }]);
     await page.locator('#saveSequenceBtn').click();
-    assert.equal(await page.evaluate(key => JSON.stringify(optimoSequenceGroups.get(key).stops.map(stop => stop.index)), recycleScope), recycleBefore);
-    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem(phoneSequenceKey)).groups.length), 2);
+    assert.equal(await page.evaluate(key => optimoSequenceGroups.has(key), recycleScope), false);
+    assert.equal(await page.evaluate(() => rowSequence(window._currentRows[4])), null);
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem(phoneSequenceKey)).groups.length), 1);
     await page.reload({ waitUntil: 'networkidle' }); await load(); await open();
-    assert.equal(await page.evaluate(key => JSON.stringify(optimoSequenceGroups.get(key).stops.map(stop => stop.index)), recycleScope), recycleBefore);
+    assert.equal(await page.evaluate(key => optimoSequenceGroups.has(key), recycleScope), false);
     assert.equal(await page.evaluate(() => rowSequence(window._currentRows[0])), 3);
     // No upload follows a refused, missing-success, or network-failed deletion.
     for (const failure of ['delete-failure', 'delete-unconfirmed', 'delete-network']) {
       mode = failure; calls.length = 0;
-      const saved = await page.evaluate(() => localStorage.getItem(phoneSequenceKey));
       await generate();
       assert.deepEqual(calls.map(call => call.endpoint), ['delete_all_orders']);
       assert.match(await page.locator('#resequenceStatus').innerText(), /Could not confirm.*No new records were uploaded/);
-      assert.equal(await page.evaluate(() => localStorage.getItem(phoneSequenceKey)), saved);
+      assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem(phoneSequenceKey)).groups.length), 0);
+      assert.equal(await page.evaluate(() => rowSequence(window._currentRows[0])), null);
       assert.equal(await page.locator('#saveSequenceBtn').isVisible(), false);
     }
     mode = 'success'; calls.length = 0;
@@ -226,27 +300,27 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
       return results;
     });
     assert.deepEqual(guarded, [true, true, true, true]); assert.equal(calls.length, 0);
-    for (const failure of ['missing', 'duplicate', 'partial-upload']) {
+    for (const failure of ['duplicate', 'partial-upload']) {
       mode = failure;
       await generate();
-      assert.match(await page.locator('#resequenceStatus').innerText(), /Previous sequence kept/);
+      assert.match(await page.locator('#resequenceStatus').innerText(), /No sequence displayed/);
       assert.equal(await page.locator('#saveSequenceBtn').isVisible(), false);
-      assert.equal(await page.evaluate(() => rowSequence(window._currentRows[0])), 3);
+      assert.equal(await page.evaluate(() => rowSequence(window._currentRows[0])), null);
     }
     mode = 'order-limit'; calls.length = 0;
     await generate();
     assert.match(await page.locator('#resequenceStatus').innerText(), /planning 6 orders.*planning order limit was exceeded/);
     assert.equal(await page.locator('#saveSequenceBtn').isVisible(), false);
-    assert.equal(await page.evaluate(() => rowSequence(window._currentRows[0])), 3);
+    assert.equal(await page.evaluate(() => rowSequence(window._currentRows[0])), null);
     assert.equal(calls.filter(call => call.endpoint === 'start_planning').length, 1);
     assert.equal(calls.filter(call => call.endpoint === 'get_routes').length, 0);
-    // Driver setup failures cannot upload orders or replace the saved sequence.
+    // Driver setup failures cannot upload orders or show stale sequence numbers.
     mode = 'driver-failure'; calls.length = 0;
     await generate();
     assert.deepEqual(calls.map(call => call.endpoint), ['delete_all_orders', 'update_drivers_parameters']);
     assert.match(await page.locator('#resequenceStatus').innerText(), /Driver hours or starts could not be updated/);
     assert.equal(await page.locator('#saveSequenceBtn').isVisible(), false);
-    assert.equal(await page.evaluate(() => rowSequence(window._currentRows[0])), 3);
+    assert.equal(await page.evaluate(() => rowSequence(window._currentRows[0])), null);
     // Configured-start mode must reset old date-specific GPS and widen hours too.
     mode = 'success'; calls.length = 0;
     await page.locator('#optimoStart').selectOption('depot');
@@ -267,6 +341,8 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
     assert.match(await page.locator('#resequenceStatus').innerText(), /Delivery status changed/);
     // Test the existing confirm-then-mutate save with a fake delayed/rejected upload.
     await load();
+    await open(); await generate(); await page.locator('#saveSequenceBtn').click();
+    await page.locator('#closeResequenceBtn').click();
     await page.evaluate(() => {
       window.fakeUploads = [];
       sb.storage.from = () => ({ upload: (...args) => new Promise(resolve => { window.fakeUploads.push(args); window.resolveFakeUpload = resolve; }) });
@@ -280,6 +356,18 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
     await page.waitForFunction(() => !deliverySaveInProgress);
     assert.equal(await page.evaluate(() => isDeliveredRow(window._currentRows[0])), false);
     await page.evaluate(() => { window.resolveFakeUpload = null; document.getElementById('completeStopsBtnMobile').click(); });
+    await page.waitForFunction(() => typeof window.resolveFakeUpload === 'function');
+    await page.evaluate(() => resolveFakeUpload({ error: null }));
+    await page.waitForFunction(() => !deliverySaveInProgress);
+    assert.equal(await page.evaluate(() => isDeliveredRow(window._currentRows[0])), false);
+    assert.equal(await page.evaluate(() => window._currentRows[0].del_qty), 1);
+    assert.equal(await page.evaluate(() => rowSequence(window._currentRows[0])), 3);
+    await page.evaluate(() => {
+      const marker = Object.values(routeDayGroups).flatMap(group => group.layers).find(marker => marker._rowRef === window._currentRows[0]);
+      individuallySelectedMarkers.add(marker); updateSelectionCount(); updateUndoButtonState();
+      window.resolveFakeUpload = null;
+      document.getElementById('completeStopsBtnMobile').click();
+    });
     await page.waitForFunction(() => typeof window.resolveFakeUpload === 'function');
     await page.evaluate(() => resolveFakeUpload({ error: null }));
     await page.waitForFunction(() => !deliverySaveInProgress);
@@ -314,7 +402,7 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
     await load(thousands, 'sections.xlsx'); await open('500'); calls.length = 0; mode = 'bounded';
     const rowsBeforeSections = await page.evaluate(() => JSON.stringify(window._currentRows));
     await generate();
-    assert.match(await page.locator('#resequenceStatus').innerText(), /Complete:.*Joined 12 OptimoRoute sections/);
+    assert.match(await page.locator('#resequenceStatus').innerText(), /Partial plan:.*5,276 selected.*Earlier sections replaced/);
     const sectionPlans = calls.filter(call => call.endpoint === 'start_planning');
     assert.equal(calls.filter(call => call.endpoint === 'delete_all_orders').length, 1);
     assert.equal(sectionPlans.length, 12);
@@ -333,16 +421,17 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
       }
     }
     await page.locator('#saveSequenceBtn').click();
-    assert.deepEqual(await page.evaluate(() => [...optimoSequenceGroups.values()].map(group => group.stops.length)), [2701, 2575]);
+    assert.deepEqual(await page.evaluate(() => [...optimoSequenceGroups.values()].map(group => group.stops.length)), [...scheduledRoutes.values()].map(orders => orders.length));
+    assert(await page.evaluate(() => window._currentRows.filter(row => rowSequence(row) === null).length > 4000));
     assert.equal(await page.evaluate(() => JSON.stringify(window._currentRows)), rowsBeforeSections);
     const savedSections = await page.evaluate(() => localStorage.getItem(phoneSequenceKey));
     assert.equal(JSON.parse(savedSections).sectionCount, 12);
-    // Failure in a later section must retain the complete saved result, including its storage.
-    mode = 'later-missing'; calls.length = 0;
+    // Invalid later sections must leave no stale earlier section numbers or arrows.
+    mode = 'later-duplicate'; calls.length = 0;
     await generate();
-    assert.match(await page.locator('#resequenceStatus').innerText(), /Previous sequence kept/);
+    assert.match(await page.locator('#resequenceStatus').innerText(), /No sequence displayed/);
     assert.equal(await page.locator('#saveSequenceBtn').isVisible(), false);
-    assert.equal(await page.evaluate(() => localStorage.getItem(phoneSequenceKey)), savedSections);
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem(phoneSequenceKey)).groups.length), 0);
     assert.equal(calls.filter(call => call.endpoint === 'start_planning').length, 2);
     // Pause and resume the same planning ID without uploading the current section twice.
     await load(large, 'resume-sections.xlsx'); await open('500'); calls.length = 0; mode = 'running';
@@ -364,7 +453,7 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
     mode = 'bounded';
     await page.locator('#resumeSequenceBtn').click();
     await page.waitForFunction(() => !resequenceBusy);
-    assert.match(await page.locator('#resequenceStatus').innerText(), /Complete:.*Joined 3/);
+    assert.match(await page.locator('#resequenceStatus').innerText(), /Partial plan:.*1,001 selected/);
     assert.equal(calls.filter(call => call.endpoint === 'start_planning').length, 3);
     assert.equal(calls.filter(call => call.endpoint === 'create_or_update_orders').length, 3);
     assert.equal(calls.filter(call => call.endpoint === 'delete_all_orders').length, 1);
@@ -393,9 +482,195 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
     await page.locator('#optimoScope').selectOption(recycleScope); calls.length = 0;
     await generate(); assert.equal(calls.length, 0);
     assert.match(await page.locator('#resequenceStatus').innerText(), /valid coordinates/);
+    // Partial server plans must not borrow spreadsheet numbers or connect omitted stops.
+    await load(sample, 'partial-scheduled.xlsx'); await open(); mode = 'missing';
+    await generate();
+    assert.match(await page.locator('#resequenceStatus').innerText(), /Partial plan: 4 scheduled \/ 6 selected.*2 unscheduled/);
+    assert.equal(await page.evaluate(() => rowSequence(window._currentRows[0])), null);
+    await page.locator('#saveSequenceBtn').click();
+    await page.locator('#closeResequenceBtn').click();
+    assert.deepEqual(await page.evaluate(() => window._currentRows.map(row => rowSequence(row))), [null, 2, 1, null, null, 2, 1, null]);
+    const partialLabels = await drawnSequenceNumbers();
+    assert(partialLabels.length > 0);
+    assert(partialLabels.every(text => ['#1', '#2'].includes(text)));
+    const partialGeometry = await page.evaluate(() => {
+      renderSequenceLayer();
+      const omitted = [0, 4].map(index => L.latLng(window._currentRows[index].LATITUDE, window._currentRows[index].LONGITUDE));
+      const lines = sequencePendingLine.getLatLngs();
+      const marker = Object.values(routeDayGroups).flatMap(group => group.layers).find(marker => marker._rowRef === window._currentRows[0]);
+      marker.openPopup();
+      return { count: lines.length, touchesOmitted: lines.flat().some(point => omitted.some(missing => missing.equals(point))) };
+    });
+    assert.deepEqual(partialGeometry, { count: 2, touchesOmitted: false });
+    assert.doesNotMatch(await page.locator('.leaflet-popup-content').innerText(), /Sequence:/);
+    await page.reload({ waitUntil: 'networkidle' }); await load(sample, 'partial-scheduled.xlsx');
+    assert.equal(await page.evaluate(() => rowSequence(window._currentRows[0])), null);
+    assert.equal(await page.evaluate(() => rowSequence(window._currentRows[1])), 2);
+    await open(); mode = 'none'; await generate(); await page.locator('#saveSequenceBtn').click();
+    assert.match(await page.locator('#resequencePreviewList').innerText(), /0 scheduled \/ 3 selected/);
+    assert(await page.evaluate(() => window._currentRows.every(row => rowSequence(row) === null)));
+    assert.deepEqual(await drawnSequenceNumbers(), []);
+    assert.equal(await page.evaluate(() => { renderSequenceLayer(); return sequencePendingLine.getLatLngs().flat(Infinity).length + sequencePendingArrows.getLatLngs().flat(Infinity).length; }), 0);
+    mode = 'gaps'; await generate(); await page.locator('#saveSequenceBtn').click();
+    assert.equal(await page.evaluate(() => rowSequence(window._currentRows[0])), 5);
+    // Old joined snapshots cannot silently return after a refresh.
+    await page.evaluate(() => localStorage.setItem(phoneSequenceKey, JSON.stringify({ version: 1, groups: [{ route: 'TRASH', day: '1', indices: [0, 1, 2] }] })));
+    await page.reload({ waitUntil: 'networkidle' }); await load(sample, 'partial-scheduled.xlsx');
+    assert.equal(await page.evaluate(() => document.getElementById('sequenceSource').value), 'optimo');
+    assert(await page.evaluate(() => window._currentRows.every(row => rowSequence(row) === null)));
+    mode = 'success';
+    // Selected scope combines individual and polygon selection, excluding hidden,
+    // off-screen, delivered, and explicitly deselected records.
+    const selectedSample = sample.map(row => ({ ...row })); selectedSample[6].LATITUDE = 32;
+    await load(selectedSample, 'selected-stops.xlsx'); await open(); await generate();
+    await page.locator('#saveSequenceBtn').click();
+    await page.locator('#closeResequenceBtn').click();
+    await page.evaluate(() => {
+      const markers = Object.values(routeDayGroups).flatMap(group => group.layers);
+      const at = index => markers.find(marker => marker._rowRef === window._currentRows[index]);
+      markers.forEach(marker => marker.addTo(map));
+      individuallySelectedMarkers.clear(); individuallyDeselectedMarkers.clear(); drawnLayer.clearLayers();
+      [0, 1, 3, 5, 6].forEach(index => individuallySelectedMarkers.add(at(index)));
+      map.removeLayer(at(1));
+      drawnLayer.addLayer(L.rectangle([[30.7565, -98.2285], [30.7595, -98.2255]]));
+      individuallyDeselectedMarkers.add(at(4));
+      map.fitBounds([[30.755, -98.23], [30.760, -98.225]], { padding: [40, 40], animate: false });
+      updateSelectionCount(); updateUndoButtonState();
+    });
+    await open(); await page.locator('#optimoScope').selectOption('selected');
+    assert.match(await page.locator('#resequenceSummary').innerText(), /3 undelivered records selected from the visible map selection/);
+    assert.equal(await page.locator('#optimoDrivers input:visible').count(), 2);
+    assert.match(await page.locator('#optimoDrivers label:visible').first().innerText(), /2 records/);
+    await page.locator('#optimoScope').selectOption('selectedAll');
+    assert.match(await page.locator('#resequenceSummary').innerText(), /4 undelivered records selected from your map selection/);
+    await page.locator('#optimoScope').selectOption('selected');
+    // Map picking must preserve selected stops and the viewport used by visible selection.
+    const beforePick = await page.evaluate(() => ({ center: map.getCenter(), zoom: map.getZoom(), selected: [...selectedVisibleSequenceRows()].map(row => row.UNIQUE).sort() }));
+    const checkRestoredView = async () => {
+      const after = await page.evaluate(() => ({ center: map.getCenter(), zoom: map.getZoom(), selected: [...selectedVisibleSequenceRows()].map(row => row.UNIQUE).sort() }));
+      assert.equal(after.zoom, beforePick.zoom);
+      assert.deepEqual(after.selected, beforePick.selected);
+      assert(Math.abs(after.center.lat - beforePick.center.lat) < .00002 && Math.abs(after.center.lng - beforePick.center.lng) < .00002);
+    };
+    calls.length = 0;
+    await page.locator('#optimoStart').selectOption('map'); await generate();
+    assert.equal(calls.length, 0);
+    assert.match(await page.locator('#resequenceStatus').innerText(), /Choose a start location/);
+    await page.evaluate(() => drawControl._toolbars.draw._modes.polygon.handler.enable());
+    await page.locator('#pickOptimoStart').click();
+    assert.equal(await page.locator('#resequenceDialog').isVisible(), true);
+    assert.equal(await page.locator('#optimoLocationPicker').isVisible(), false);
+    assert.match(await page.locator('#resequenceStatus').innerText(), /Finish or cancel/);
+    await page.evaluate(() => drawControl._toolbars.draw._modes.polygon.handler.disable());
+    await page.locator('#pickOptimoStart').click();
+    assert.equal(await page.locator('#resequenceDialog').isVisible(), false);
+    assert.equal(await page.locator('#useOptimoLocation').isDisabled(), true);
+    await page.evaluate(() => {
+      map.setView([30.78, -98.2], 16, { animate: false });
+      const marker = Object.values(routeDayGroups).flatMap(group => group.layers)[0];
+      marker.fire('click', { latlng: marker.getLatLng() });
+    });
+    await page.waitForTimeout(250);
+    const expectedStart = await page.evaluate(() => map.containerPointToLatLng([190, 210]).wrap());
+    await page.locator('#map').click({ position: { x: 190, y: 210 } });
+    const pickedStart = await page.evaluate(() => { const p = optimoLocationPicker.marker.getLatLng().wrap(); return { type: 'custom', latitude: p.lat, longitude: p.lng }; });
+    assert(Math.abs(pickedStart.latitude - expectedStart.lat) < .000001 && Math.abs(pickedStart.longitude - expectedStart.lng) < .000001);
+    assert.equal(await page.locator('#useOptimoLocation').isDisabled(), false);
+    assert.equal(await page.evaluate(() => getComputedStyle(sequenceNumberPane).visibility), 'hidden');
+    assert.equal(await page.evaluate(() => getComputedStyle(sequencePane).visibility), 'hidden');
+    for (const light of [false, true]) {
+      await page.evaluate(light => document.body.classList.toggle('sun-mode', light), light);
+      const layout = await page.evaluate(() => {
+        const panel = document.getElementById('optimoLocationPicker'), button = document.getElementById('useOptimoLocation'), style = getComputedStyle(button);
+        return { overflow: panel.scrollWidth > panel.clientWidth, overlapsMap: panel.getBoundingClientRect().top < map.getContainer().getBoundingClientRect().bottom - 1,
+          small: [...panel.querySelectorAll('button')].some(el => el.getBoundingClientRect().height < 44), unreadable: style.color === style.backgroundColor };
+      });
+      assert.deepEqual(layout, { overflow: false, overlapsMap: false, small: false, unreadable: false });
+      await page.screenshot({ path: path.join(root, `local-artifacts/optimo-map-picker-phone-${light ? 'light' : 'dark'}.png`) });
+    }
+    await page.locator('#useOptimoLocation').click();
+    await checkRestoredView();
+    assert.equal(await page.locator('#optimoStart').inputValue(), 'map');
+    await page.locator('#optimoEnd').selectOption('map'); await generate();
+    assert.equal(calls.length, 0);
+    assert.match(await page.locator('#resequenceStatus').innerText(), /Choose an end location/);
+    await page.locator('#pickOptimoEnd').click();
+    await page.evaluate(() => map.setView([30.79, -98.19], 17, { animate: false }));
+    await page.locator('#centerOptimoLocation').click();
+    const pin = page.locator('.optimo-location-icon.leaflet-marker-draggable');
+    const box = await pin.boundingBox();
+    const expectedEnd = await page.evaluate(() => map.containerPointToLatLng(map.latLngToContainerPoint(optimoLocationPicker.marker.getLatLng()).add([35, 20])).wrap());
+    await page.mouse.move(box.x + 32, box.y + 22); await page.mouse.down();
+    await page.mouse.move(box.x + 67, box.y + 42, { steps: 8 }); await page.mouse.up();
+    const pickedEnd = await page.evaluate(() => { const point = optimoLocationPicker.marker.getLatLng().wrap(); return { type: 'custom', latitude: point.lat, longitude: point.lng }; });
+    assert(Math.abs(pickedEnd.latitude - expectedEnd.lat) < .00001 && Math.abs(pickedEnd.longitude - expectedEnd.lng) < .00001);
+    await page.evaluate(() => map.panBy([40, 30], { animate: false }));
+    assert.deepEqual(await page.evaluate(() => { const p = optimoLocationPicker.marker.getLatLng().wrap(); return { type: 'custom', latitude: p.lat, longitude: p.lng }; }), pickedEnd);
+    await page.locator('#useOptimoLocation').click();
+    await checkRestoredView();
+    assert.equal(await page.evaluate(() => getComputedStyle(sequenceNumberPane).visibility), 'visible');
+    // Cancel preserves the previous endpoint without API requests.
+    const endBeforeCancel = await page.evaluate(() => ({ ...optimoMapLocations.end }));
+    await page.locator('#pickOptimoEnd').click();
+    await page.evaluate(() => map.setView([31, -98], 15, { animate: false }));
+    await page.locator('#centerOptimoLocation').click();
+    await page.locator('#cancelOptimoLocation').click();
+    assert.deepEqual(await page.evaluate(() => optimoMapLocations.end), endBeforeCancel);
+    assert.equal(calls.length, 0);
+    calls.length = 0;
+    await generate();
+    assert.deepEqual(uploaded.map(order => Number(order.orderNo.split('-').pop())), [0, 2, 5]);
+    assert.equal(calls.filter(call => call.endpoint === 'delete_all_orders').length, 1);
+    const endpointUpdate = calls.find(call => call.endpoint === 'update_drivers_parameters');
+    for (const update of endpointUpdate.body.updates) {
+      assert.deepEqual(update.startLocation, pickedStart);
+      assert.deepEqual(update.endLocation, pickedEnd);
+    }
+    await page.locator('#saveSequenceBtn').click();
+    assert.deepEqual(await page.evaluate(() => window._currentRows.map(row => rowSequence(row))), [2, null, 1, null, null, 1, null, null]);
+    assert.deepEqual(await page.evaluate(() => [...optimoSequenceGroups.values()].flatMap(group => group.stops.map(stop => stop.index)).sort()), [0, 2, 5]);
+    for (const [name, width, height] of [['phone', 440, 956], ['desktop', 1440, 1000]]) {
+      await page.setViewportSize({ width, height });
+      await page.locator('#optimoScope').scrollIntoViewIfNeeded();
+      assert.equal(await page.evaluate(() => document.getElementById('resequenceDialog').scrollWidth > document.getElementById('resequenceDialog').clientWidth), false);
+      await page.screenshot({ path: path.join(root, `local-artifacts/selected-planning-${name}.png`) });
+      if (name === 'desktop') {
+        await page.locator('#pickOptimoEnd').click();
+        const pickerLayout = await page.evaluate(() => {
+          const panel = document.getElementById('optimoLocationPicker');
+          return { overflow: panel.scrollWidth > panel.clientWidth, small: [...panel.querySelectorAll('button')].some(button => button.getBoundingClientRect().height < 44) };
+        });
+        assert.deepEqual(pickerLayout, { overflow: false, small: false });
+        await page.screenshot({ path: path.join(root, 'local-artifacts/optimo-map-picker-desktop.png') });
+        await page.keyboard.press('Escape');
+        assert.equal(await page.locator('#resequenceDialog').isVisible(), true);
+        assert.deepEqual(await page.evaluate(() => optimoMapLocations.end), endBeforeCancel);
+      }
+    }
+    await page.setViewportSize({ width: 440, height: 956 });
+    await page.locator('#optimoStart').selectOption('depot');
+    await page.locator('#optimoEnd').selectOption('start'); calls.length = 0;
+    await generate();
+    assert(calls.find(call => call.endpoint === 'update_drivers_parameters').body.updates.every(update => update.startLocation.type === 'employeeDefault' && update.endLocation.type === 'startLocation'));
+    await page.locator('#saveSequenceBtn').click();
+    // Selected stops includes selected off-screen records, with no unselected additions.
+    await page.locator('#optimoScope').selectOption('selectedAll'); calls.length = 0;
+    await generate();
+    assert.deepEqual(uploaded.map(order => Number(order.orderNo.split('-').pop())), [0, 2, 5, 6]);
+    await page.locator('#optimoScope').selectOption('selected');
+    await generate(); await page.locator('#saveSequenceBtn').click();
+    await page.reload({ waitUntil: 'networkidle' }); await load(selectedSample, 'selected-stops.xlsx');
+    assert.deepEqual(await page.evaluate(() => window._currentRows.map(row => rowSequence(row))), [2, null, 1, null, null, 1, null, null]);
+    await open(); await page.locator('#optimoScope').selectOption('selected'); calls.length = 0;
+    await generate();
+    assert.equal(calls.length, 0);
+    assert.match(await page.locator('#resequenceStatus').innerText(), /No selected, visible undelivered stops/);
+    // All-groups behavior still works without a map selection.
+    await page.locator('#optimoScope').selectOption('');
+    await generate(); assert.equal(uploaded.length, 6);
     const onlyDelivered = sample.map(row => ({ ...row, del_status: 'Delivered' }));
     await load(onlyDelivered, 'all-delivered.xlsx'); await open(); calls.length = 0;
-    assert.equal(await page.locator('#optimoScope option').count(), 1);
+    assert.equal(await page.locator('#optimoScope option').count(), 3);
     await generate(); assert.equal(calls.length, 0);
     assert.match(await page.locator('#resequenceStatus').innerText(), /No undelivered records/);
     // Invalid rows and refused GPS stop before any external API mutation.
@@ -431,6 +706,6 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
     await page.locator('#forgetOptimoKey').click();
     assert.equal(await page.evaluate(() => localStorage.getItem(OPTIMO_KEY_STORAGE)), null);
     assert.deepEqual(errors, []);
-    console.log('PASS: phone/desktop layouts; scoped undelivered records and merged saved groups; date-only cleanup before upload; refused/unconfirmed/network-failed cleanup; invalid dates; one cleanup across 12 planning sections and resume; account consistency; 5,276-record coverage; all-day starts; incomplete results; local persistence; confirm-then-mutate fake delivery saves; stale responses.');
+    console.log('PASS: phone/desktop layouts; scheduled-only partial and empty plans; no omitted-stop numbers or arrows; server stop numbers; stale joined snapshot migration; date cleanup invalidates old groups; bounded 5,276-record planning with final server snapshot; resume; account limits; local persistence; confirm-then-mutate fake saves.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => server.close());

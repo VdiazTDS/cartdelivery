@@ -24,7 +24,7 @@
  *     not in individuallyDeselectedMarkers. Always use isStopSelected(); never read marker styles to decide.
  *   - sequenceGroups keeps original route/day order and row references, including hidden delivered stops.
  *     Delivery badges and segment colors read those rows only after a confirmed save/undo.
- *   - del_status === "Delivered" (case-insensitive) in a row means delivered. Saving rewrites the whole sheet.
+ *   - del_qty tracks carts delivered; isDeliveredRow() supports legacy del_status-only files. Saves rewrite the sheet.
  *   - updateSelectionCount is re-assigned later (mobile selection section) to also refresh the phone button;
  *     call it by name after any selection change, plus updateUndoButtonState().
  *   - Layout is "mobile" at window.innerWidth <= 900; placeDeliveryControls moves the same DOM nodes between
@@ -37,17 +37,17 @@ window.addEventListener("error", e => {
 let layerVisibilityState = {};
 let deliverySaveInProgress = false;
 let resequenceBusy = false;
+let optimoLocationPicker = null;
 let selectedPendingStopCount = 0;
 let resetAddressSearch = () => {};
 let refreshAddressSearch = () => {};
 
 function updateDeliveryButtons() {
   const count = selectedPendingStopCount;
+  const perRecord = document.getElementById("multipleCartsOnly").checked;
   const label = deliverySaveInProgress
     ? "Saving…"
-    : count
-      ? `Mark ${count} ${count === 1 ? "Stop" : "Stops"} Delivered`
-      : "Mark Stops Delivered";
+    : perRecord ? "Enter carts delivered" : "Deliver 1 cart per stop";
 
   ["completeStopsBtn", "completeStopsBtnMobile"].forEach(id => {
     const button = document.getElementById(id);
@@ -55,16 +55,23 @@ function updateDeliveryButtons() {
     button.textContent = label;
     button.disabled = deliverySaveInProgress || resequenceBusy || count === 0;
     button.setAttribute("aria-busy", String(deliverySaveInProgress));
-    button.title = count ? label : "Select undelivered stops on the map first";
+    button.title = !count ? "Select undelivered stops on the map first" : perRecord
+      ? "Enter the carts delivered this visit for each selected record"
+      : "Add one delivered cart to each selected stop. Use Record carts to specify a different count.";
   });
   const undoButton = document.getElementById("undoDeliveredBtn");
   if (undoButton) undoButton.disabled = deliverySaveInProgress || resequenceBusy;
+  const cartButton = document.getElementById("recordCartsBtn");
+  if (cartButton) {
+    cartButton.disabled = deliverySaveInProgress || resequenceBusy || Number(document.getElementById("selectionCount").textContent) === 0;
+    cartButton.textContent = document.getElementById("multipleCartsOnly").checked ? "Record carts · QTY 2+ filter on" : "Record carts";
+  }
 }
 
 function updatePendingDeliveryCount(markers) {
   selectedPendingStopCount = [...markers].filter(marker =>
     marker._rowRef &&
-    String(marker._rowRef.del_status || "").trim().toLowerCase() !== "delivered"
+    !isDeliveredRow(marker._rowRef)
   ).length;
   updateDeliveryButtons();
 }
@@ -254,7 +261,7 @@ watchId = navigator.geolocation.watchPosition(
     }
 
     // Smooth follow
-    map.flyTo(latlng, Math.max(map.getZoom(), 16), { duration: 1.2 });
+    if (!optimoLocationPicker) map.flyTo(latlng, Math.max(map.getZoom(), 16), { duration: 1.2 });
 
    
 
@@ -631,6 +638,15 @@ const quantityPane = map.createPane("quantityPane");
 quantityPane.style.zIndex = "450";
 quantityPane.style.pointerEvents = "none";
 const quantityBadgesToggle = document.getElementById("quantityBadgesToggle");
+const deliveryOverlayButtons = [...document.querySelectorAll(".delivery-overlay-buttons button")];
+deliveryOverlayButtons.forEach(button => button.addEventListener("click", () => {
+  const opening = button.getAttribute("aria-expanded") !== "true";
+  deliveryOverlayButtons.forEach(control => {
+    const expanded = control === button && opening;
+    control.setAttribute("aria-expanded", String(expanded));
+    document.getElementById(control.getAttribute("aria-controls")).hidden = !expanded;
+  });
+}));
 const QUANTITY_BADGES_KEY = "cartdelivery.quantityBadges";
 try { quantityBadgesToggle.checked = localStorage.getItem(QUANTITY_BADGES_KEY) !== "off"; } catch (_) { /* Preference only. */ }
 quantityPane.hidden = !quantityBadgesToggle.checked;
@@ -1251,7 +1267,7 @@ function showNearbyStopPicker(stops) {
 
     const detail = document.createElement("span");
     detail.className = "mobile-stop-choice-detail";
-    const status = String(row.del_status || "").trim().toLowerCase() === "delivered"
+    const status = isDeliveredRow(row)
       ? "Delivered"
       : (dayName(Number(rowDay(row))) || `Day ${rowDay(row) || key.split("|")[1]}`);
     const sequence = rowSequence(row);
@@ -1269,7 +1285,10 @@ function showNearbyStopPicker(stops) {
     button.classList.toggle("selected", selected);
     selectionState.textContent = selected ? "Selected · tap to deselect" : "Tap to select";
 
-    button.append(address, binNumber, detail, selectionState);
+    const progress = document.createElement("span");
+    progress.className = "mobile-stop-choice-detail";
+    progress.textContent = cartProgressText(row);
+    button.append(address, binNumber, detail, progress, selectionState);
     button.addEventListener("click", () => {
       toggleIndividualStopSelection(marker);
       picker.hidden = true;
@@ -1304,6 +1323,7 @@ function handleMobileStopTap(latlng) {
 }
 
 map.on("click", event => {
+  if (optimoLocationPicker) { setOptimoPickPoint(event.latlng); return; }
   if (event.layer) return;
   if (mobileStopSelectionMode && window.innerWidth <= 900) {
     handleMobileStopTap(event.latlng);
@@ -1311,7 +1331,7 @@ map.on("click", event => {
 });
 
 map.on("popupopen", event => {
-  if (mobileStopSelectionMode && window.innerWidth <= 900) {
+  if (optimoLocationPicker || (mobileStopSelectionMode && window.innerWidth <= 900)) {
     map.closePopup(event.popup);
     requestAnimationFrame(() => {
       if (mobileStopSelectionMode && window.innerWidth <= 900) map.closePopup();
@@ -1326,7 +1346,7 @@ map.on("tooltipopen", event => {
 });
 
 function restoreMarkerStyle(marker, key) {
-  const isDelivered = String(marker._rowRef?.del_status || "").trim().toLowerCase() === "delivered";
+  const isDelivered = isDeliveredRow(marker._rowRef || {});
   const color = isDelivered ? "#00FF00" : (symbolMap[key]?.color || marker._base?.symbol?.color);
   if (color) {
     marker.setStyle?.({
@@ -1567,14 +1587,62 @@ function multiCartQuantity(row) {
   return Number.isFinite(quantity) && quantity > 1 ? quantity : null;
 }
 
+function cartTotal(row) {
+  const quantity = searchCartQuantity(row);
+  return Number.isSafeInteger(quantity) && quantity > 0 ? quantity : null;
+}
+
+function storedCartCount(row) {
+  const total = cartTotal(row);
+  const value = row.del_qty;
+  if (total === null || !["number", "string"].includes(typeof value) || String(value).trim() === "") return null;
+  const count = Number(value);
+  return Number.isSafeInteger(count) && count >= 0 && count <= total ? count : null;
+}
+
+function isDeliveredRow(row) {
+  const count = storedCartCount(row);
+  return count !== null ? count === cartTotal(row) : String(row.del_status || "").trim().toLowerCase() === "delivered";
+}
+
+function deliveredCartCount(row) {
+  return storedCartCount(row) ?? (isDeliveredRow(row) ? cartTotal(row) : 0);
+}
+
+function cartProgressText(row) {
+  const total = cartTotal(row);
+  if (total === null) return "Cart count unavailable (QTY must be a positive whole number)";
+  const delivered = deliveredCartCount(row);
+  return `${delivered} of ${total} carts delivered · ${total - delivered} remaining`;
+}
+
+function matchesCartQuantityFilter(row) {
+  return !document.getElementById("multipleCartsOnly").checked || searchCartQuantity(row) >= 2;
+}
+
+function setStopVisibility(marker, visible) {
+  if (visible && matchesCartQuantityFilter(marker._rowRef)) marker.addTo(map);
+  else map.removeLayer(marker);
+}
+
+function refreshQuantityBadge(marker) {
+  const label = marker._quantityLabel;
+  if (!label) return;
+  const row = marker._rowRef;
+  const total = cartTotal(row);
+  label.textContent = total === null ? `×${multiCartQuantity(row)}` : `${deliveredCartCount(row)}/${total}`;
+  label.setAttribute("aria-label", cartProgressText(row));
+  label.classList.toggle("is-complete", isDeliveredRow(row));
+}
+
 function attachQuantityBadge(marker, row) {
   const quantity = multiCartQuantity(row);
   if (quantity === null) return;
   const label = document.createElement("span");
   label.className = "multi-cart-badge";
-  label.textContent = `×${quantity}`;
   label.setAttribute("role", "img");
-  label.setAttribute("aria-label", `${quantity} carts required`);
+  marker._quantityLabel = label;
+  refreshQuantityBadge(marker);
   const badge = L.marker([marker._base.lat, marker._base.lon], {
     pane: "quantityPane", interactive: false, keyboard: false,
     icon: L.divIcon({ className: "multi-cart-icon", html: label, iconSize: [0, 0], iconAnchor: [-8, 22] })
@@ -1702,15 +1770,15 @@ function applyFilters() {
   Object.entries(routeDayGroups).forEach(([key, group]) => {
     const [r, d] = key.split("|");
 
-    const show = routes.includes(r) && days.includes(d);
-
-    group.layers.forEach(l => show ? l.addTo(map) : map.removeLayer(l));
+    const show = routes.includes(r) && (layerVisibilityState[key] ?? d !== "Delivered");
+    group.layers.forEach(l => setStopVisibility(l, show && days.includes(String(rowDay(l._rowRef)))));
   });
 
   updateSelectionCount();
   updateUndoButtonState();
   updateStats();
   refreshAddressSearch();
+  scheduleSequenceRender();
 }
 
 
@@ -1782,13 +1850,7 @@ if (layerVisibilityState.hasOwnProperty(key)) {
 }
 
     // Apply visibility immediately
-    routeDayGroups[key].layers.forEach(marker => {
-      if (checkbox.checked) {
-        map.addLayer(marker);
-      } else {
-        map.removeLayer(marker);
-      }
-    });
+    routeDayGroups[key].layers.forEach(marker => setStopVisibility(marker, checkbox.checked));
 
     // Toggle behavior
     checkbox.addEventListener("change", () => {
@@ -1819,23 +1881,12 @@ if (layerVisibilityState.hasOwnProperty(key)) {
       if (otherCheckbox) otherCheckbox.checked = false;
 
       routeDayGroups[otherKey].layers.forEach(m =>
-        map.removeLayer(m)
+        setStopVisibility(m, false)
       );
     }
   });
 
-  // Apply this checkbox visibility
-  routeDayGroups[key].layers.forEach(marker => {
-    if (checkbox.checked) {
-      map.addLayer(marker);
-    } else {
-      map.removeLayer(marker);
-    }
-  });
-
-  updateSelectionCount();
-  updateUndoButtonState();
-  refreshAddressSearch();
+  applyFilters();
 });
 
 
@@ -1892,7 +1943,7 @@ if (layerVisibilityState.hasOwnProperty(key)) {
       routeDayContainer.appendChild(wrapper);
     }
   });
-  refreshAddressSearch();
+  applyFilters();
 }
 
 
@@ -1927,6 +1978,59 @@ const sequenceDeliveredBadges = L.polygon([], { ...sequenceStyle, color: "#fffff
 const sequenceDeliveredChecks = L.polyline([], { ...sequenceStyle, color: "#ffffff", weight: 1.8, opacity: 1 }).addTo(sequenceLayer);
 let sequenceFrame = null;
 let sequenceDataNote = "";
+const sequenceNumberPane = map.createPane("sequenceNumberPane");
+sequenceNumberPane.style.zIndex = "460";
+sequenceNumberPane.style.pointerEvents = "none";
+const SequenceNumberLabels = L.Layer.extend({
+  onAdd() {
+    this._canvas = L.DomUtil.create("canvas", "sequence-number-canvas", sequenceNumberPane);
+    this._canvas.setAttribute("aria-hidden", "true");
+  },
+  onRemove() { L.DomUtil.remove(this._canvas); },
+  getEvents() { return { zoomstart: () => { this._canvas.hidden = true; } }; },
+  draw(groups) {
+    const canvas = this._canvas, size = map.getSize(), scale = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(size.x * scale);
+    canvas.height = Math.round(size.y * scale);
+    canvas.style.width = `${size.x}px`;
+    canvas.style.height = `${size.y}px`;
+    L.DomUtil.setPosition(canvas, map.containerPointToLayerPoint([0, 0]));
+    const context = canvas.getContext("2d");
+    context.scale(scale, scale);
+    context.font = "700 13px system-ui, sans-serif";
+    context.textBaseline = "middle";
+    const visibleRows = new Set(Object.values(routeDayGroups).flatMap(group => group.layers.filter(marker => map.hasLayer(marker)).map(marker => marker._rowRef)));
+    const occupied = new Set();
+    let shown = 0, crowded = 0;
+    for (const group of groups) for (const stop of group.stops) {
+      if (!stop.latlng || !visibleRows.has(stop.row)) continue;
+      const point = map.latLngToContainerPoint(stop.latlng);
+      if (point.x < 0 || point.y < 0 || point.x > size.x || point.y > size.y) continue;
+      const text = `#${stop.seq}`, width = context.measureText(text).width + 12;
+      const x = point.x + width + 10 <= size.x ? point.x + 10 : point.x - width - 10;
+      const y = point.y + 30 <= size.y ? point.y + 10 : point.y - 30;
+      if (x < 0 || y < 0) continue;
+      const cells = [];
+      for (let col = Math.floor(x / 12); col <= Math.floor((x + width) / 12); col++)
+        for (let row = Math.floor(y / 12); row <= Math.floor((y + 20) / 12); row++) cells.push(`${col},${row}`);
+      if (cells.some(cell => occupied.has(cell))) { crowded++; continue; }
+      cells.forEach(cell => occupied.add(cell));
+      context.beginPath();
+      context.roundRect(x, y, width, 20, 5);
+      context.fillStyle = isDeliveredRow(stop.row) ? "#137442" : "#174a9c";
+      context.fill();
+      context.lineWidth = 1.5;
+      context.strokeStyle = "#ffffff";
+      context.stroke();
+      context.fillStyle = "#ffffff";
+      context.fillText(text, x + 6, y + 10);
+      shown++;
+    }
+    canvas.hidden = false;
+    return { shown, crowded };
+  }
+});
+const sequenceNumberLabels = new SequenceNumberLabels();
 
 function scheduleSequenceRender() {
   if (sequenceFrame !== null) return;
@@ -1974,31 +2078,70 @@ function rebuildSequenceData(rows) {
   scheduleSequenceRender();
 }
 
+function syncSequenceControls() {
+  const usingOptimo = document.getElementById("sequenceSource").value === "optimo";
+  const groups = usingOptimo ? optimoSequenceGroups : sequenceGroups;
+  const select = document.getElementById("sequenceRouteSelect");
+  const available = [...groups.entries()].filter(([, group]) => group.stops.length);
+  const signature = JSON.stringify([usingOptimo, available.map(([key, group]) => [key, group.stops.length])]);
+  if (select.dataset.options !== signature) {
+    const previous = select.value;
+    select.replaceChildren(new Option(available.length ? "All routes / days" : "No sequences available", "all"));
+    available.forEach(([key, group]) => select.add(new Option(`${group.route} · ${dayName(Number(group.day))} · ${group.stops.length} stops`, key)));
+    if ([...select.options].some(option => option.value === previous)) select.value = previous;
+    select.dataset.options = signature;
+  }
+  select.disabled = !available.length;
+  document.querySelectorAll("[data-sequence-source]").forEach(button => {
+    button.setAttribute("aria-pressed", String(button.dataset.sequenceSource === (usingOptimo ? "optimo" : "original")));
+  });
+  const selectedGroups = available.filter(([key]) => select.value === "all" || select.value === key).map(([, group]) => group);
+  const stopCount = selectedGroups.reduce((sum, group) => sum + group.stops.length, 0);
+  const drawable = selectedGroups.some(group => group.stops.some((stop, i) => i && stop.latlng && group.stops[i - 1].latlng && !stop.latlng.equals(group.stops[i - 1].latlng)));
+  const toggle = document.getElementById("sequenceLayerToggle");
+  toggle.disabled = !drawable;
+  if (!drawable) toggle.checked = false;
+  document.getElementById("sequenceNumbersToggle").disabled = !stopCount;
+  return { usingOptimo, stopCount, drawable, selectedGroups };
+}
+
 function renderSequenceLayer() {
   const toggle = document.getElementById("sequenceLayerToggle");
   const status = document.getElementById("sequenceLayerStatus");
-  document.getElementById("sequenceLayerOptions").hidden = !toggle.checked;
+  const { usingOptimo, stopCount, drawable, selectedGroups } = syncSequenceControls();
+  const sourceLabel = usingOptimo ? "Saved Optimo" : "Original file";
+  const showNumbers = document.getElementById("sequenceNumbersToggle").checked && stopCount > 0;
+  const numberStatus = document.getElementById("sequenceNumbersStatus");
+  if (showNumbers) {
+    if (!map.hasLayer(sequenceNumberLabels)) sequenceNumberLabels.addTo(map);
+    const { shown, crowded } = sequenceNumberLabels.draw(selectedGroups);
+    numberStatus.textContent = `${shown} numbers visible.${crowded ? " Zoom in for more; tap overlapping stops for their numbers." : ""}`;
+  } else {
+    map.removeLayer(sequenceNumberLabels);
+    numberStatus.textContent = "";
+  }
+  document.getElementById("sequenceDisplayBadge").textContent = (toggle.checked && drawable) || showNumbers ? "On map" : "Off";
   if (!toggle.checked || toggle.disabled) {
     map.removeLayer(sequenceLayer);
-    status.textContent = toggle.disabled
-      ? `Sequence unavailable. Need two stops in the same route/day with numeric SEQNO and distinct valid locations. ${sequenceDataNote}`.trim()
-      : "Ready to show this file’s delivery order.";
+    sequenceLayer.eachLayer(layer => layer.setLatLngs([]));
+    status.textContent = !stopCount
+      ? (usingOptimo ? "No saved Optimo sequence. Plan with OptimoRoute, then use the returned sequence on this phone." : "No original sequence available. Open a file with sequence numbers, or plan with OptimoRoute.")
+      : !drawable ? `${sourceLabel} · ${stopCount} stops. Arrows need two stops at different locations.`
+      : `${sourceLabel} · ${stopCount} stops. Arrows are hidden.`;
     return;
   }
   const pending = [], completed = [], pendingArrows = [], completedArrows = [];
   const badges = [], checks = [];
   const selected = document.getElementById("sequenceRouteSelect").value;
-  const delivered = stop => String(stop.row.del_status || "").trim().toLowerCase() === "delivered";
+  const delivered = stop => isDeliveredRow(stop.row);
   const bounds = map.getPixelBounds();
   const zoom = map.getZoom();
   let arrowCount = 0;
-  let segmentCount = 0;
-  const usingOptimo = document.getElementById("sequenceSource").value === "optimo";
   (usingOptimo ? optimoSequenceGroups : sequenceGroups).forEach((group, key) => {
     if (selected !== "all" && selected !== key) return;
     const stops = group.stops;
     stops.forEach(stop => {
-      if (!stop.latlng || !delivered(stop)) return;
+      if (!stop.latlng || !delivered(stop) || !matchesCartQuantityFilter(stop.row)) return;
       const point = map.project(stop.latlng, zoom);
       if (!bounds.contains(point)) return;
       // Projected offsets keep badges the same screen size at every zoom.
@@ -2008,10 +2151,9 @@ function renderSequenceLayer() {
     });
     for (let i = 1; i < stops.length; i++) {
       const from = stops[i - 1], to = stops[i];
-      if (!from.latlng || !to.latlng || from.latlng.equals(to.latlng)) continue;
+      if (!from.latlng || !to.latlng || from.latlng.equals(to.latlng) || !matchesCartQuantityFilter(from.row) || !matchesCartQuantityFilter(to.row)) continue;
       const done = delivered(from) && delivered(to);
       (done ? completed : pending).push([from.latlng, to.latlng]);
-      segmentCount++;
       const a = map.project(from.latlng, zoom), b = map.project(to.latlng, zoom);
       if (a.distanceTo(b) < 24 || arrowCount >= 1500) continue;
       // Clip only arrow placement; preserve the full lines and original direction.
@@ -2038,18 +2180,29 @@ function renderSequenceLayer() {
   sequenceDeliveredChecks.setLatLngs(checks);
   if (!map.hasLayer(sequenceLayer)) sequenceLayer.addTo(map);
   status.textContent = usingOptimo
-    ? `${segmentCount} connections · Optimo sequence on this phone. ${optimoSequenceCoverage()}`
-    : `${segmentCount} connections · original sequence, including delivered stops. ${sequenceDataNote}`.trim();
+    ? `Showing Saved Optimo · ${stopCount} stops. ${optimoSequenceCoverage()}`
+    : `Showing Original file · ${stopCount} stops. ${sequenceDataNote}`.trim();
 }
 
 document.getElementById("sequenceLayerToggle").addEventListener("change", scheduleSequenceRender);
-document.getElementById("sequenceRouteSelect").addEventListener("change", scheduleSequenceRender);
+document.getElementById("sequenceNumbersToggle").addEventListener("change", scheduleSequenceRender);
+document.getElementById("sequenceRouteSelect").addEventListener("change", () => {
+  document.getElementById("sequenceLayerToggle").checked = true;
+  scheduleSequenceRender();
+});
 document.getElementById("sequenceSource").addEventListener("change", () => {
+  document.getElementById("sequenceLayerToggle").checked = true;
   refreshAddressSearch();
   map.closePopup();
   scheduleSequenceRender();
 });
+document.querySelectorAll("[data-sequence-source]").forEach(button => button.addEventListener("click", () => {
+  const select = document.getElementById("sequenceSource");
+  select.value = button.dataset.sequenceSource;
+  select.dispatchEvent(new Event("change"));
+}));
 map.on("zoomend moveend resize", scheduleSequenceRender);
+map.on("layeradd layerremove", event => { if (event.layer._rowRef) scheduleSequenceRender(); });
 
 // ================= PHONE-ONLY OPTIMO RESEQUENCING =================
 const OPTIMO_KEY_STORAGE = "cartdelivery.optimo.apiKey";
@@ -2060,8 +2213,122 @@ let phoneSequenceKey = null;
 let phoneSequenceRows = null;
 let optimoRequestController = null;
 const resequenceElement = id => document.getElementById(id);
-const isDeliveredRow = row => String(row.del_status || "").trim().toLowerCase() === "delivered";
 const sequenceGroupKey = row => JSON.stringify([String(rowRoute(row) ?? "").trim(), String(rowDay(row) ?? "").trim()]);
+const optimoMapLocations = { start: null, end: null };
+const optimoEndpointMarkers = L.layerGroup().addTo(map);
+
+function validOptimoLocation(location) {
+  return location?.type === "custom" && Number.isFinite(location.latitude) && Number.isFinite(location.longitude) &&
+    Math.abs(location.latitude) <= 90 && Math.abs(location.longitude) <= 180;
+}
+
+function optimoLocationMarker(kind, latlng, draggable = false) {
+  const label = document.createElement("span");
+  label.className = `optimo-location-pin ${kind}`;
+  label.textContent = kind === "start" ? "Start" : "End";
+  return L.marker(latlng, { interactive: draggable, keyboard: draggable, draggable,
+    title: `${kind === "start" ? "Start" : "End"} location${draggable ? " — drag to adjust" : ""}`, zIndexOffset: 1000,
+    icon: L.divIcon({ className: `optimo-location-icon ${kind}`, html: label, iconSize: [64, 56], iconAnchor: [32, 56] }) });
+}
+
+function setOptimoPickPoint(latlng) {
+  const picker = optimoLocationPicker;
+  if (!picker || !latlng) return;
+  const point = L.latLng(latlng).wrap();
+  if (!validOptimoLocation({ type: "custom", latitude: point.lat, longitude: point.lng })) return;
+  if (picker.marker) picker.marker.setLatLng(point);
+  else {
+    picker.marker = optimoLocationMarker(picker.kind, point, true).addTo(map);
+    picker.marker.on("dragend", () => setOptimoPickPoint(picker.marker.getLatLng()));
+  }
+  resequenceElement("optimoLocationPickerHelp").textContent = "Pin placed. Drag it or tap another spot to adjust.";
+  resequenceElement("useOptimoLocation").disabled = false;
+}
+
+function refreshOptimoLocations() {
+  optimoEndpointMarkers.clearLayers();
+  for (const kind of ["start", "end"]) {
+    const location = optimoMapLocations[kind];
+    const mode = resequenceElement(kind === "start" ? "optimoStart" : "optimoEnd").value;
+    resequenceElement(`optimo${kind === "start" ? "Start" : "End"}Point`).textContent = mode === "map"
+      ? validOptimoLocation(location) ? `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}` : "Choose a point on the map before generating."
+      : "";
+    if (mode === "map" && validOptimoLocation(location))
+      optimoLocationMarker(kind, [location.latitude, location.longitude]).addTo(optimoEndpointMarkers);
+  }
+}
+
+function beginOptimoLocationPick(kind) {
+  if (resequenceBusy || deliverySaveInProgress || optimoLocationPicker) return;
+  if (Object.values(drawControl._toolbars).some(toolbar => toolbar.enabled())) {
+    setResequenceStatus("Finish or cancel editing your selection shape before choosing a location.");
+    return;
+  }
+  const center = map.getCenter(), zoom = map.getZoom();
+  resequenceElement("resequenceDialog").close();
+  closeMobileMenu();
+  map.closePopup();
+  resequenceElement("mobileStopPicker").hidden = true;
+  optimoLocationPicker = { kind, center, zoom };
+  map.stop();
+  document.body.classList.add("picking-optimo-location");
+  resequenceElement("optimoLocationPicker").hidden = false;
+  resequenceElement("optimoLocationPicker").dataset.kind = kind;
+  resequenceElement("optimoLocationPickerTitle").textContent = `Choose ${kind} location`;
+  resequenceElement("optimoLocationPickerHelp").textContent = `Tap the map to place your ${kind} pin. Zoom in for accuracy.`;
+  resequenceElement("useOptimoLocation").textContent = `Confirm ${kind}`;
+  resequenceElement("useOptimoLocation").disabled = true;
+  optimoEndpointMarkers.clearLayers();
+  const other = kind === "start" ? "end" : "start", otherPoint = optimoMapLocations[other];
+  if (validOptimoLocation(otherPoint) && resequenceElement(other === "start" ? "optimoStart" : "optimoEnd").value === "map")
+    optimoLocationMarker(other, [otherPoint.latitude, otherPoint.longitude]).addTo(optimoEndpointMarkers);
+  map.invalidateSize({ pan: false });
+  map.setView(center, zoom, { animate: false });
+  const previous = optimoMapLocations[kind];
+  if (validOptimoLocation(previous)) {
+    map.setView([previous.latitude, previous.longitude], zoom, { animate: false });
+    setOptimoPickPoint([previous.latitude, previous.longitude]);
+  }
+  resequenceElement("optimoLocationPickerTitle").focus({ preventScroll: true });
+}
+
+function finishOptimoLocationPick(useLocation, reopen = true) {
+  const picker = optimoLocationPicker;
+  if (!picker) return;
+  if (useLocation) {
+    if (!picker.marker) return;
+    const point = picker.marker.getLatLng().wrap();
+    const location = { type: "custom", latitude: point.lat, longitude: point.lng };
+    if (!validOptimoLocation(location)) return;
+    optimoMapLocations[picker.kind] = location;
+    const select = resequenceElement(picker.kind === "start" ? "optimoStart" : "optimoEnd");
+    select.value = "map";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  if (picker.marker) map.removeLayer(picker.marker);
+  optimoLocationPicker = null;
+  document.body.classList.remove("picking-optimo-location");
+  resequenceElement("optimoLocationPicker").hidden = true;
+  map.invalidateSize({ pan: false });
+  map.setView(picker.center, picker.zoom, { animate: false });
+  refreshOptimoLocations();
+  updateSelectionCount();
+  updateUndoButtonState();
+  if (reopen) {
+    refreshResequenceScope();
+    resequenceElement("resequenceDialog").showModal();
+    resequenceElement(picker.kind === "start" ? "pickOptimoStart" : "pickOptimoEnd").focus({ preventScroll: true });
+  }
+}
+
+resequenceElement("centerOptimoLocation").addEventListener("click", () => setOptimoPickPoint(map.getCenter()));
+resequenceElement("pickOptimoStart").addEventListener("click", () => beginOptimoLocationPick("start"));
+resequenceElement("pickOptimoEnd").addEventListener("click", () => beginOptimoLocationPick("end"));
+resequenceElement("useOptimoLocation").addEventListener("click", () => finishOptimoLocationPick(true));
+resequenceElement("cancelOptimoLocation").addEventListener("click", () => finishOptimoLocationPick(false));
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && optimoLocationPicker) { event.preventDefault(); finishOptimoLocationPick(false); }
+});
 
 function setResequenceStatus(message) { resequenceElement("resequenceStatus").textContent = message; }
 
@@ -2074,6 +2341,11 @@ function setResequenceBusy(busy) {
 }
 
 function resetResequencing() {
+  finishOptimoLocationPick(false, false);
+  optimoMapLocations.start = optimoMapLocations.end = null;
+  resequenceElement("optimoStart").value = "gps";
+  resequenceElement("optimoEnd").value = "depot";
+  refreshOptimoLocations();
   resequenceVersion++;
   optimoRequestController?.abort();
   resequenceJob = null;
@@ -2082,7 +2354,8 @@ function resetResequencing() {
   optimoSequenceGroups.clear();
   optimoRowSequences = new WeakMap();
   resequenceElement("sequenceSource").value = "original";
-  resequenceElement("sequenceSource").options[1].disabled = true;
+  resequenceElement("sequenceRouteSelect").dataset.options = "";
+  resequenceElement("sequenceSource").options[1].disabled = false;
   ["resumeSequenceBtn", "saveSequenceBtn", "resequencePreview"].forEach(id => { resequenceElement(id).hidden = true; });
   resequenceElement("resequenceDialog").close();
   resequenceElement("optimoScope").replaceChildren(new Option("All route/day groups", ""));
@@ -2090,11 +2363,24 @@ function resetResequencing() {
   setResequenceStatus("");
 }
 
+function selectedVisibleSequenceRows(inView = true) {
+  const selected = new Set(), tester = createSelectionTester(), bounds = map.getBounds();
+  Object.values(routeDayGroups).forEach(group => group.layers.forEach(marker => {
+    const row = marker._rowRef;
+    if (!row || isDeliveredRow(row) || !isStopSelected(marker, tester)) return;
+    const base = marker._base;
+    const location = base ? L.latLng(base.lat, base.lon) : getLayerLatLng(marker);
+    if (location && (!inView || bounds.contains(location))) selected.add(row);
+  }));
+  return selected;
+}
+
 function remainingSequenceGroups(rows, scope = "", validate = true) {
   const groups = new Map();
+  const selected = ["selected", "selectedAll"].includes(scope) ? selectedVisibleSequenceRows(scope === "selected") : null;
   rows.forEach((row, index) => {
     if (isDeliveredRow(row)) return;
-    if (scope && sequenceGroupKey(row) !== scope) return;
+    if (selected ? !selected.has(row) : scope && sequenceGroupKey(row) !== scope) return;
     const route = String(rowRoute(row) ?? "").trim(), day = String(rowDay(row) ?? "").trim();
     const lat = Number(row.LATITUDE), lng = Number(row.LONGITUDE);
     if (validate && (!route || !Number.isInteger(Number(day)) || Number(day) < 1 || Number(day) > 7))
@@ -2111,25 +2397,27 @@ function remainingSequenceGroups(rows, scope = "", validate = true) {
 
 async function phoneSequenceStorageKey(rows) {
   // Delivery saves/undo must not invalidate the phone's order.
-  const identity = rows.map(row => Object.keys(row).filter(key => key !== "del_status").sort().map(key => [key, row[key]]));
+  const identity = rows.map(row => Object.keys(row).filter(key => !["del_status", "del_qty"].includes(key)).sort().map(key => [key, row[key]]));
   const bytes = new TextEncoder().encode(JSON.stringify([window._currentFilePath || "", identity]));
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return "cartdelivery.optimo.sequence." + [...new Uint8Array(digest)].map(n => n.toString(16).padStart(2, "0")).join("");
 }
 
 function applyPhoneSequence(rows, saved) {
-  if (saved?.version !== 1 || !Array.isArray(saved.groups) || !saved.groups.length) throw new Error("Invalid saved sequence.");
+  if (saved?.version !== 2 || !Array.isArray(saved.groups)) throw new Error("Regenerate this sequence to load currently scheduled OptimoRoute records.");
   const groups = new Map(), seen = new Set(), order = new WeakMap();
   saved.groups.forEach(group => {
     const key = JSON.stringify([group.route, group.day]);
-    if (!Array.isArray(group.indices) || !group.indices.length || groups.has(key)) throw new Error("Invalid saved sequence.");
+    if (!Array.isArray(group.indices) || !Array.isArray(group.sequences) || group.sequences.length !== group.indices.length || groups.has(key)) throw new Error("Invalid saved sequence.");
     const stops = group.indices.map((index, i) => {
       if (!Number.isInteger(index) || !rows[index] || seen.has(index) || sequenceGroupKey(rows[index]) !== key)
         throw new Error("The saved sequence does not match this file.");
       seen.add(index);
       const row = rows[index];
-      order.set(row, i + 1);
-      return { row, seq: i + 1, index, latlng: L.latLng(Number(row.LATITUDE), Number(row.LONGITUDE)) };
+      const seq = group.sequences[i];
+      if (!Number.isInteger(seq) || seq < 1 || (i && seq <= group.sequences[i - 1])) throw new Error("Invalid saved stop order.");
+      order.set(row, seq);
+      return { row, seq, index, latlng: L.latLng(Number(row.LATITUDE), Number(row.LONGITUDE)) };
     });
     groups.set(key, { route: group.route, day: group.day, driver: group.driver, stops });
   });
@@ -2161,15 +2449,21 @@ async function restorePhoneSequence(rows) {
     phoneSequenceKey = key;
     phoneSequenceRows = rows;
     const saved = localStorage.getItem(key);
-    if (saved) applyPhoneSequence(rows, JSON.parse(saved));
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      applyPhoneSequence(rows, parsed.version === 2 ? parsed : { version: 2, groups: [] });
+      if (parsed.version !== 2) setResequenceStatus("Previous joined sequence hidden. Generate again to load currently scheduled OptimoRoute records.");
+    }
   } catch {
     if (version === resequenceVersion) setResequenceStatus("This browser could not restore its saved sequence. You can generate another.");
   }
 }
 
 function optimoSequenceCoverage() {
-  const missing = (window._currentRows || []).filter(row => !isDeliveredRow(row) && !optimoRowSequences.has(row)).length;
-  return missing ? `${missing} pending records have no new sequence; regenerate to include them.` : "All remaining records have a sequence.";
+  const scope = resequenceElement("sequenceRouteSelect").value;
+  const missing = (window._currentRows || []).filter(row => !isDeliveredRow(row) &&
+    (scope === "all" || sequenceGroupKey(row) === scope) && !optimoRowSequences.has(row)).length;
+  return missing ? `${missing} pending records have no Optimo sequence number or arrows.` : "All remaining records have an Optimo sequence.";
 }
 
 function validOptimoDate(date) {
@@ -2182,12 +2476,21 @@ function refreshResequenceScope() {
   const scope = resequenceElement("optimoScope").value;
   const rows = window._currentRows || [];
   const pending = rows.filter(row => !isDeliveredRow(row));
-  const selected = pending.filter(row => !scope || sequenceGroupKey(row) === scope).length;
-  resequenceElement("resequenceSummary").textContent = `${selected.toLocaleString()} undelivered records selected · ${pending.length.toLocaleString()} remaining in ${window._currentFilePath || "this file"}.`;
+  const groups = resequenceJob?.scope === scope ? resequenceJob.groups : remainingSequenceGroups(rows, scope, false);
+  const selected = groups.reduce((sum, group) => sum + group.indices.length, 0);
+  const activeGroups = new Map(groups.map(group => [group.key, group]));
+  resequenceElement("resequenceSummary").textContent = `${selected.toLocaleString()} undelivered records selected${scope === "selected" ? " from the visible map selection" : scope === "selectedAll" ? " from your map selection" : ""} · ${pending.length.toLocaleString()} remaining in ${window._currentFilePath || "this file"}.`;
+  resequenceElement("optimoScopeHelp").textContent = scope === "selected"
+    ? "Only selected, undelivered stops in the current map view are included. Hidden layers and off-screen stops are excluded. The selection is captured when you press Generate. All other records will have no Optimo number or arrow."
+    : scope === "selectedAll" ? "Only selected, undelivered stops on visible layers are included, even if off-screen. Unselected stops will have no Optimo number or arrow."
+    : "Includes all undelivered records in the chosen route/day groups, including hidden and off-screen stops.";
   resequenceElement("optimoDrivers").querySelectorAll("input").forEach(input => {
-    input.hidden = Boolean(scope && input.dataset.group !== scope);
+    const group = activeGroups.get(input.dataset.group);
+    input.hidden = !group;
     input.disabled = input.hidden;
-    document.querySelector(`label[for="${input.id}"]`).hidden = input.hidden;
+    const label = document.querySelector(`label[for="${input.id}"]`);
+    label.hidden = input.hidden;
+    if (group) label.textContent = `${group.route} · ${dayName(Number(group.day))}: driver external ID (${group.indices.length} records)`;
   });
   const date = resequenceElement("optimoDate").value;
   resequenceElement("optimoClearDateNotice").textContent = validOptimoDate(date)
@@ -2199,7 +2502,9 @@ function openResequencing() {
   const rows = window._currentRows;
   if (!rows?.length || !Object.keys(routeDayGroups).length) { alert("Open a route file first."); return; }
   const pending = rows.filter(row => !isDeliveredRow(row)).length;
-  if (!resequenceBusy && resequenceJob && resequenceJob.pending !== rows.map(row => isDeliveredRow(row) ? "1" : "0").join("")) {
+  const changedSelection = ["selected", "selectedAll"].includes(resequenceJob?.scope) &&
+    JSON.stringify(remainingSequenceGroups(rows, resequenceJob.scope, false).map(group => group.indices)) !== JSON.stringify(resequenceJob.groups.map(group => group.indices));
+  if (!resequenceBusy && resequenceJob && (changedSelection || resequenceJob.pending !== rows.map(row => isDeliveredRow(row) ? "1" : "0").join(""))) {
     resequenceJob = null;
     ["saveSequenceBtn", "resumeSequenceBtn", "resequencePreview"].forEach(id => { resequenceElement(id).hidden = true; });
   }
@@ -2212,7 +2517,7 @@ function openResequencing() {
     const previousDrivers = new Map([...drivers.querySelectorAll("input")].map(input => [input.dataset.group, input.value]));
     drivers.replaceChildren();
     const scope = resequenceElement("optimoScope"), previousScope = scope.value;
-    scope.replaceChildren(new Option("All route/day groups", ""));
+    scope.replaceChildren(new Option("All route/day groups", ""), new Option("Selected stops", "selectedAll"), new Option("Selected visible stops", "selected"));
     try {
       remainingSequenceGroups(rows, "", false).forEach((group, i) => {
         scope.add(new Option(`${group.route || "Missing route"} · ${dayName(Number(group.day)) || "Invalid day"} (${group.indices.length} undelivered)`, group.key));
@@ -2231,6 +2536,7 @@ function openResequencing() {
     } catch (error) { setResequenceStatus(error.message); }
   }
   refreshResequenceScope();
+  refreshOptimoLocations();
   resequenceElement("resequenceDialog").showModal();
 }
 
@@ -2262,7 +2568,7 @@ async function optimoRequest(job, endpoint, body, params = {}) {
     if (data.success !== true) {
       if (data.code === "ERR_OPT_REQUESTS_EXCEEDED") {
         const count = body?.useOrderObjects?.length || job.groups.reduce((total, group) => total + group.indices.length, 0);
-        throw new Error(`OptimoRoute rejected planning ${count.toLocaleString()} orders because its planning order limit was exceeded (ERR_OPT_REQUESTS_EXCEEDED). Uploading in batches of 500 does not change that limit. Use smaller planning sections or ask OptimoRoute to raise your account's limit. Previous sequence kept.`);
+        throw new Error(`OptimoRoute rejected planning ${count.toLocaleString()} orders because its planning order limit was exceeded (ERR_OPT_REQUESTS_EXCEEDED). Uploading in batches of 500 does not change that limit. Ask OptimoRoute to raise your account's limit to plan all selected records together. Smaller sections leave only the last section scheduled per driver. No sequence displayed.`);
       }
       const code = /^ERR_[A-Z0-9_]+$/.test(data.code || "") ? ` (${data.code})` : "";
       throw new Error(`OptimoRoute could not complete ${endpoint.replaceAll("_", " ")}${code}. Check your key, account limits, and driver setup.`);
@@ -2330,7 +2636,8 @@ async function startOptimoSection(job) {
   const label = `section ${job.completedSections + 1} of ${job.sectionCount}`;
   const updates = groups.map(group => ({ driver: { externalId: group.driver }, date: job.date, enabled: true,
     workTime: { from: "00:00", to: "23:59" },
-    startLocation: job.ends.get(group.driver) || job.startLocation || { type: "employeeDefault" } }));
+    startLocation: job.ends.get(group.driver) || job.startLocation || { type: "employeeDefault" },
+    endLocation: job.endLocation }));
   setResequenceStatus(`Setting all-day hours and start locations · ${label}…`);
   const result = await optimoRequest(job, "update_drivers_parameters", { updates });
   if (!Array.isArray(result.updates) || result.updates.length !== groups.length || result.updates.some(update => update.success !== true))
@@ -2343,7 +2650,7 @@ async function startOptimoSection(job) {
     const response = await optimoRequest(job, "create_or_update_orders", { orders: batch });
     const accepted = new Map((response.orders || []).map(order => [order.orderNo, order]));
     if (accepted.size !== batch.length || batch.some(order => accepted.get(order.orderNo)?.success !== true))
-      throw new Error("Some records were rejected by OptimoRoute. Planning was not started for this section. Check driver setup and account limits. Previous sequence kept.");
+      throw new Error("Some records were rejected by OptimoRoute. Planning was not started for this section. Check driver setup and account limits. No sequence displayed.");
   }
   setResequenceStatus(`Starting OptimoRoute planning · ${label}…`);
   const planning = await optimoRequest(job, "start_planning", { date: job.date, balancing: "OFF", startWith: "EMPTY", depotTrips: false,
@@ -2360,22 +2667,20 @@ function matchOptimoSequence(job, routes) {
   const groups = job.groups.map(group => {
     const expected = new Map(group.indices.map(index => [`${job.run}-${index}`, index]));
     const matches = routes.filter(route => route.driverExternalId === group.driver);
-    if (matches.length !== 1) throw new Error(`Expected one complete route for ${group.route} / day ${group.day}; received ${matches.length}. Previous sequence kept.`);
-    if (!Array.isArray(matches[0].stops)) throw new Error("OptimoRoute returned an invalid stop list.");
+    if (matches.length > 1) throw new Error(`Expected at most one route for ${group.route} / day ${group.day}; received ${matches.length}. No sequence displayed.`);
+    if (matches.length && !Array.isArray(matches[0].stops)) throw new Error("OptimoRoute returned an invalid stop list.");
     const sequenceNumbers = new Set();
-    const indices = matches[0].stops.filter(stop => !["break", "depot"].includes(stop.type)).slice().sort((a, b) => a.stopNumber - b.stopNumber).map(stop => {
+    const indices = (matches[0]?.stops || []).filter(stop => !["break", "depot"].includes(stop.type)).slice().sort((a, b) => a.stopNumber - b.stopNumber).map(stop => {
       const index = expected.get(stop.orderNo);
       if (index === undefined || seen.has(index) || !Number.isInteger(stop.stopNumber) || stop.stopNumber < 1 || sequenceNumbers.has(stop.stopNumber))
-        throw new Error("OptimoRoute returned duplicate, unexpected, or invalid stops. Previous sequence kept.");
+        throw new Error("OptimoRoute returned duplicate, unexpected, or invalid stops. No sequence displayed.");
       seen.add(index);
       sequenceNumbers.add(stop.stopNumber);
       return index;
     });
-    if (indices.length !== expected.size)
-      throw new Error(`${group.route} / day ${group.day}: ${expected.size - indices.length} records were not scheduled despite all-day hours and zero service time. Check travel time, driver breaks/distance/end settings, and account limits in OptimoRoute. Previous sequence kept.`);
-    return { route: group.route, day: group.day, driver: group.driver, indices };
+    return { route: group.route, day: group.day, driver: group.driver, indices, sequences: [...sequenceNumbers] };
   });
-  return { version: 1, date: job.date, createdAt: new Date().toISOString(), groups };
+  return { version: 2, date: job.date, createdAt: new Date().toISOString(), groups };
 }
 
 async function readOptimoPlanning(job) {
@@ -2391,18 +2696,23 @@ async function readOptimoPlanning(job) {
     job.completedSections++;
     resequenceElement("resumeSequenceBtn").hidden = true;
   }
-  // Recheck complete coverage across all sections before offering any saved replacement.
-  const routes = job.groups.map(group => ({ driverExternalId: group.driver,
-    stops: job.completed.get(group.driver).map((index, i) => ({ orderNo: `${job.run}-${index}`, stopNumber: i + 1 })) }));
+  // Earlier sections may now be unscheduled. Only the final server routes are authoritative.
+  const routes = [];
+  for (const group of job.groups) {
+    const response = await optimoRequest(job, "get_routes", null, { date: job.date, driverExternalId: group.driver });
+    if (!Array.isArray(response.routes)) throw new Error("OptimoRoute returned no route list. No sequence displayed.");
+    routes.push(...response.routes);
+  }
   job.result = { ...matchOptimoSequence(job, routes), sectionCount: job.sectionCount };
   const list = resequenceElement("resequencePreviewList");
   list.replaceChildren();
   job.result.groups.forEach(group => {
     const item = document.createElement("li"), sample = document.createElement("p");
-    item.textContent = `${group.route} · ${dayName(Number(group.day))}: ${group.indices.length} records`;
+    const requested = job.groups.find(input => input.driver === group.driver).indices.length;
+    item.textContent = `${group.route} · ${dayName(Number(group.day))}: ${group.indices.length} scheduled / ${requested} selected · ${requested - group.indices.length} unscheduled`;
     sample.textContent = group.indices.slice(0, 3).map((index, i) => {
       const row = job.rows[index];
-      return `${i + 1}. ${[row["CSADR#"], row.CSSDIR, row.CSSTRT, row.CSSFUX].filter(Boolean).join(" ") || `Row ${index + 2}`} (Bin ${row.BINNO ?? "—"})`;
+      return `${group.sequences[i]}. ${[row["CSADR#"], row.CSSDIR, row.CSSTRT, row.CSSFUX].filter(Boolean).join(" ") || `Row ${index + 2}`} (Bin ${row.BINNO ?? "—"})`;
     }).join(" → ");
     item.append(sample);
     list.append(item);
@@ -2410,7 +2720,9 @@ async function readOptimoPlanning(job) {
   resequenceElement("resequencePreviewMore").textContent = "First three records shown for each route/day. The full order will appear in sequence arrows and stop details.";
   resequenceElement("resequencePreview").hidden = false;
   resequenceElement("saveSequenceBtn").hidden = false;
-  setResequenceStatus(`Complete: every selected undelivered record appears exactly once in its own route/day. ${job.sectionSize ? `Joined ${job.sectionCount} OptimoRoute sections; each section was optimized separately. ` : ""}Ready to use on this phone.`);
+  const selected = job.groups.reduce((sum, group) => sum + group.indices.length, 0);
+  const scheduled = job.result.groups.reduce((sum, group) => sum + group.indices.length, 0);
+  setResequenceStatus(`${scheduled === selected ? "Complete" : "Partial plan"}: ${scheduled.toLocaleString()} scheduled / ${selected.toLocaleString()} selected · ${(selected - scheduled).toLocaleString()} unscheduled. Only scheduled records will have sequence numbers and arrows. Snapshot read from OptimoRoute for ${job.date}.${job.sectionSize ? " Earlier sections replaced by later plans are excluded." : ""}`);
 }
 
 async function readOptimoSection(job) {
@@ -2425,17 +2737,16 @@ async function readOptimoSection(job) {
       }
       const result = matchOptimoSequence({ ...job, groups: job.section.groups }, routes);
       result.groups.forEach(group => {
-        job.completed.get(group.driver).push(...group.indices);
         const last = job.rows[group.indices[group.indices.length - 1]];
-        job.ends.set(group.driver, { type: "custom", latitude: Number(last.LATITUDE), longitude: Number(last.LONGITUDE) });
+        if (last) job.ends.set(group.driver, { type: "custom", latitude: Number(last.LATITUDE), longitude: Number(last.LONGITUDE) });
       });
       return true;
     }
-    if (!["N", "R"].includes(progress.status)) throw new Error("OptimoRoute planning stopped or failed. Previous sequence kept.");
+    if (!["N", "R"].includes(progress.status)) throw new Error("OptimoRoute planning stopped or failed. No sequence displayed.");
     setResequenceStatus(`OptimoRoute is planning section ${job.completedSections + 1} of ${job.sectionCount}${Number.isFinite(progress.percentageComplete) ? ` · ${progress.percentageComplete}%` : ""}. Keep this page open until all sections finish.`);
     await new Promise(resolve => setTimeout(resolve, 2000));
   }
-  setResequenceStatus(`Section ${job.completedSections + 1} of ${job.sectionCount} is still running. Tap Check planning result to continue; your current sequence is unchanged.`);
+  setResequenceStatus(`Section ${job.completedSections + 1} of ${job.sectionCount} is still running. Tap Check planning result to continue. Optimo numbers and arrows stay hidden until a result is saved.`);
   return false;
 }
 
@@ -2446,12 +2757,18 @@ async function generateOptimoSequence() {
   try {
     const scope = resequenceElement("optimoScope").value;
     const rows = window._currentRows, groups = remainingSequenceGroups(rows || [], scope);
-    if (!groups.length) throw new Error("No undelivered records to resequence.");
+    if (!groups.length) throw new Error(["selected", "selectedAll"].includes(scope)
+      ? "No selected, visible undelivered stops. Close this dialog, select stops on the map, and try again. No OptimoRoute orders were deleted."
+      : "No undelivered records to resequence.");
     const apiKey = resequenceElement("optimoKey").value.trim(), date = resequenceElement("optimoDate").value;
     if (!apiKey) throw new Error("Enter your OptimoRoute API key on this phone.");
     if (!validOptimoDate(date)) throw new Error("Choose a valid planning date. No OptimoRoute orders were deleted.");
     const sectionSize = Number(resequenceElement("optimoSectionSize").value);
     if (![0, 100, 500].includes(sectionSize)) throw new Error("Choose a planning size.");
+    const startMode = resequenceElement("optimoStart").value, endMode = resequenceElement("optimoEnd").value;
+    if (startMode === "map" && !validOptimoLocation(optimoMapLocations.start)) throw new Error("Choose a start location on the map. No OptimoRoute orders were deleted.");
+    if (endMode === "map" && !validOptimoLocation(optimoMapLocations.end)) throw new Error("Choose an end location on the map. No OptimoRoute orders were deleted.");
+    const endLocation = endMode === "map" ? { ...optimoMapLocations.end } : { type: endMode === "start" ? "startLocation" : "employeeDefault" };
     const inputs = [...resequenceElement("optimoDrivers").querySelectorAll("input")];
     groups.forEach(group => { group.driver = inputs.find(input => input.dataset.group === group.key)?.value.trim(); });
     if (groups.some(group => !group.driver) || new Set(groups.map(group => group.driver)).size !== groups.length)
@@ -2465,13 +2782,14 @@ async function generateOptimoSequence() {
     const storageKey = phoneSequenceRows === rows && phoneSequenceKey ? phoneSequenceKey : await phoneSequenceStorageKey(rows);
     if (version !== resequenceVersion) return;
     const sections = optimoPlanningSections(rows, groups, sectionSize);
-    const job = { version, rows, filePath: window._currentFilePath, storageKey, groups, apiKey, date, scope, sectionSize, sections,
-      sectionCount: sections.length, completedSections: 0, completed: new Map(groups.map(group => [group.driver, []])), ends: new Map(),
+    const job = { version, rows, filePath: window._currentFilePath, storageKey, groups, apiKey, date, scope, sectionSize, sections, endLocation,
+      sectionCount: sections.length, completedSections: 0, ends: new Map(),
       run: `CD-${crypto.randomUUID()}`, pending: rows.map(row => isDeliveredRow(row) ? "1" : "0").join("") };
     resequenceJob = job;
+    refreshResequenceScope();
     ["saveSequenceBtn", "resumeSequenceBtn", "resequencePreview"].forEach(id => { resequenceElement(id).hidden = true; });
-    let startLocation;
-    if (resequenceElement("optimoStart").value === "gps") {
+    let startLocation = startMode === "map" ? { ...optimoMapLocations.start } : undefined;
+    if (startMode === "gps") {
       setResequenceStatus("Getting your current GPS location…");
       if (!navigator.geolocation) throw new Error("GPS is unavailable. Enable location access or choose the driver's configured start.");
       const position = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve,
@@ -2481,6 +2799,10 @@ async function generateOptimoSequence() {
       startLocation = { type: "custom", latitude: position.coords.latitude, longitude: position.coords.longitude };
     }
     job.startLocation = startLocation;
+    // Date clearing invalidates every previous group, even when planning only one group.
+    const empty = { version: 2, date, createdAt: new Date().toISOString(), groups: [] };
+    localStorage.setItem(storageKey, JSON.stringify(empty));
+    applyPhoneSequence(rows, empty);
     setResequenceStatus(`Clearing all OptimoRoute orders and planned routes on ${date}…`);
     try {
       await optimoRequest(job, "delete_all_orders", { date });
@@ -2511,6 +2833,7 @@ resequenceElement("generateSequenceBtn").addEventListener("click", generateOptim
 resequenceElement("resequenceSettings").addEventListener("change", event => {
   if (["optimoKey", "rememberOptimoKey"].includes(event.target.id) || resequenceBusy) return;
   resequenceJob = null;
+  refreshOptimoLocations();
   refreshResequenceScope();
   ["saveSequenceBtn", "resumeSequenceBtn", "resequencePreview"].forEach(id => { resequenceElement(id).hidden = true; });
   setResequenceStatus("Settings changed. Generate a new plan to use these settings.");
@@ -2535,11 +2858,6 @@ resequenceElement("saveSequenceBtn").addEventListener("click", () => {
   try {
     assertResequenceCurrent(resequenceJob);
     const result = { ...resequenceJob.result };
-    if (resequenceJob.scope) {
-      const kept = [...optimoSequenceGroups.entries()].filter(([key]) => key !== resequenceJob.scope)
-        .map(([, group]) => ({ route: group.route, day: group.day, driver: group.driver, indices: group.stops.map(stop => stop.index) }));
-      result.groups = [...kept, ...result.groups];
-    }
     localStorage.setItem(resequenceJob.storageKey, JSON.stringify(result));
     applyPhoneSequence(resequenceJob.rows, result);
     resequenceElement("saveSequenceBtn").hidden = true;
@@ -2588,9 +2906,7 @@ function processExcelBuffer(buffer) {
 
     let key;
 
-const status = String(row.del_status || "")
-  .trim()
-  .toLowerCase();
+const status = isDeliveredRow(row) ? "delivered" : "";
 
 if (status === "delivered") {
   key = `${route}|Delivered`;
@@ -2620,6 +2936,7 @@ const popupContent = () => `
 
     <div><strong>Container Size:</strong> ${row["SIZE"] || "-"}</div>
     <div><strong>Quantity:</strong> ${row["QTY"] || "-"}</div>
+    <div class="cart-progress"><strong>${cartProgressText(row)}</strong></div>
     ${rowSequence(row) !== null ? `<div><strong>Sequence:</strong> ${rowSequence(row)}</div>` : ""}
     <div><strong>Bin #:</strong> ${row["BINNO"] || "-"}</div>
   </div>
@@ -2650,6 +2967,7 @@ if (labelText) {
     marker._rowRef = row;
     attachQuantityBadge(marker, row);
     marker.on("click", event => {
+      if (optimoLocationPicker) { setOptimoPickPoint(event.latlng || marker.getLatLng()); return; }
       if (mobileStopSelectionMode && window.innerWidth <= 900) {
         L.DomEvent.stop(event.originalEvent || event);
         map.closePopup();
@@ -3314,16 +3632,18 @@ function placeDeliveryControls() {
   const saveStatus = document.getElementById("deliverySaveStatus");
   const copyLocationBtn = document.getElementById("copyLocationBtn");
   const loadLogBtn = document.getElementById("loadLogBtn");
+  const recordCartsBtn = document.getElementById("recordCartsBtn");
 
   if (window.innerWidth <= 900) {
     quickActions.insertBefore(locateBtn, moreBtn);
     quickActions.insertBefore(copyLocationBtn, moreBtn);
     moreActions.append(clearBtn, undoBtn, streetLabel, refreshBtn);
     moreActions.prepend(loadLogBtn);
+    dock.querySelector(".delivery-controls-main").append(recordCartsBtn);
     dock.insertBefore(saveStatus, quickActions);
   } else {
     selectionBox.insertBefore(clearBtn, desktopContainer);
-    desktopContainer.append(locateBtn, copyLocationBtn, completeBtn, saveStatus, undoBtn, streetLabel, loadLogBtn);
+    desktopContainer.append(locateBtn, copyLocationBtn, recordCartsBtn, completeBtn, saveStatus, undoBtn, streetLabel, loadLogBtn);
     headerContainer.appendChild(refreshBtn);
   }
   updateDeliveryButtons();
@@ -3343,7 +3663,7 @@ function updateUndoButtonState() {
     : [...individuallySelectedMarkers];
   const hasDeliveredInSelection = candidates.some(marker =>
     marker._rowRef &&
-    String(marker._rowRef.del_status || "").trim().toLowerCase() === "delivered" &&
+    isDeliveredRow(marker._rowRef) &&
     isStopSelected(marker, selectionTester)
   );
 
@@ -3362,8 +3682,86 @@ function updateUndoButtonState() {
 
 
 
+function setupPocketLock() {
+  const dialog = document.getElementById("pocketLock");
+  const button = document.getElementById("pocketUnlockBtn");
+  const status = document.getElementById("pocketLockStatus");
+  let hold = null;
+  let timer = null;
+
+  function cancelHold() {
+    clearTimeout(timer);
+    hold = null;
+    button.classList.remove("holding");
+    status.textContent = "";
+  }
+
+  function startHold(input, x, y) {
+    cancelHold();
+    hold = { input, x, y, started: performance.now() };
+    button.classList.add("holding");
+    timer = setTimeout(() => { status.textContent = "Release to unlock"; }, 2000);
+  }
+
+  function finishHold(input) {
+    const ready = hold && hold.input === input && performance.now() - hold.started >= 2000;
+    cancelHold();
+    if (!ready) return;
+    // Keep the modal through the release's click so it cannot hit the map underneath.
+    setTimeout(() => {
+      dialog.close();
+      document.body.classList.remove("pocket-locked");
+    }, 0);
+  }
+
+  document.getElementById("lockScreenBtn").addEventListener("click", () => {
+    cancelHold();
+    document.body.classList.add("pocket-locked");
+    dialog.showModal();
+    button.focus({ preventScroll: true });
+  });
+  dialog.addEventListener("cancel", event => event.preventDefault());
+  dialog.addEventListener("contextmenu", event => event.preventDefault());
+  dialog.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); });
+  dialog.addEventListener("pointerdown", event => {
+    if (hold || !event.isPrimary) { cancelHold(); return; }
+    if (event.target !== button || event.button !== 0) return;
+    event.preventDefault();
+    button.setPointerCapture(event.pointerId);
+    startHold(event.pointerId, event.clientX, event.clientY);
+  });
+  button.addEventListener("pointermove", event => {
+    if (hold && hold.input === event.pointerId && Math.hypot(event.clientX - hold.x, event.clientY - hold.y) > 18) cancelHold();
+  });
+  button.addEventListener("pointerup", event => {
+    event.preventDefault();
+    finishHold(event.pointerId);
+  });
+  button.addEventListener("pointercancel", cancelHold);
+  button.addEventListener("lostpointercapture", cancelHold);
+  // Capture keyboard input before app shortcuts; Escape must not dismiss the lock.
+  for (const type of ["keydown", "keyup"]) {
+    window.addEventListener(type, event => {
+      if (!dialog.open) return;
+      event.stopImmediatePropagation();
+      if (event.key === "Tab") { cancelHold(); return; }
+      event.preventDefault();
+      if (event.target !== button || ![" ", "Enter"].includes(event.key)) { cancelHold(); return; }
+      if (type === "keyup") finishHold(event.key);
+      else if (!event.repeat) startHold(event.key);
+    }, true);
+  }
+  button.addEventListener("blur", cancelHold);
+  window.addEventListener("blur", cancelHold);
+  window.addEventListener("pagehide", cancelHold);
+  window.addEventListener("resize", cancelHold);
+  document.addEventListener("visibilitychange", cancelHold);
+}
+
 function initApp() { //begining of initApp=================================================================
 
+setupPocketLock();
+const openCartCounts = setupCartCounts();
 setupLocationCopy();
 setupLoadLog();
 
@@ -3967,9 +4365,9 @@ function searchStopPopup(row) {
   const address = document.createElement("strong");
   address.textContent = formatStopAddress(row);
   popup.append(address);
-  const delivered = String(row.del_status || "").trim().toLowerCase() === "delivered";
+  const delivered = isDeliveredRow(row);
   const details = [`Route ${rowRoute(row)} · ${dayName(Number(rowDay(row))) || `Day ${rowDay(row)}`}`,
-    delivered ? "Delivered" : "Pending", `Quantity: ${row.QTY ?? "—"}`, `Container size: ${row.SIZE ?? "—"}`];
+    delivered ? "Delivered" : "Pending", cartProgressText(row), `Quantity: ${row.QTY ?? "—"}`, `Container size: ${row.SIZE ?? "—"}`];
   const sequence = rowSequence(row);
   if (sequence !== null) details.push(`Sequence: ${sequence}`);
   if (row.BINNO != null && String(row.BINNO).trim()) details.push(`Bin: ${row.BINNO}`);
@@ -4010,7 +4408,7 @@ function renderAddressSearch() {
   Object.values(routeDayGroups).forEach(group => group.layers.forEach(marker => {
     stopCount++;
     const row = marker._rowRef;
-    const delivered = String(row.del_status || "").trim().toLowerCase() === "delivered";
+    const delivered = isDeliveredRow(row);
     if ((searchDeliveryFilter === "pending" && delivered) || (searchDeliveryFilter === "delivered" && !delivered) ||
       (searchMultipleCarts && multiCartQuantity(row) === null) ||
       (searchRouteFilter.value && String(rowRoute(row) ?? "").trim() !== searchRouteFilter.value) ||
@@ -4035,10 +4433,10 @@ function renderAddressSearch() {
   let remainingCarts = 0, missingQuantities = 0;
   matches.forEach(({ marker }) => {
     const row = marker._rowRef;
-    if (String(row.del_status || "").trim().toLowerCase() === "delivered") return;
+    if (isDeliveredRow(row)) return;
     const quantity = searchCartQuantity(row);
     if (quantity === null) missingQuantities++;
-    else remainingCarts += quantity;
+    else remainingCarts += Math.max(0, quantity - (deliveredCartCount(row) || 0));
   });
   searchTotals.textContent = stopCount ? `${matches.length} ${matches.length === 1 ? "stop" : "stops"} · ${cartNumberFormat.format(remainingCarts)}${missingQuantities ? " known" : ""} ${remainingCarts === 1 ? "cart" : "carts"} remaining${missingQuantities ? ` · ${missingQuantities} ${missingQuantities === 1 ? "stop missing" : "stops missing"} QTY` : ""}` : "";
   matches.slice(0, searchLimit).forEach(({ marker, address }) => {
@@ -4057,10 +4455,13 @@ function renderAddressSearch() {
     detail.textContent = `Route ${rowRoute(row)} · ${dayName(Number(rowDay(row))) || `Day ${rowDay(row)}`}${sequence !== null ? ` · Seq ${sequence}` : ""}${row.BINNO != null && String(row.BINNO).trim() ? ` · Bin ${row.BINNO}` : ""}`;
     const state = document.createElement("span");
     state.className = "search-result-state";
-    const delivered = String(row.del_status || "").trim().toLowerCase() === "delivered";
+    const delivered = isDeliveredRow(row);
     state.dataset.delivered = String(delivered);
     state.textContent = `${delivered ? "✓ Delivered" : "Pending"}${row.QTY != null && String(row.QTY).trim() ? ` · ${row.QTY} ${Number(row.QTY) === 1 ? "cart" : "carts"}` : ""}${map.hasLayer(marker) ? "" : " · Hidden layer"}`;
-    button.append(title, detail, state);
+    const progress = document.createElement("span");
+    progress.className = "search-result-detail";
+    progress.textContent = cartProgressText(row);
+    button.append(title, detail, state, progress);
     button.addEventListener("click", () => showSearchStop(marker));
     resultsList.append(button);
   });
@@ -4187,7 +4588,144 @@ async function saveWorkbookToCloud(rows, workbook, filePath, onProgress = () => 
   return nextWorkbook;
 }
 
-// Marks selected stops Delivered (markDelivered=true) or restores them (false).
+function selectedDeliveryStops() {
+  const tester = createSelectionTester();
+  const selected = [];
+  Object.entries(routeDayGroups).forEach(([key, group]) => {
+    group.layers.forEach(marker => {
+      if (marker._rowRef && isStopSelected(marker, tester)) selected.push({ key, marker, row: marker._rowRef });
+    });
+  });
+  return selected;
+}
+
+function setupCartCounts() {
+  const el = id => document.getElementById(id);
+  const dialog = el("cartCountsDialog");
+  let snapshot = null;
+  let saving = false;
+
+  el("multipleCartsOnly").addEventListener("change", () => {
+    applyFilters();
+    map.closePopup();
+    el("mobileStopPicker").hidden = true;
+  });
+
+  function preview() {
+    if (!snapshot) return null;
+    const operation = el("cartCountOperation").value;
+    const perRecord = operation === "each";
+    const adding = operation !== "set";
+    const changes = new Map();
+    let error = "";
+    const list = el("cartCountPreview");
+    list.replaceChildren();
+    snapshot.selected.forEach(({ row }, index) => {
+      const entry = snapshot.entries[index];
+      const amount = (perRecord ? entry.input : el("cartCountAmount")).value.trim();
+      const value = Number(amount);
+      const valid = amount !== "" && Number.isSafeInteger(value) && value >= (adding && !perRecord ? 1 : 0);
+      if (!valid) error ||= perRecord ? "Enter a whole-number quantity for every record. Use 0 for a stop with no carts delivered this visit."
+        : adding ? "Enter a whole number of at least 1." : "Enter a whole number of 0 or more.";
+      const total = cartTotal(row);
+      const current = deliveredCartCount(row);
+      const next = adding ? current + value : value;
+      if (total === null) error ||= "Every selected stop needs a positive whole-number QTY. Deselect stops with missing or invalid quantities.";
+      else if (next > total) error ||= "This would exceed QTY at one or more stops. Lower the count or change the selection; no stops will be saved.";
+      if (!perRecord || value > 0) changes.set(row, { del_qty: next, del_status: next === total ? "Delivered" : "" });
+      entry.progress.textContent = total === null ? "Invalid QTY" : valid ? `After saving: ${next} of ${total} delivered · ${Math.max(0, total - next)} remaining` : `${current} of ${total} delivered · ${total - current} remaining`;
+      entry.input.setAttribute("aria-invalid", String(!valid || total === null || next > total));
+      if (index >= 50) return;
+      const item = document.createElement("li");
+      item.textContent = `${formatStopAddress(row)} · Bin ${String(row.BINNO ?? "—")} · ${total === null ? "Invalid QTY" : `${current} → ${Number.isSafeInteger(next) ? next : "?"} of ${total} delivered`}`;
+      list.append(item);
+    });
+    if (!error && !changes.size) error = "Enter at least one delivered cart to save. Use Close to cancel.";
+    el("cartCountSummary").textContent = `${snapshot.selected.length} selected ${snapshot.selected.length === 1 ? "stop" : "stops"}. ${perRecord ? "Enter carts delivered this visit for each record, not the total delivered so far." : `${snapshot.selected.length > 50 ? "Showing the first 50 below. " : ""}Counts apply to each selected stop separately.`}`;
+    el("cartCountStatus").textContent = error;
+    el("saveCartCountsBtn").disabled = Boolean(error) || saving;
+    return error ? null : changes;
+  }
+
+  function syncMode() {
+    const perRecord = el("cartCountOperation").value === "each";
+    el("cartCountBulkAmount").hidden = perRecord;
+    el("cartCountAmount").disabled = perRecord;
+    el("cartCountEntries").hidden = !perRecord;
+    el("cartCountPreview").hidden = perRecord;
+    snapshot.entries.forEach(entry => { entry.input.disabled = !perRecord; });
+    preview();
+  }
+
+  function open(selected, perRecord = el("multipleCartsOnly").checked) {
+    if (deliverySaveInProgress || resequenceBusy) return;
+    if (!selected.length) return;
+    snapshot = { selected, rows: window._currentRows, workbook: window._currentWorkbook, filePath: window._currentFilePath, entries: [] };
+    el("cartCountEntries").replaceChildren();
+    selected.forEach(({ row }, index) => {
+      const card = document.createElement("div");
+      card.className = "cart-count-entry";
+      const info = document.createElement("div");
+      const address = document.createElement("strong");
+      address.textContent = formatStopAddress(row);
+      const detail = document.createElement("span");
+      detail.textContent = `Bin ${String(row.BINNO ?? "—")} · Route ${rowRoute(row)} · ${dayName(Number(rowDay(row))) || rowDay(row)}`;
+      info.append(address, detail);
+      const label = document.createElement("label");
+      label.htmlFor = `cartCountEntry${index}`;
+      label.append(document.createTextNode("This visit"));
+      const input = document.createElement("input");
+      Object.assign(input, { id: label.htmlFor, type: "number", inputMode: "numeric", min: "0", max: String(Math.max(0, (cartTotal(row) || 0) - (deliveredCartCount(row) || 0))), step: "1", required: true });
+      input.setAttribute("aria-label", `Carts delivered this visit: ${formatStopAddress(row)}, bin ${String(row.BINNO ?? "not provided")}, record ${index + 1}`);
+      input.placeholder = `0–${input.max}`;
+      label.append(input);
+      const progress = document.createElement("p");
+      progress.id = `cartCountEntryProgress${index}`;
+      input.setAttribute("aria-describedby", progress.id);
+      input.addEventListener("input", preview);
+      card.append(info, label, progress);
+      el("cartCountEntries").append(card);
+      snapshot.entries.push({ input, progress });
+    });
+    el("cartCountOperation").value = perRecord ? "each" : "add";
+    el("cartCountAmount").value = "1";
+    syncMode();
+    dialog.showModal();
+  }
+  el("recordCartsBtn").addEventListener("click", () => open(selectedDeliveryStops()));
+  el("cartCountOperation").addEventListener("change", syncMode);
+  el("cartCountAmount").addEventListener("input", preview);
+  el("closeCartCountsBtn").addEventListener("click", () => { if (!saving) dialog.close(); });
+  dialog.addEventListener("cancel", event => { if (saving) event.preventDefault(); });
+  el("cartCountsForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    if (saving || deliverySaveInProgress || resequenceBusy || !snapshot) return;
+    if (snapshot.rows !== window._currentRows || snapshot.workbook !== window._currentWorkbook || snapshot.filePath !== window._currentFilePath) {
+      el("cartCountStatus").textContent = "The open file changed. Close this panel and select stops again.";
+      return;
+    }
+    const changes = preview();
+    if (!changes) return;
+    saving = true;
+    el("cartCountFields").disabled = true;
+    el("closeCartCountsBtn").disabled = true;
+    el("saveCartCountsBtn").disabled = true;
+    el("cartCountStatus").textContent = "Saving cart counts… Keep the app open.";
+    try {
+      const saved = await persistDeliveryChanges(snapshot.selected.filter(({ row }) => changes.has(row)), changes, "cart counts updated");
+      if (saved) dialog.close();
+      else el("cartCountStatus").textContent = el("deliverySaveStatus").textContent;
+    } finally {
+      saving = false;
+      el("cartCountFields").disabled = false;
+      el("closeCartCountsBtn").disabled = false;
+      el("saveCartCountsBtn").disabled = false;
+    }
+  });
+  return open;
+}
+
+// Records one cart per stop, prompts for per-record quantities, or undoes completion.
 // Flow: collect selected rows -> upload a new workbook to Supabase -> only on success mutate
 // row.del_status, move markers between routeDayGroups keys, refresh controls and sequence styling.
 // Uploads overwrite the whole file, so never mutate rows before the upload succeeds.
@@ -4202,30 +4740,40 @@ async function saveSelectedDeliveryStatus(markDelivered) {
     return;
   }
 
-  const selectionTester = createSelectionTester();
-  const selected = [];
-  Object.entries(routeDayGroups).forEach(([key, group]) => {
-    group.layers.forEach(marker => {
-      const row = marker._rowRef;
-      const delivered = String(row?.del_status || "").trim().toLowerCase() === "delivered";
-      if (row && delivered !== markDelivered && isStopSelected(marker, selectionTester)) {
-        selected.push({ key, marker, row });
-      }
-    });
-  });
+  const selected = selectedDeliveryStops().filter(({ row }) => isDeliveredRow(row) !== markDelivered);
   if (!selected.length) {
     setDeliverySaveStatus("error", markDelivered
       ? "Select undelivered stops first."
       : "Select delivered stops to undo.");
     return;
   }
+  if (markDelivered && document.getElementById("multipleCartsOnly").checked) return openCartCounts(selected, true);
   if (!markDelivered && !confirm("Are you sure you want to undo the selected Delivered stops?")) return;
 
+  if (markDelivered && selected.some(({ row }) => multiCartQuantity(row) !== null && cartTotal(row) === null)) {
+    setDeliverySaveStatus("error", "Not saved — multiple-cart records need a whole-number QTY. Correct the quantity or deselect those records.");
+    return;
+  }
+  const changes = new Map(selected.map(({ row }) => {
+    const total = cartTotal(row);
+    const next = markDelivered ? (total === null ? "" : Math.min(total, deliveredCartCount(row) + 1)) : 0;
+    return [row, { del_status: markDelivered && (total === null || next === total) ? "Delivered" : "", del_qty: next }];
+  }));
+  return persistDeliveryChanges(selected, changes, markDelivered ? "deliveries recorded" : "restored");
+}
+
+async function persistDeliveryChanges(selected, changes, action) {
+  if (deliverySaveInProgress || resequenceBusy) return false;
+  const rows = window._currentRows;
+  const workbook = window._currentWorkbook;
+  const filePath = window._currentFilePath;
+  if (!rows || !workbook || !filePath) {
+    setDeliverySaveStatus("error", "Not saved — load a route file first.");
+    return false;
+  }
   const count = selected.length;
   const stopLabel = count === 1 ? "stop" : "stops";
-  const nextStatus = markDelivered ? "Delivered" : "";
-  const selectedRows = new Set(selected.map(item => item.row));
-  const nextRows = rows.map(row => selectedRows.has(row) ? { ...row, del_status: nextStatus } : row);
+  const nextRows = rows.map(row => changes.has(row) ? { ...row, ...changes.get(row) } : row);
   const started = performance.now();
   let savePhase = "Preparing file";
   const showSaveProgress = () => {
@@ -4246,7 +4794,7 @@ async function saveSelectedDeliveryStatus(markDelivered) {
   } catch (error) {
     console.error("Cloud Save Error:", error);
     setDeliverySaveStatus("error", "Not saved — check your connection and try again.");
-    return;
+    return false;
   } finally {
     clearInterval(progressTimer);
   }
@@ -4257,15 +4805,18 @@ async function saveSelectedDeliveryStatus(markDelivered) {
   if (routeIsCurrent) {
     window._currentWorkbook = savedWorkbook;
     selected.forEach(({ key, marker, row }) => {
-      row.del_status = nextStatus;
+      Object.assign(row, changes.get(row));
       const group = routeDayGroups[key];
       if (!group?.layers.includes(marker)) return;
       group.layers = group.layers.filter(layer => layer !== marker);
-      const nextKey = `${rowRoute(row)}|${markDelivered ? "Delivered" : rowDay(row)}`;
+      const nextKey = `${rowRoute(row)}|${isDeliveredRow(row) ? "Delivered" : rowDay(row)}`;
       if (!routeDayGroups[nextKey]) routeDayGroups[nextKey] = { layers: [] };
       getSymbol(nextKey);
       routeDayGroups[nextKey].layers.push(marker);
+      marker._base.symbol = { ...marker._base.symbol, color: symbolMap[nextKey].color };
       restoreMarkerStyle(marker, nextKey);
+      refreshQuantityBadge(marker);
+      if (marker.isPopupOpen()) marker.getPopup().update();
     });
 
     document.querySelectorAll("#routeDayLayers input[type='checkbox'], #deliveredControls input[type='checkbox']")
@@ -4281,9 +4832,9 @@ async function saveSelectedDeliveryStatus(markDelivered) {
     updateUndoButtonState();
   }
 
-  const action = markDelivered ? "marked delivered" : "restored";
   const fileNote = routeIsCurrent ? "" : ` in ${filePath}`;
   setDeliverySaveStatus("saved", `Saved — ${count} ${stopLabel} ${action}${fileNote}.`);
+  return true;
 }
 
 function completeStops() {

@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261008-optimo-sequence" />
+  <link rel="stylesheet" href="style.css?v=20261009-delivery-passes" />
 
   <link rel="icon" href="favicon.ico" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -58,6 +58,9 @@
     </span>
     <span id="sunToggleText">Dark Mode</span>
   </label>
+  <button id="lockScreenBtn" type="button" aria-label="Lock screen" title="Lock screen for pocket mode" aria-haspopup="dialog">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+  </button>
 
 </div>
 
@@ -102,8 +105,8 @@
 </div>
     <div id="savedFilesGuide" class="saved-files-guide">
       <div class="saved-files-guide-title">Quick Start</div>
-      <div class="saved-files-guide-step"><span class="saved-files-guide-num">1</span>Open <strong>Saved Files</strong></div>
-      <div class="saved-files-guide-step"><span class="saved-files-guide-num">2</span>Choose a delivery file and select <strong>Open Map</strong></div>
+      <div class="saved-files-guide-step"><span class="saved-files-guide-num">1</span><span>Open <strong>Saved Files</strong></span></div>
+      <div class="saved-files-guide-step"><span class="saved-files-guide-num">2</span><span>Choose a file → <strong>Open Map</strong></span></div>
     </div>
     <div class="map-view-group">
       <label for="baseMapSelect" class="map-view-label">Map View</label>
@@ -121,9 +124,43 @@
 
     
     
-<details id="deliveryOverlaysSection" class="filter-group map-overlays">
-  <summary class="filter-header collapsible-header"><span class="routes-title"><span class="arrow" aria-hidden="true">&#9654;</span><strong>Delivery overlays</strong></span></summary>
-  <div id="deliveryOverlaysContent" class="map-overlay-content">
+<div id="deliveryOverlaysSection" class="filter-group map-overlays">
+  <div class="delivery-overlay-buttons" role="group" aria-label="Delivery overlays">
+    <button id="deliverySequenceDisclosure" type="button" aria-expanded="false" aria-controls="deliveryOverlaysContent"><span class="delivery-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2"/><circle cx="18" cy="19" r="2"/><path d="M10 5h6a4 4 0 0 1 0 8H8a3 3 0 0 0 0 6h6"/></svg></span><span>Delivery<br>sequence</span></button>
+    <button id="quantityBadgesDisclosure" type="button" aria-expanded="false" aria-controls="quantityBadgesContent"><span class="delivery-disclosure-icon" aria-hidden="true">&times;2</span><span>Cart<br>quantities</span></button>
+  </div>
+  <div id="deliveryOverlaysContent" class="map-overlay-content" role="region" aria-labelledby="deliverySequenceDisclosure" hidden>
+<!-- Sequence filtering is independent of the route/day and delivered marker controls. -->
+<div class="sequence-controls map-overlay-card">
+  <div class="sequence-panel-heading"><strong>Delivery sequence</strong><span id="sequenceDisplayBadge">Off</span></div>
+  <div id="sequenceLayerOptions">
+    <span id="sequenceSourceLabel" class="sequence-field-label">Choose a sequence</span>
+    <div class="sequence-source-buttons" role="group" aria-labelledby="sequenceSourceLabel">
+      <button type="button" data-sequence-source="original" aria-pressed="true">Original file</button>
+      <button type="button" data-sequence-source="optimo" aria-pressed="false">Saved Optimo</button>
+    </div>
+    <select id="sequenceSource" hidden aria-label="Sequence source"><option value="original">Original Excel sequence</option><option value="optimo">Optimo scheduled records</option></select>
+    <label for="sequenceRouteSelect">Route to display</label>
+    <select id="sequenceRouteSelect" aria-describedby="sequenceLayerStatus"></select>
+  </div>
+  <label class="sequence-toggle map-overlay-toggle" for="sequenceLayerToggle">
+    <span class="map-overlay-copy"><span class="map-overlay-title">Show arrows on map</span></span>
+    <input id="sequenceLayerToggle" type="checkbox" aria-describedby="sequenceLayerStatus" disabled>
+    <span class="map-overlay-switch" aria-hidden="true"></span>
+  </label>
+  <label class="sequence-toggle map-overlay-toggle" for="sequenceNumbersToggle">
+    <span class="map-overlay-copy"><span class="map-overlay-title">Show sequence numbers</span></span>
+    <input id="sequenceNumbersToggle" type="checkbox" aria-describedby="sequenceNumbersStatus" checked>
+    <span class="map-overlay-switch" aria-hidden="true"></span>
+  </label>
+  <p id="sequenceNumbersStatus" role="status" aria-live="polite"></p>
+  <p id="sequenceLayerStatus" role="status" aria-live="polite">Open a route file to choose a sequence.</p>
+  <details class="sequence-help"><summary>About the arrows</summary><p>Lines connect stops directly, not along roads. Delivered stops stay in the path. Unscheduled stops have no Optimo number or arrow.</p><div class="sequence-legend"><span><i class="sequence-key-line" aria-hidden="true"></i>Delivery order</span><span><i class="sequence-key-line sequence-key-completed" aria-hidden="true"></i>Both stops delivered</span></div></details>
+  <button id="openResequenceBtn" type="button">Plan with OptimoRoute</button>
+</div>
+
+  </div>
+  <div id="quantityBadgesContent" class="map-overlay-content" role="region" aria-labelledby="quantityBadgesDisclosure" hidden>
 <div class="quantity-controls map-overlay-card">
   <label class="quantity-toggle map-overlay-toggle" for="quantityBadgesToggle">
     <span class="map-overlay-icon" aria-hidden="true">×2</span>
@@ -131,61 +168,25 @@
     <input id="quantityBadgesToggle" type="checkbox" aria-describedby="quantityBadgesHelp" checked>
     <span class="map-overlay-switch" aria-hidden="true"></span>
   </label>
-  <p id="quantityBadgesHelp" class="map-overlay-help"><span class="quantity-example" aria-hidden="true">×2</span> Two carts required at this stop.</p>
+  <p id="quantityBadgesHelp" class="map-overlay-help"><span class="quantity-example" aria-hidden="true">1/2</span> One of two carts delivered. Counts update after saving.</p>
 </div>
 
-<!-- Sequence filtering is independent of the route/day and delivered marker controls. -->
-<div class="sequence-controls map-overlay-card">
-  <label class="sequence-toggle map-overlay-toggle" for="sequenceLayerToggle">
-    <span class="map-overlay-icon" aria-hidden="true"><svg viewBox="0 0 28 28" fill="none"><path d="M5 21V10h10v8h8M19 14l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="5" cy="21" r="2" fill="currentColor"/></svg></span>
-    <span class="map-overlay-copy"><span class="map-overlay-title">Sequence arrows</span><span class="map-overlay-subtitle">Follow delivery order · SEQNO</span></span>
-    <input id="sequenceLayerToggle" type="checkbox" aria-describedby="sequenceLayerStatus" disabled>
+<div class="map-overlay-card cart-quantity-filter">
+  <label class="map-overlay-toggle" for="multipleCartsOnly">
+    <span class="map-overlay-icon" aria-hidden="true">2+</span>
+    <span class="map-overlay-copy"><span class="map-overlay-title">Only show QTY 2+</span><span class="map-overlay-subtitle">Hide single-cart stops on the map</span></span>
+    <input id="multipleCartsOnly" type="checkbox" aria-describedby="multipleCartsHelp">
     <span class="map-overlay-switch" aria-hidden="true"></span>
   </label>
-  <div id="sequenceLayerOptions" hidden>
-    <label for="sequenceSource">Sequence</label>
-    <select id="sequenceSource"><option value="original">Original Excel sequence</option><option value="optimo" disabled>New Optimo sequence</option></select>
-    <label for="sequenceRouteSelect">Route / day</label>
-    <select id="sequenceRouteSelect" aria-label="Sequence route and day"></select>
-    <p>Keeps delivered stops in the path. Lines connect stops directly rather than following roads.</p>
-    <div class="sequence-legend"><span><i class="sequence-key-line" aria-hidden="true"></i>Delivery order</span><span><i class="sequence-key-line sequence-key-completed" aria-hidden="true"></i>Both stops delivered</span><span><i class="sequence-key-check" aria-hidden="true">✓</i>Delivered stop</span></div>
-  </div>
-  <p id="sequenceLayerStatus" role="status" aria-live="polite">Open a route file with SEQNO to get started.</p>
-  <button id="openResequenceBtn" type="button">Generate new sequence</button>
+  <p id="multipleCartsHelp" class="map-overlay-help">Your route, day, and Delivered filters still apply.</p>
 </div>
   </div>
-</details>
-
-<details id="mapOverlaysSection" class="filter-group map-overlays">
-  <summary class="filter-header collapsible-header"><span class="routes-title"><span class="arrow" aria-hidden="true">&#9654;</span><strong>Map overlays</strong></span></summary>
-  <div id="mapOverlaysContent" class="map-overlay-content">
-<div class="city-limits-controls map-overlay-card">
-  <label class="map-overlay-toggle" for="cityLimitsToggle">
-    <span class="map-overlay-icon" aria-hidden="true"><svg viewBox="0 0 28 28" fill="none"><path d="M5 7l7-3 4 5 7-1v13l-8 3-5-5-5 1V7Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-dasharray="3 2"/></svg></span>
-    <span class="map-overlay-copy"><span class="map-overlay-title">City limits</span><span class="map-overlay-subtitle">U.S. city boundaries · any map view</span></span>
-    <input id="cityLimitsToggle" type="checkbox" aria-describedby="cityLimitsStatus cityLimitsHelp">
-    <span class="map-overlay-switch" aria-hidden="true"></span>
-  </label>
-  <p id="cityLimitsStatus" role="status" aria-live="polite">Off. City boundaries work with any Map View.</p>
-  <p id="cityLimitsHelp" class="map-overlay-help"><span class="city-limits-key" aria-hidden="true"></span>Census reference boundaries; recent annexations may be missing.</p>
 </div>
 
-<div class="address-number-controls map-overlay-card">
-  <label class="map-overlay-toggle" for="addressNumbersToggle">
-    <span class="map-overlay-icon" aria-hidden="true">123</span>
-    <span class="map-overlay-copy"><span class="map-overlay-title">Address numbers</span><span class="map-overlay-subtitle">Austin area · zoom in to see houses</span></span>
-    <input id="addressNumbersToggle" type="checkbox" aria-describedby="addressNumbersStatus">
-    <span class="map-overlay-switch" aria-hidden="true"></span>
-  </label>
-  <p id="addressNumbersStatus" role="status" aria-live="polite">Off. City address numbers are separate from delivery stops.</p>
-</div>
-  </div>
-</details>
-
-<div class="filter-group">
-  <strong>Delivered</strong>
+<details id="deliveredSection" class="filter-group map-overlays">
+  <summary class="filter-header collapsible-header"><span class="routes-title"><span class="arrow" aria-hidden="true">&#9654;</span><strong>Delivered</strong></span></summary>
   <div id="deliveredControls"></div>
-</div>
+</details>
 
 <div class="filter-group">
   <div class="filter-header collapsible-header" id="routeDayToggle">
@@ -293,6 +294,32 @@
 
 
     
+<details id="mapOverlaysSection" class="filter-group map-overlays">
+  <summary class="filter-header collapsible-header"><span class="routes-title"><span class="arrow" aria-hidden="true">&#9654;</span><strong>Map overlays</strong></span></summary>
+  <div id="mapOverlaysContent" class="map-overlay-content">
+<div class="city-limits-controls map-overlay-card">
+  <label class="map-overlay-toggle" for="cityLimitsToggle">
+    <span class="map-overlay-icon" aria-hidden="true"><svg viewBox="0 0 28 28" fill="none"><path d="M5 7l7-3 4 5 7-1v13l-8 3-5-5-5 1V7Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-dasharray="3 2"/></svg></span>
+    <span class="map-overlay-copy"><span class="map-overlay-title">City limits</span><span class="map-overlay-subtitle">U.S. city boundaries · any map view</span></span>
+    <input id="cityLimitsToggle" type="checkbox" aria-describedby="cityLimitsStatus cityLimitsHelp">
+    <span class="map-overlay-switch" aria-hidden="true"></span>
+  </label>
+  <p id="cityLimitsStatus" role="status" aria-live="polite">Off. City boundaries work with any Map View.</p>
+  <p id="cityLimitsHelp" class="map-overlay-help"><span class="city-limits-key" aria-hidden="true"></span>Census reference boundaries; recent annexations may be missing.</p>
+</div>
+
+<div class="address-number-controls map-overlay-card">
+  <label class="map-overlay-toggle" for="addressNumbersToggle">
+    <span class="map-overlay-icon" aria-hidden="true">123</span>
+    <span class="map-overlay-copy"><span class="map-overlay-title">Address numbers</span><span class="map-overlay-subtitle">Austin area · zoom in to see houses</span></span>
+    <input id="addressNumbersToggle" type="checkbox" aria-describedby="addressNumbersStatus">
+    <span class="map-overlay-switch" aria-hidden="true"></span>
+  </label>
+  <p id="addressNumbersStatus" role="status" aria-live="polite">Off. City address numbers are separate from delivery stops.</p>
+</div>
+  </div>
+</details>
+
     <div class="filter-group">
       <div class="filter-header collapsible-header" id="statsToggle">
         <div class="routes-title">
@@ -351,7 +378,7 @@
   <div id="desktopLocateContainer"></div>
   
   <button id="completeStopsBtn" data-action="deliver" class="delivery-action primary-btn" disabled>
-  Mark Stops Delivered
+  Deliver 1 cart per stop
 </button>
 
 <label class="street-toggle-label">
@@ -380,7 +407,7 @@
 <section id="deliveryControls" class="delivery-controls" aria-label="Delivery controls">
   <div class="delivery-controls-main">
     <button id="mobileSelectionBtn" data-action="select" class="delivery-action primary-btn" type="button" aria-pressed="false">Select Stops</button>
-    <button id="completeStopsBtnMobile" data-action="deliver" class="delivery-action primary-btn" type="button" disabled>Mark Stops Delivered</button>
+    <button id="completeStopsBtnMobile" data-action="deliver" class="delivery-action primary-btn" type="button" disabled>Deliver 1 cart per stop</button>
   </div>
   <div id="deliverySaveStatus" class="delivery-save-status" role="status" aria-live="polite" aria-atomic="true"></div>
   <div id="deliveryQuickActions" class="delivery-quick-actions">
@@ -390,6 +417,7 @@
     <button id="deliveryMoreBtn" data-action="more" class="delivery-action primary-btn" type="button" aria-expanded="false" aria-controls="deliveryMoreActions">More</button>
   </div>
   <div id="deliveryMoreActions" class="delivery-more-actions" hidden></div>
+  <button id="recordCartsBtn" data-action="carts" class="delivery-action primary-btn" type="button" aria-haspopup="dialog" disabled>Record carts</button>
   <button id="loadLogBtn" data-action="loads" class="delivery-action primary-btn" type="button" aria-haspopup="dialog">Truck / Trailer Loads</button>
 </section>
 
@@ -433,7 +461,7 @@
 <dialog id="resequenceDialog" aria-labelledby="resequenceTitle">
   <div class="resequence-heading"><h2 id="resequenceTitle">Resequence remaining carts</h2><button id="closeResequenceBtn" type="button" aria-label="Close resequencing">Close</button></div>
   <p id="resequenceSummary"></p>
-  <p>Choose one route/day or all groups. Only undelivered records are planned, including hidden stops in that scope. Saved only on this phone; your original Excel sequence remains available.</p>
+  <p>Plan selected visible stops, one route/day, or all groups. Only undelivered records are included. The saved Optimo sequence replaces the previous one on this phone; records left out have no Optimo number or arrow.</p>
   <fieldset id="resequenceSettings">
     <label for="optimoKey">OptimoRoute API key</label>
     <input id="optimoKey" type="password" autocomplete="off" autocapitalize="none" spellcheck="false">
@@ -442,23 +470,68 @@
     <p class="resequence-help">The key is sent only to OptimoRoute. Browser storage is not encrypted; use Remember only on a trusted phone.</p>
     <label for="optimoDate">Planning date</label><input id="optimoDate" type="date" required>
     <p id="optimoClearDateNotice" class="resequence-help" role="status"></p>
-    <label for="optimoScope">Route / day to plan</label>
-    <select id="optimoScope"><option value="">All route/day groups</option></select>
+    <label for="optimoScope">Stops to plan</label>
+    <select id="optimoScope" aria-describedby="optimoScopeHelp"><option value="">All route/day groups</option><option value="selectedAll">Selected stops</option><option value="selected">Selected visible stops</option></select>
+    <p id="optimoScopeHelp" class="resequence-help"></p>
     <label for="optimoSectionSize">Planning size</label>
-    <select id="optimoSectionSize"><option value="500">500-record sections (recommended)</option><option value="100">100-record sections</option><option value="0">All selected records at once</option></select>
-    <p class="resequence-help">Sections are optimized by OptimoRoute one at a time, then joined per route/day. Each section continues from the previous section's last stop. The combined sequence is not optimized as a whole. Keep this page open until all sections finish.</p>
+    <select id="optimoSectionSize"><option value="0">All selected records at once (recommended)</option><option value="500">500-record sections (only last section stays scheduled)</option><option value="100">100-record sections (only last section stays scheduled)</option></select>
+    <p class="resequence-help">Uploads always use batches of up to 500. Planning all selected records together requires sufficient account capacity. In section mode, each new section replaces the previous plan for that driver; only records still scheduled at the end get numbers and arrows. Earlier sections are not joined.</p>
     <div id="optimoDrivers"></div>
-    <label for="optimoStart">Start location</label><select id="optimoStart"><option value="gps">My current GPS location</option><option value="depot">Driver's configured start location</option></select>
+    <label for="optimoStart">Start location</label><select id="optimoStart"><option value="gps">My current GPS location</option><option value="map">Point chosen on map</option><option value="depot">Driver's configured start location</option></select>
+    <button id="pickOptimoStart" type="button">Choose start on map</button><p id="optimoStartPoint" class="resequence-help"></p>
+    <label for="optimoEnd">End location</label><select id="optimoEnd"><option value="depot">Driver's configured end location</option><option value="map">Point chosen on map</option><option value="start">Return to start location</option></select>
+    <button id="pickOptimoEnd" type="button">Choose end on map</button><p id="optimoEndPoint" class="resequence-help"></p>
+    <p class="resequence-help">The same start/end choices apply to each route/day. Map pins guide the route; they are not added as delivery records.</p>
     <p class="resequence-help">Each route/day stays separate. Uses all-day hours (00:00–23:59), zero service time, and zero load. Use dedicated drivers: their hours, starts, and plans for this date will be replaced.</p>
-    <p class="resequence-help">In OptimoRoute, turn off scheduled breaks and route distance limits, and set the drivers to end at the last stop. Travel time and account limits still apply; a complete sequence is not guaranteed.</p>
+    <p class="resequence-help">In OptimoRoute, turn off scheduled breaks and route distance limits. To finish at the last delivery, configure that as the driver's end setting and choose the configured end above. Travel time and account limits still apply.</p>
   </fieldset>
   <p id="resequenceStatus" role="status" aria-live="polite"></p>
   <div id="resequencePreview" hidden><h3>New delivery order</h3><ol id="resequencePreviewList"></ol><p id="resequencePreviewMore"></p></div>
   <div class="resequence-actions"><button id="generateSequenceBtn" type="button">Clear planning date &amp; generate</button><button id="resumeSequenceBtn" type="button" hidden>Check planning result</button><button id="saveSequenceBtn" type="button" hidden>Use sequence on this phone</button></div>
-  <p class="resequence-help">Generation sends coordinates and addresses to OptimoRoute. It does not mark carts delivered or send routes to drivers. Only a complete result can be saved.</p>
+  <p class="resequence-help">Only records returned as scheduled get sequence numbers and arrows. Unscheduled records stay visible without a sequence. Saved results are a snapshot; later changes on OptimoRoute's website are not synced automatically. Generation does not mark carts delivered or send routes to drivers.</p>
 </dialog>
 
-<script src="app.js?v=20261008-optimo-scope-clear" defer></script>
+<section id="optimoLocationPicker" class="optimo-location-picker" aria-labelledby="optimoLocationPickerTitle" hidden>
+  <div class="optimo-picker-heading"><span class="optimo-picker-dot" aria-hidden="true"></span><strong id="optimoLocationPickerTitle" tabindex="-1">Choose location</strong></div>
+  <p id="optimoLocationPickerHelp" role="status">Tap the map to place a pin.</p>
+  <button id="centerOptimoLocation" type="button">Place pin at map center</button>
+  <div class="optimo-picker-actions"><button id="cancelOptimoLocation" type="button">Cancel</button><button id="useOptimoLocation" type="button" disabled>Confirm location</button></div>
+</section>
+
+<dialog id="cartCountsDialog" class="load-log-dialog" aria-labelledby="cartCountsTitle">
+  <div class="load-log-heading"><h2 id="cartCountsTitle">Record delivered carts</h2><button id="closeCartCountsBtn" type="button">Close</button></div>
+  <p id="cartCountSummary"></p>
+  <form id="cartCountsForm">
+    <fieldset id="cartCountFields">
+      <label for="cartCountOperation">How to update each selected stop</label>
+      <select id="cartCountOperation"><option value="each">Enter this visit's quantity for each record</option><option value="add">Add the same quantity to every selected stop</option><option value="set">Set total delivered so far (correct a count)</option></select>
+      <div id="cartCountBulkAmount">
+        <label for="cartCountAmount">Number of carts per stop</label>
+        <input id="cartCountAmount" type="number" inputmode="numeric" min="0" step="1" value="1" required>
+      </div>
+      <details class="cart-count-help"><summary>How counts work</summary>
+        <p>With QTY 2+ off, the delivery button adds one cart per selected stop. With it on, enter a separate quantity for each record. Enter 0 to skip a record this visit. A stop stays pending until all its carts are delivered.</p>
+        <p>Use Record carts to specify a different quantity or correct a count. Older stops marked Delivered count as fully delivered; choose Set total delivered so far to correct them. Undo Delivered resets a completed stop to 0.</p>
+      </details>
+      <div id="cartCountEntries" hidden></div>
+      <ul id="cartCountPreview" aria-label="Counts after saving"></ul>
+    </fieldset>
+    <p id="cartCountStatus" role="status" aria-live="polite"></p>
+    <button id="saveCartCountsBtn" type="submit">Save cart counts</button>
+  </form>
+</dialog>
+
+<dialog id="pocketLock" aria-labelledby="pocketLockTitle" aria-describedby="pocketLockHelp">
+  <div class="pocket-lock-content">
+    <svg class="pocket-lock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+    <h2 id="pocketLockTitle">Screen locked</h2>
+    <p id="pocketLockHelp">Controls blocked. Hold for 2 seconds, then release.</p>
+    <button id="pocketUnlockBtn" type="button" aria-describedby="pocketLockHelp" autofocus>Hold to unlock</button>
+    <p id="pocketLockStatus" role="status" aria-live="polite"></p>
+  </div>
+</dialog>
+
+<script src="app.js?v=20261009-delivery-passes" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">
