@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261009-delivery-passes" />
+  <link rel="stylesheet" href="style.css?v=20261010-profiles" />
 
   <link rel="icon" href="favicon.ico" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -66,7 +66,7 @@
 
 
 
-  <p>Periodically export a backend Excel backup (top-left download button)</p>
+  <button id="profileWorkspaceBtn" type="button" aria-haspopup="dialog">Sign in · Delivery profiles</button>
 
   <div class="mobile-header-buttons">
     <button id="hardRefreshBtn" data-action="refresh" class="delivery-action primary-btn" title="Reload app data and clear cached view">Refresh App</button>
@@ -84,7 +84,7 @@
   <aside class="sidebar">
 
     <div id="dropZone" aria-label="Upload Excel file">
-      <div class="dropzone-title">Upload Route File</div>
+      <div class="dropzone-title">Add Original Route File</div>
       <div class="dropzone-subtitle">Drop .xlsx, .xls, or .csv here</div>
       <div class="dropzone-browse">Click to choose file</div>
     </div>
@@ -99,14 +99,14 @@
   <span class="file-manager-icon" aria-hidden="true"></span>
   <span class="file-manager-copy">
     <span class="file-manager-title">Open Saved Files</span>
-    <span class="file-manager-subtitle">Load a trash or recycling delivery file into the map</span>
+    <span class="file-manager-subtitle">Choose an original and open your own copy</span>
   </span>
 </button>
 </div>
     <div id="savedFilesGuide" class="saved-files-guide">
       <div class="saved-files-guide-title">Quick Start</div>
-      <div class="saved-files-guide-step"><span class="saved-files-guide-num">1</span><span>Open <strong>Saved Files</strong></span></div>
-      <div class="saved-files-guide-step"><span class="saved-files-guide-num">2</span><span>Choose a file → <strong>Open Map</strong></span></div>
+      <div class="saved-files-guide-step"><span class="saved-files-guide-num">1</span><span>Sign in to your <strong>Delivery profile</strong></span></div>
+      <div class="saved-files-guide-step"><span class="saved-files-guide-num">2</span><span>Choose a file → <strong>Open my copy</strong></span></div>
     </div>
     <div class="map-view-group">
       <label for="baseMapSelect" class="map-view-label">Map View</label>
@@ -305,7 +305,7 @@
     <span class="map-overlay-switch" aria-hidden="true"></span>
   </label>
   <p id="cityLimitsStatus" role="status" aria-live="polite">Off. City boundaries work with any Map View.</p>
-  <p id="cityLimitsHelp" class="map-overlay-help"><span class="city-limits-key" aria-hidden="true"></span>Census reference boundaries; recent annexations may be missing.</p>
+  <p id="cityLimitsHelp" class="map-overlay-help"><span class="city-limits-key" aria-hidden="true"></span>Shaded city areas with bold borders. Census reference; recent annexations may be missing.</p>
 </div>
 
 <div class="address-number-controls map-overlay-card">
@@ -428,13 +428,18 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
 <script src="https://unpkg.com/leaflet-pip@1.1.0/leaflet-pip.min.js"></script>
   <!-- FILE MANAGER MODAL -->
 <div id="fileManagerModal" class="modal">
-  <div class="modal-content">
-    <h3>Saved Excel Files (Open Here)</h3>
-    <p class="saved-files-modal-help">Choose <strong>Open Map</strong> to load your delivery stops. Use your trash or recycling file in whichever order you need. Cart Delivery picks are saved in this browser.</p>
+  <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="savedFilesTitle">
+    <div class="saved-files-heading">
+      <div>
+        <span class="saved-files-eyebrow">YOUR WORKBOOKS</span>
+        <h3 id="savedFilesTitle">Saved Excel files</h3>
+      </div>
+      <button id="closeFileManager" type="button" aria-label="Close saved files">&times;</button>
+    </div>
+    <p class="saved-files-modal-help">Work in your own copy. The original changes only when you review and sync.</p>
 
     <div class="saved-file-tabs" role="tablist" aria-label="Saved file categories">
       <button id="cartDeliveryFilesTab" class="saved-file-tab active" type="button" role="tab" aria-selected="true" aria-controls="savedFiles">Cart Delivery</button>
@@ -442,11 +447,44 @@
     </div>
     <div id="savedFiles" class="file-list" role="tabpanel" aria-labelledby="cartDeliveryFilesTab"></div>
 
-    <div class="modal-actions">
-      <button id="closeFileManager">Close</button>
-    </div>
+    <p class="saved-files-footer">Cart Delivery keeps your go-to files together.</p>
   </div>
 </div>
+<dialog id="profileDialog" class="profile-dialog" aria-labelledby="profileTitle">
+  <div class="profile-heading"><h2 id="profileTitle">Delivery profile</h2><button id="closeProfileBtn" type="button" aria-label="Close delivery profile">Close</button></div>
+  <p id="profileStatus" role="status" aria-live="polite"></p>
+  <form id="profileAuthForm">
+    <p>Each profile has its own workbooks. Sign in on any phone to continue your work.</p>
+    <label>Username<input id="profileUsername" required minlength="3" maxlength="30" pattern="[A-Za-z0-9][A-Za-z0-9_-]{2,29}" autocomplete="username" autocapitalize="none" spellcheck="false" aria-describedby="profileUsernameHelp"></label>
+    <small id="profileUsernameHelp">3–30 letters, numbers, underscores or hyphens. Capitalization does not matter.</small>
+    <label>Password<input id="profilePassword" required minlength="8" type="password" autocomplete="current-password"></label>
+    <div class="profile-actions"><button type="submit" class="profile-primary">Sign in</button><button id="createProfileBtn" type="button">Create profile</button></div>
+  </form>
+  <section id="profileSignedIn" hidden>
+    <div class="profile-account"><strong id="profileAccountName"></strong><button id="signOutProfileBtn" type="button">Sign out</button></div>
+    <p id="profileFileSummary">Choose a saved file to create or reopen your copy.</p>
+    <div class="profile-actions">
+      <button id="profileChooseFileBtn" type="button">Choose file</button>
+      <button id="profileReloadCopyBtn" type="button">Reopen my copy</button>
+      <button id="profileReviewBtn" type="button" class="profile-primary">Review &amp; sync</button>
+      <button id="profileHistoryBtn" type="button">Original’s history</button>
+    </div>
+    <p class="profile-help">Saving deliveries updates only your copy. Review &amp; sync applies your changes to the original and refreshes your copy with the latest shared work.</p>
+  </section>
+</dialog>
+<dialog id="profileSyncDialog" class="profile-dialog" aria-labelledby="profileSyncTitle">
+  <div class="profile-heading"><h2 id="profileSyncTitle">Review changes</h2><button id="closeProfileSyncBtn" type="button">Close</button></div>
+  <p id="profileSyncSummary"></p>
+  <p id="profileSyncStatus" role="status" aria-live="polite"></p>
+  <div id="profileSyncChanges" class="profile-scroll"></div>
+  <button id="confirmProfileSyncBtn" type="button" class="profile-primary">Sync to original</button>
+</dialog>
+<dialog id="profileHistoryDialog" class="profile-dialog" aria-labelledby="profileHistoryTitle">
+  <div class="profile-heading"><h2 id="profileHistoryTitle">Original’s history</h2><button id="closeProfileHistoryBtn" type="button">Close</button></div>
+  <p id="profileHistoryStatus" role="status" aria-live="polite"></p>
+  <div id="profileHistoryEntries" class="profile-scroll"></div>
+  <button id="moreProfileHistoryBtn" type="button">Load more</button>
+</dialog>
 <div id="downloadConfirmModal" class="modal">
   <div class="modal-content">
     <h3>Download Excel File</h3>
@@ -531,7 +569,7 @@
   </div>
 </dialog>
 
-<script src="app.js?v=20261009-delivery-passes" defer></script>
+<script src="app.js?v=20261010-profiles" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">

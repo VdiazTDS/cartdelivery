@@ -38,17 +38,20 @@ const sample = [1, 2, '3', 0, '', 'bad', -1, 1.5, 3, 5, 2, 3].map((qty, i) => ({
     await page.goto(`http://127.0.0.1:${server.address().port}`, { waitUntil: 'networkidle' });
     await page.evaluate(() => {
       window.uploads = [];
-      sb.storage.from = () => ({ upload: (file, bytes) => new Promise(resolve => {
-        const wb = XLSX.read(bytes, { type: 'array' });
-        window.uploads.push({ file, rows: XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]), sheets: wb.SheetNames });
-        window.resolveUpload = resolve;
-      }) });
+      // Exercise selection/count behavior independently of the separately tested profile API.
+      profileState.user = { id: 'test-profile', email: 'test@profiles.cartdelivery.invalid' };
+      saveProfileWorkbook = (rows, workbook) => new Promise((resolve, reject) => {
+        const wb = { ...workbook, Sheets: { ...workbook.Sheets, [workbook.SheetNames[0]]: XLSX.utils.json_to_sheet(rows) } };
+        window.uploads.push({ file: window._currentFilePath, rows, sheets: wb.SheetNames });
+        window.resolveUpload = result => result.error ? reject(result.error) : resolve(wb);
+      });
       window.testMarkers = () => Object.values(routeDayGroups).flatMap(group => group.layers);
     });
     const load = (rows = sample, file = 'cart-counts.xlsx') => page.evaluate(({ rows, file }) => {
       layerVisibilityState = {};
       document.getElementById('multipleCartsOnly').checked = false;
       window._currentFilePath = file;
+      profileState.workspace = { mode: 'copy', owner: 'test-profile', name: file };
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Stops');
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ note: 'Preserve me' }]), 'Notes');
@@ -144,7 +147,7 @@ const sample = [1, 2, '3', 0, '', 'bad', -1, 1.5, 3, 5, 2, 3].map((qty, i) => ({
     assert.deepEqual(upload.sheets, ['Stops', 'Notes']);
     await resolve(true);
     assert.deepEqual(await state(), before);
-    assert.match(await page.locator('#cartCountStatus').textContent(), /Not saved/);
+    assert.match(await page.locator('#cartCountStatus').textContent(), /Could not confirm/);
     await submit(); await resolve();
     await page.waitForFunction(() => !document.getElementById('cartCountsDialog').open);
     assert.deepEqual(await page.evaluate(() => window._currentRows.slice(0, 3).map(row => [row.del_qty, isDeliveredRow(row)])), [[1, true], [1, false], [1, false]]);

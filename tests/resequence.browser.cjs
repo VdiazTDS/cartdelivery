@@ -109,8 +109,14 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
     });
     await page.goto(`http://127.0.0.1:${server.address().port}`, { waitUntil: 'networkidle' });
     await page.waitForFunction(() => typeof processExcelBuffer === 'function');
+    await page.evaluate(() => {
+      profileState.user = { id: 'test-profile', email: 'test@profiles.cartdelivery.invalid' };
+      profileState.workspace = { mode: 'copy', owner: 'test-profile' };
+    });
     const load = async (rows = sample, name = 'test.xlsx') => {
       await page.evaluate(({ rows, name }) => {
+        profileState.user = { id: 'test-profile', email: 'test@profiles.cartdelivery.invalid' };
+        profileState.workspace = { mode: 'copy', owner: 'test-profile' };
         window._currentFilePath = name;
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Stops');
@@ -345,7 +351,11 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
     await page.locator('#closeResequenceBtn').click();
     await page.evaluate(() => {
       window.fakeUploads = [];
-      sb.storage.from = () => ({ upload: (...args) => new Promise(resolve => { window.fakeUploads.push(args); window.resolveFakeUpload = resolve; }) });
+      saveProfileWorkbook = (rows, workbook) => new Promise((resolve, reject) => {
+        const wb = { ...workbook, Sheets: { ...workbook.Sheets, [workbook.SheetNames[0]]: XLSX.utils.json_to_sheet(rows) } };
+        window.fakeUploads.push(rows);
+        window.resolveFakeUpload = result => result.error ? reject(result.error) : resolve(wb);
+      });
       const marker = Object.values(routeDayGroups).flatMap(group => group.layers).find(marker => marker._rowRef === window._currentRows[0]);
       individuallySelectedMarkers.add(marker); updateSelectionCount(); updateUndoButtonState();
       document.getElementById('completeStopsBtnMobile').click();

@@ -13,7 +13,7 @@
  *   7. Sequence arrows: rowSequence, rebuildSequenceData, renderSequenceLayer
  *   8. processExcelBuffer: turns a workbook into markers and sequence groups (core data flow)
  *   9. Shared truck / trailer load log and Excel export
- *  10. Saved files (Supabase storage list/upload, shared Cart Delivery tab)
+ *  10. Saved files (profile copies, reviewed sync, shared Cart Delivery tab)
  *  11. placeDeliveryControls + initApp: layout wiring, mobile menu, selection mode, reset, ranked address search
  *  12. Cloud save of delivery status (saveSelectedDeliveryStatus), collapsibles, button events
  *
@@ -24,7 +24,7 @@
  *     not in individuallyDeselectedMarkers. Always use isStopSelected(); never read marker styles to decide.
  *   - sequenceGroups keeps original route/day order and row references, including hidden delivered stops.
  *     Delivery badges and segment colors read those rows only after a confirmed save/undo.
- *   - del_qty tracks carts delivered; isDeliveredRow() supports legacy del_status-only files. Saves rewrite the sheet.
+ *   - del_qty tracks carts delivered; profile saves and reviewed sync require confirmed server revisions.
  *   - updateSelectionCount is re-assigned later (mobile selection section) to also refresh the phone button;
  *     call it by name after any selection change, plus updateUndoButtonState().
  *   - Layout is "mobile" at window.innerWidth <= 900; placeDeliveryControls moves the same DOM nodes between
@@ -44,6 +44,7 @@ let refreshAddressSearch = () => {};
 
 function updateDeliveryButtons() {
   const count = selectedPendingStopCount;
+  const readOnly = !profileState.user || profileState.workspace?.mode !== "copy" || profileState.busy;
   const perRecord = document.getElementById("multipleCartsOnly").checked;
   const label = deliverySaveInProgress
     ? "Saving…"
@@ -53,17 +54,17 @@ function updateDeliveryButtons() {
     const button = document.getElementById(id);
     if (!button) return;
     button.textContent = label;
-    button.disabled = deliverySaveInProgress || resequenceBusy || count === 0;
+    button.disabled = readOnly || deliverySaveInProgress || resequenceBusy || count === 0;
     button.setAttribute("aria-busy", String(deliverySaveInProgress));
     button.title = !count ? "Select undelivered stops on the map first" : perRecord
       ? "Enter the carts delivered this visit for each selected record"
       : "Add one delivered cart to each selected stop. Use Record carts to specify a different count.";
   });
   const undoButton = document.getElementById("undoDeliveredBtn");
-  if (undoButton) undoButton.disabled = deliverySaveInProgress || resequenceBusy;
+  if (undoButton) undoButton.disabled = readOnly || deliverySaveInProgress || resequenceBusy;
   const cartButton = document.getElementById("recordCartsBtn");
   if (cartButton) {
-    cartButton.disabled = deliverySaveInProgress || resequenceBusy || Number(document.getElementById("selectionCount").textContent) === 0;
+    cartButton.disabled = readOnly || deliverySaveInProgress || resequenceBusy || Number(document.getElementById("selectionCount").textContent) === 0;
     cartButton.textContent = document.getElementById("multipleCartsOnly").checked ? "Record carts · QTY 2+ filter on" : "Record carts";
   }
 }
@@ -150,9 +151,6 @@ function setupHeaderToolsMenu() {
 }
 
 //======
-// 🔐 Delete protection password I know this is not secure, I just wanted to make it harder for ppl to accidentally delete files. You can change or remove this as needed.
-// NOTE: client-side only; anyone can read it in the source. Not real security.
-const DELETE_PASSWORD = "Austin1";  // ← change to whatever you want
 
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -584,7 +582,320 @@ if (hardRefreshBtn) {
 
 
 // Create Supabase client
-const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { storageKey: "cartdelivery.profiles.auth" } });
+
+// Profile workbooks are server-versioned; no browser can overwrite an original.
+const profileState = { user: null, workspace: null, busy: false, generation: 0, preview: null, syncRequest: null };
+const profileElement = id => document.getElementById(id);
+const profileUsername = user => user?.email?.split("@")[0] || "";
+function profileMessage(error) {
+  const code = error?.message || String(error);
+  if (code.includes("STALE_VERSION")) return "Another phone saved or synced first. Reopen your copy, then review again. Nothing from this attempt was applied.";
+  if (code.includes("NAME_EXISTS")) return "An original with this name already exists. Choose it from Saved Files, or rename the new file.";
+  if (code.includes("SIGN_IN_REQUIRED")) return "Sign in to your delivery profile first.";
+  if (code.includes("UNRESOLVED_CONFLICT")) return "Choose how to resolve every overlapping customer before syncing.";
+  if (code.includes("DUPLICATE_HEADERS")) return "This workbook has duplicate column headings. Give each column a unique heading before importing.";
+  if (code.includes("INVALID_MACRO_WORKBOOK")) return "Macro-enabled workbooks are not supported. Export an XLSX copy without macros first.";
+  if (code.includes("FILE_TOO_LARGE")) return "This workbook is too large. The profile import limit is 20 MB.";
+  if (code.includes("already registered")) return "That username already exists. Sign in or choose another username.";
+  if (code.includes("Invalid login credentials")) return "The username or password is incorrect.";
+  if (code.includes("SETUP_REQUIRED")) return "Delivery profiles need the Supabase setup first. No original files have been changed.";
+  if (code.includes("INVALID_")) return "The changes could not be accepted. Reopen your copy and check the selected records and quantities.";
+  return "Could not confirm the request. Check your connection and retry, or reopen your copy to check what saved.";
+}
+async function profileApi(body) {
+  const generation = profileState.generation;
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) throw new Error("SIGN_IN_REQUIRED");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await fetch(`${SUPABASE_URL}/functions/v1/profile-workbooks`, {
+        method: "POST", headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY, Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify(body), cache: "no-store"
+      });
+      if (response.status === 404) throw new Error("SETUP_REQUIRED");
+      if (response.status >= 500 && !attempt) continue;
+      const result = await response.json();
+      if (!response.ok || result.error) throw new Error(result.error || "REQUEST_FAILED");
+      if (generation !== profileState.generation) throw new Error("SIGN_IN_REQUIRED");
+      return result;
+    } catch (error) {
+      if (attempt || !(error instanceof TypeError)) throw error;
+    }
+  }
+}
+function renderProfileState() {
+  const { user, workspace, busy } = profileState;
+  const username = profileUsername(user);
+  profileElement("profileWorkspaceBtn").textContent = user
+    ? `${username} · ${workspace ? workspace.mode === "original" ? "Viewing original" : `${workspace.pending || 0} to sync` : "Choose file"}`
+    : "Sign in · Delivery profiles";
+  profileElement("profileAuthForm").hidden = Boolean(user);
+  profileElement("profileSignedIn").hidden = !user;
+  profileElement("profileAccountName").textContent = username;
+  profileElement("profileFileSummary").textContent = workspace
+    ? `${workspace.name} · ${workspace.mode === "original" ? "Original — view only" : `Your copy · ${workspace.pending || 0} changed records to sync`}`
+    : "Choose a saved file to create or reopen your copy.";
+  document.querySelectorAll("#profileDialog button, #profileSyncDialog button, #fileManagerModal button").forEach(button => { button.disabled = busy; });
+  ["profileReviewBtn", "profileReloadCopyBtn", "profileHistoryBtn"].forEach(id => { profileElement(id).disabled = busy || !workspace; });
+  profileElement("profileReviewBtn").disabled = busy || workspace?.mode !== "copy";
+  profileElement("profileReloadCopyBtn").textContent = workspace?.mode === "original" ? "Open my copy" : "Reopen my copy";
+  if (typeof updateDeliveryButtons === "function") updateDeliveryButtons();
+}
+async function profileTask(statusId, action) {
+  if (profileState.busy || deliverySaveInProgress || resequenceBusy) return;
+  profileState.busy = true;
+  profileElement(statusId).textContent = "Working…";
+  renderProfileState();
+  try { await action(); }
+  catch (error) { profileElement(statusId).textContent = profileMessage(error); }
+  finally { profileState.busy = false; renderProfileState(); }
+}
+function requireProfile() {
+  if (profileState.user) return true;
+  profileElement("fileManagerModal").style.display = "none";
+  profileElement("profileStatus").textContent = "Sign in or create a profile to work on your own copy.";
+  if (!profileElement("profileDialog").open) profileElement("profileDialog").showModal();
+  return false;
+}
+async function displayProfileWorkbook(result, mode = "copy") {
+  const generation = profileState.generation;
+  const response = await fetch(result.url, { cache: "no-store" });
+  if (!response.ok) throw new Error("REQUEST_FAILED");
+  const bytes = await response.arrayBuffer();
+  if (generation !== profileState.generation) throw new Error("SIGN_IN_REQUIRED");
+  const parsed = XLSX.read(new Uint8Array(bytes), { type: "array", cellStyles: true, bookVBA: true });
+  if (!parsed.Sheets[parsed.SheetNames[0]]) throw new Error("INVALID_FILE");
+  profileState.workspace = { ...result, mode, owner: profileState.user.id };
+  delete profileState.workspace.url;
+  window._currentFilePath = result.name;
+  setCurrentFileDisplay(`${result.name} · ${mode === "original" ? "Original (view only)" : profileUsername(profileState.user) + "’s copy"}`);
+  processExcelBuffer(bytes, parsed);
+  profileState.preview = null;
+  profileState.syncRequest = null;
+  renderProfileState();
+}
+async function openProfileFile(file, mode = "copy") {
+  if (!requireProfile() || profileState.busy || deliverySaveInProgress || resequenceBusy) return;
+  profileState.busy = true;
+  renderProfileState();
+  showLoading(mode === "copy" ? "Opening your profile copy…" : "Opening original (view only)…");
+  try {
+    let fileId = file.fileId;
+    if (!fileId) ({ fileId } = await profileApi({ action: "import", requestId: crypto.randomUUID(), sourceKey: file.sourceKey, name: file.name }));
+    const result = await profileApi({ action: mode === "copy" ? "open" : "original", fileId, requestId: crypto.randomUUID() });
+    await displayProfileWorkbook(result, mode);
+    profileElement("fileManagerModal").style.display = "none";
+    profileElement("profileDialog").close();
+    closeMobileMenu();
+  } catch (error) { alert(profileMessage(error)); }
+  finally { hideLoading(); profileState.busy = false; renderProfileState(); }
+}
+async function saveProfileWorkbook(rows, workbook, onProgress) {
+  const workspace = profileState.workspace;
+  if (!profileState.user || workspace?.mode !== "copy" || workspace.owner !== profileState.user.id || profileState.busy) throw new Error("SIGN_IN_REQUIRED");
+  const generation = profileState.generation;
+  const edits = rows.flatMap((row, index) => {
+    const previous = window._currentRows[index];
+    const fields = ["del_qty", "del_status", "delivery_notes"];
+    const values = Object.fromEntries(fields.filter(key => JSON.stringify(row[key] ?? null) !== JSON.stringify(previous[key] ?? null)).map(key => [key, row[key]]));
+    if ("del_qty" in values || "del_status" in values) { values.del_qty = row.del_qty ?? ""; values.del_status = row.del_status ?? ""; }
+    return Object.keys(values).length ? [{ index, values }] : [];
+  });
+  if (!edits.length) return workbook;
+  onProgress("Saving your profile copy");
+  const result = await profileApi({ action: "save", fileId: workspace.fileId, copyRevision: workspace.copyRevision, edits, requestId: crypto.randomUUID() });
+  const response = await fetch(result.url, { cache: "no-store" });
+  if (!response.ok) throw new Error("REQUEST_FAILED");
+  const savedWorkbook = XLSX.read(new Uint8Array(await response.arrayBuffer()), { type: "array", cellStyles: true, bookVBA: true });
+  if (generation !== profileState.generation || workspace !== profileState.workspace) throw new Error("SIGN_IN_REQUIRED");
+  Object.assign(workspace, { copyRevision: result.copyRevision, pending: result.pending });
+  renderProfileState();
+  return savedWorkbook;
+}
+async function listProfileFiles() {
+  const list = profileElement("savedFiles");
+  list.replaceChildren();
+  const message = document.createElement("p");
+  message.className = "saved-files-empty";
+  message.textContent = profileState.user ? "Loading your files…" : "Sign in to open a profile copy. Originals stay unchanged until you sync.";
+  list.append(message);
+  if (!profileState.user) {
+    const button = document.createElement("button"); button.textContent = "Sign in / create profile";
+    button.onclick = requireProfile; list.append(button); return;
+  }
+  const generation = profileState.generation;
+  try {
+    const managed = await profileApi({ action: "list" });
+    await loadSharedCartDeliveryNames();
+    const legacy = [];
+    for (let offset = 0; ; offset += 100) {
+      const { data, error } = await sb.storage.from(BUCKET).list("", { limit: 100, offset, sortBy: { column: "name", order: "asc" } });
+      if (error) throw error;
+      legacy.push(...data.filter(file => /\.(xlsx|xls|csv)$/i.test(file.name) && !/route[\s_.-]*summary/i.test(file.name)));
+      if (data.length < 100) break;
+    }
+    if (generation !== profileState.generation) return;
+    const files = [...managed.files];
+    legacy.forEach(file => { if (!files.some(f => f.sourceKey === file.name || f.name === file.name)) files.push({ name: file.name, sourceKey: file.name }); });
+    const visible = files.filter(file => activeSavedFilesTab === "all" || cartDeliveryFileNames.has(file.sourceKey || file.name));
+    list.replaceChildren();
+    if (!visible.length) { message.textContent = activeSavedFilesTab === "all" ? "No saved files yet. Add an original route file to get started." : "No Cart Delivery files yet. Open All Files and add the files you use."; list.append(message); }
+    visible.forEach(file => {
+      const card = document.createElement("article"); card.className = "saved-file-card";
+      const heading = document.createElement("div"); heading.className = "saved-file-heading";
+      const icon = document.createElement("span"); icon.className = "saved-file-icon"; icon.textContent = "XLS"; icon.setAttribute("aria-hidden", "true");
+      const name = document.createElement("span"); name.className = "saved-file-name"; name.textContent = file.name;
+      heading.append(icon, name);
+      const detail = document.createElement("p"); detail.className = "profile-file-detail";
+      detail.textContent = file.copyId ? `Your copy · ${file.pending} changed records to sync` : "Creates a separate copy for your profile";
+      const open = document.createElement("button"); open.className = "saved-file-btn"; open.textContent = file.copyId ? "Open my copy" : "Create my copy & open";
+      open.onclick = () => openProfileFile(file);
+      const actions = document.createElement("div"); actions.className = "saved-file-secondary-actions";
+      const original = document.createElement("button"); original.textContent = "View original"; original.onclick = () => openProfileFile(file, "original");
+      const organize = document.createElement("button"); const key = file.sourceKey || file.name;
+      const included = cartDeliveryFileNames.has(key); organize.textContent = included ? "Remove from tab" : "Add to Cart Delivery";
+      organize.setAttribute("aria-pressed", String(included));
+      organize.onclick = async () => {
+        organize.disabled = true; const before = new Set(cartDeliveryFileNames);
+        if (included) cartDeliveryFileNames.delete(key); else cartDeliveryFileNames.add(key);
+        try { await saveCartDeliveryFileNames(); } catch (error) { cartDeliveryFileNames = before; alert(profileMessage(error)); }
+        await listFiles();
+      };
+      actions.append(original, organize); card.append(heading, detail, open, actions); list.append(card);
+    });
+  } catch (error) { message.textContent = profileMessage(error); list.replaceChildren(message); }
+}
+function profileCountText(row) {
+  return `${deliveredCartCount(row)} of ${cartTotal(row) ?? "?"} carts delivered${row.delivery_notes ? ` · ${row.delivery_notes}` : ""}`;
+}
+async function reviewProfileSync() {
+  if (!requireProfile() || !profileState.workspace) return;
+  await profileTask("profileStatus", async () => {
+    const preview = await profileApi({ action: "preview", fileId: profileState.workspace.fileId });
+    profileState.preview = preview; profileState.syncRequest = null;
+    const conflicts = preview.changes.filter(item => item.conflict).length;
+    profileElement("profileSyncSummary").textContent = `${preview.name} · ${preview.changes.length} changed records · ${conflicts} overlaps to review. Sync also refreshes your copy with the latest original.`;
+    profileElement("profileSyncStatus").textContent = "";
+    const list = profileElement("profileSyncChanges"); list.replaceChildren();
+    preview.changes.forEach(item => {
+      const card = document.createElement("article"); card.className = "profile-change";
+      const title = document.createElement("strong"); title.textContent = `${formatStopAddress(item.mine)} · Bin ${item.mine.BINNO ?? "—"} · Record ${item.index + 1}`;
+      card.append(title);
+      [["When your copy was last synced", item.base], ["Original now", item.original], ["Your copy", item.mine]].forEach(([label, row]) => {
+        const line = document.createElement("p"); line.textContent = `${label}: ${profileCountText(row)}`; card.append(line);
+      });
+      if (item.conflict) {
+        card.classList.add("profile-conflict");
+        const label = document.createElement("label"); label.textContent = "Another profile changed this customer. Choose the result:";
+        const select = document.createElement("select"); select.dataset.conflictIndex = item.index; select.setAttribute("aria-label", `Resolve record ${item.index + 1}`);
+        [["", "Choose a resolution"], ["original", "Keep original’s values"], ["mine", "Use my copy’s changed values"], ...(cartTotal(item.original) !== null ? [["count", "Enter the final delivered cart total"]] : [])].forEach(([value, text]) => select.add(new Option(text, value)));
+        const countLabel = document.createElement("label"); countLabel.textContent = "Final total delivered (all teams combined)"; countLabel.hidden = true;
+        const input = document.createElement("input"); Object.assign(input, { type: "number", inputMode: "numeric", min: "0", max: String(cartTotal(item.original)), step: "1" }); input.dataset.conflictCount = item.index;
+        countLabel.append(input); select.onchange = () => { countLabel.hidden = select.value !== "count"; };
+        label.append(select); card.append(label, countLabel);
+      }
+      list.append(card);
+    });
+    if (!preview.changes.length) list.textContent = "You have no changes to apply. You can still refresh your copy from the original.";
+    profileElement("confirmProfileSyncBtn").textContent = preview.changes.length ? "Confirm sync to original" : "Refresh my copy from original";
+    profileElement("profileStatus").textContent = "";
+    profileElement("profileDialog").close(); profileElement("profileSyncDialog").showModal();
+  });
+}
+async function confirmProfileSync() {
+  const preview = profileState.preview;
+  if (!preview || !requireProfile()) return;
+  await profileTask("profileSyncStatus", async () => {
+    if (!profileState.syncRequest) {
+      const resolutions = preview.changes.filter(item => item.conflict).map(item => {
+        const choice = document.querySelector(`[data-conflict-index="${item.index}"]`).value;
+        if (!choice) throw new Error("UNRESOLVED_CONFLICT");
+        const input = document.querySelector(`[data-conflict-count="${item.index}"]`);
+        if (choice === "count" && (!input.value.trim() || !input.checkValidity())) throw new Error("INVALID_QUANTITY");
+        return { index: item.index, choice, ...(choice === "count" ? { count: Number(input.value) } : {}) };
+      });
+      profileState.syncRequest = { action: "sync", fileId: preview.fileId, copyRevision: preview.copyRevision,
+        masterRevision: preview.masterRevision, resolutions, requestId: crypto.randomUUID() };
+    }
+    // Retain this request ID after an uncertain response so retry cannot apply it twice.
+    const result = await profileApi(profileState.syncRequest);
+    await displayProfileWorkbook(result);
+    profileElement("profileSyncDialog").close(); profileElement("profileDialog").showModal();
+    profileElement("profileStatus").textContent = "Sync confirmed. Your original and profile copy are up to date. Changes are recorded in the original’s history.";
+  });
+}
+async function showProfileHistory(more = false) {
+  const workspace = profileState.workspace;
+  if (!workspace || profileState.busy) return;
+  profileState.busy = true;
+  const button = profileElement("moreProfileHistoryBtn"); button.disabled = true;
+  profileElement("profileDialog").close();
+  if (!profileElement("profileHistoryDialog").open) profileElement("profileHistoryDialog").showModal();
+  const list = profileElement("profileHistoryEntries"); if (!more) list.replaceChildren();
+  profileElement("profileHistoryStatus").textContent = `Loading history for ${workspace.name}…`;
+  try {
+    const { history } = await profileApi({ action: "history", fileId: workspace.fileId, offset: list.children.length });
+    history.forEach(entry => {
+      const card = document.createElement("details"); card.className = "profile-change";
+      const summary = document.createElement("summary"); summary.textContent = `${entry.profile_name} · ${new Date(entry.created_at).toLocaleString()} · ${entry.changes.length} records changed`;
+      const version = document.createElement("p"); version.textContent = `Original version ${entry.before_revision} → ${entry.after_revision}. ${entry.resolutions.length} overlaps reviewed.`;
+      card.append(summary, version);
+      entry.changes.forEach(change => {
+      const line = document.createElement("p"); line.textContent = `${change.address || "Record " + (change.index + 1)} · Bin ${change.bin || "—"}: ${change.fields.map(field => `${({ del_qty: "Carts delivered", del_status: "Status", delivery_notes: "Note" })[field.field] || field.field}: ${field.before === "" || field.before == null ? "blank" : field.before} → ${field.after === "" || field.after == null ? "blank" : field.after}`).join("; ")}`; card.append(line);
+      });
+      entry.resolutions.forEach(resolution => { const line = document.createElement("p"); line.textContent = `Record ${resolution.index + 1}: ${resolution.choice === "count" ? `final delivered total ${resolution.count}` : resolution.choice === "mine" ? "used profile changes" : "kept original values"}`; card.append(line); });
+      list.append(card);
+    });
+    button.hidden = history.length < 25;
+    profileElement("profileHistoryStatus").textContent = list.children.length ? `${workspace.name} · Newest syncs first. Expand a sync to see its changes.` : "No profiles have synced changes to this original yet.";
+  } catch (error) { profileElement("profileHistoryStatus").textContent = profileMessage(error); }
+  finally { button.disabled = false; profileState.busy = false; renderProfileState(); }
+}
+function setupDeliveryProfiles() {
+  profileElement("profileWorkspaceBtn").onclick = () => { renderProfileState(); profileElement("profileDialog").showModal(); };
+  [["closeProfileBtn", "profileDialog"], ["closeProfileSyncBtn", "profileSyncDialog"], ["closeProfileHistoryBtn", "profileHistoryDialog"]].forEach(([button, dialog]) => {
+    profileElement(button).onclick = () => { if (!profileState.busy) profileElement(dialog).close(); };
+    profileElement(dialog).addEventListener("cancel", event => { if (profileState.busy) event.preventDefault(); });
+  });
+  async function authenticate(create) {
+    if (!profileElement("profileAuthForm").reportValidity()) return;
+    await profileTask("profileStatus", async () => {
+      const username = profileElement("profileUsername").value.trim().toLowerCase();
+      const credentials = { email: `${username}@profiles.cartdelivery.invalid`, password: profileElement("profilePassword").value };
+      const { data, error } = create ? await sb.auth.signUp(credentials) : await sb.auth.signInWithPassword(credentials);
+      if (error) throw error;
+      if (!data.session) throw new Error("SETUP_REQUIRED");
+      profileState.user = data.user; profileElement("profilePassword").value = "";
+      profileElement("profileStatus").textContent = create ? "Profile created. Choose a file to create your copy." : "Signed in. Choose a file to continue.";
+    });
+  }
+  profileElement("profileAuthForm").onsubmit = event => { event.preventDefault(); authenticate(false); };
+  profileElement("createProfileBtn").onclick = () => authenticate(true);
+  profileElement("signOutProfileBtn").onclick = () => profileTask("profileStatus", async () => {
+    const { error } = await sb.auth.signOut(); if (error) throw error;
+    profileElement("profileStatus").textContent = "Signed out. Your saved profile work stays available when you sign in again.";
+  });
+  profileElement("profileChooseFileBtn").onclick = () => { profileElement("profileDialog").close(); profileElement("openFileManagerBtn").click(); };
+  profileElement("profileReloadCopyBtn").onclick = () => openProfileFile(profileState.workspace);
+  profileElement("profileReviewBtn").onclick = reviewProfileSync;
+  profileElement("confirmProfileSyncBtn").onclick = confirmProfileSync;
+  profileElement("profileHistoryBtn").onclick = () => showProfileHistory();
+  profileElement("moreProfileHistoryBtn").onclick = () => showProfileHistory(true);
+  sb.auth.onAuthStateChange((_event, session) => {
+    // Never await other Supabase calls from inside the auth callback.
+    setTimeout(() => {
+      const user = session?.user || null;
+      if (profileState.user?.id !== user?.id) {
+        profileState.generation++; profileState.workspace = null; profileState.preview = null; profileState.syncRequest = null;
+        profileElement("resetMapBtn").click(); window._currentRows = null; window._currentWorkbook = null; window._currentFilePath = null; setCurrentFileDisplay(null);
+        ["profileSyncDialog", "profileHistoryDialog"].forEach(id => profileElement(id).close());
+      }
+      profileState.user = user; renderProfileState();
+    }, 0);
+  });
+  renderProfileState();
+}
 
 
 // Backup download names are "<Base>_Backup_YYYY-MM-DD_HHMM.xlsx" (short, sorts by date, newest last).
@@ -738,19 +1049,33 @@ function setBaseMap(name) {
 document.getElementById("baseMapSelect").addEventListener("change", event => setBaseMap(event.target.value));
 map.on("zoomend moveend", syncBasemapLabels);
 
-// ===== OPTIONAL CITY LIMITS (SERVER-RENDERED TILES) =====
+// ===== OPTIONAL CITY LIMITS (VIEWPORT POLYGONS + CITY NAME TILES) =====
 const CITY_LIMITS_MIN_ZOOM = 9;
 const CITY_LIMITS_WMS = "https://tigerweb.geo.census.gov/arcgis/services/TIGERweb/tigerWMS_Current/MapServer/WMSServer";
+const CITY_LIMITS_QUERY = "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer/28/query";
+const CITY_LIMITS_MAX_FEATURES = 80;
 const cityLimitsToggle = document.getElementById("cityLimitsToggle");
 const cityLimitsStatus = document.getElementById("cityLimitsStatus");
 const cityLimitsPane = map.createPane("cityLimitsPane");
 cityLimitsPane.style.zIndex = "280";
 cityLimitsPane.style.pointerEvents = "none";
-const cityLimitsLayer = L.tileLayer.wms(CITY_LIMITS_WMS, {
+const cityLimitsLabelPane = map.createPane("cityLimitsLabelPane");
+cityLimitsLabelPane.style.zIndex = "281";
+cityLimitsLabelPane.style.pointerEvents = "none";
+const cityLimitsRenderer = L.canvas({ pane: "cityLimitsPane", padding: 0.2 });
+const cityLimitsHalo = L.geoJSON(null, {
+  pane: "cityLimitsPane", renderer: cityLimitsRenderer, interactive: false,
+  style: { color: "#ffffff", weight: 7, opacity: 0.95, fill: false, lineJoin: "round" }
+});
+const cityLimitsPolygons = L.geoJSON(null, {
+  pane: "cityLimitsPane", renderer: cityLimitsRenderer, interactive: false,
+  style: { color: "#c52267", weight: 3.5, opacity: 1, fillColor: "#ed4089", fillOpacity: 0.14, fillRule: "evenodd", lineJoin: "round" }
+});
+const cityLimitsLabels = L.tileLayer.wms(CITY_LIMITS_WMS, {
   ...tileOptions,
-  pane: "cityLimitsPane",
+  pane: "cityLimitsLabelPane",
   className: "city-limits-tiles",
-  layers: "49,48", // WMS IDs differ from REST: incorporated outlines/names, no census-only places.
+  layers: "48", // City names only; polygons below provide the stronger outline and fill.
   format: "image/png",
   transparent: true,
   version: "1.1.1",
@@ -761,27 +1086,105 @@ const cityLimitsLayer = L.tileLayer.wms(CITY_LIMITS_WMS, {
   minZoom: CITY_LIMITS_MIN_ZOOM,
   maxZoom: 20
 });
+const cityLimitsLayer = L.layerGroup([cityLimitsHalo, cityLimitsPolygons, cityLimitsLabels]);
 let cityLimitsLoadFailed = false;
+let cityLimitsGeometryStatus = "";
+let cityLimitsRequest = null;
+let cityLimitsTimer = null;
+let cityLimitsVersion = 0;
+const cityLimitsCache = new Map();
 function updateCityLimitsStatus() {
   cityLimitsStatus.textContent = !cityLimitsToggle.checked ? "Off. City boundaries work with any Map View."
     : map.getZoom() < CITY_LIMITS_MIN_ZOOM ? "Zoom in to show city limits."
-    : cityLimitsLoadFailed ? "Some city limits could not load. Toggle off/on to retry."
-    : cityLimitsLayer.isLoading() ? "Loading city limits…"
-    : "Pink outlines show city limits where present. Zoom in for city names.";
+    : cityLimitsGeometryStatus || (cityLimitsLoadFailed ? "City areas loaded; some city names could not load. Toggle off/on to retry."
+    : "Pink shading shows city areas. Bold borders mark city limits. Zoom in for names.");
+}
+function cancelCityLimitsRequest() {
+  clearTimeout(cityLimitsTimer);
+  cityLimitsVersion++;
+  cityLimitsRequest?.abort();
+  cityLimitsRequest = null;
+}
+function displayCityLimits(data) {
+  cityLimitsHalo.clearLayers();
+  cityLimitsPolygons.clearLayers();
+  cityLimitsHalo.addData(data);
+  cityLimitsPolygons.addData(data);
+  cityLimitsGeometryStatus = data.exceededTransferLimit || data.features.length >= CITY_LIMITS_MAX_FEATURES
+    ? "Showing up to 80 city areas. Zoom in to see all city limits in this area."
+    : !data.features.length ? "No incorporated city areas found in this view." : "";
+  updateCityLimitsStatus();
+}
+async function loadCityLimits() {
+  if (!map.hasLayer(cityLimitsLayer)) return;
+  const bounds = map.getBounds().pad(0.15);
+  const zoom = map.getZoom();
+  const cached = [...cityLimitsCache.values()].find(item => item.zoom === zoom && item.expires > Date.now() && item.bounds.contains(map.getBounds()));
+  if (cached) { displayCityLimits(cached.data); return; }
+  const version = cityLimitsVersion;
+  const controller = new AbortController();
+  cityLimitsRequest = controller;
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  const params = new URLSearchParams({
+    f: "geojson", where: "1=1", outFields: "GEOID,NAME", returnGeometry: "true",
+    geometryType: "esriGeometryEnvelope", spatialRel: "esriSpatialRelIntersects", inSR: "4326", outSR: "4326",
+    geometry: JSON.stringify({ xmin: Math.max(-180, bounds.getWest()), ymin: Math.max(-85, bounds.getSouth()), xmax: Math.min(180, bounds.getEast()), ymax: Math.min(85, bounds.getNorth()) }),
+    maxAllowableOffset: String(Math.max(0.00005, 360 / (256 * 2 ** zoom))), geometryPrecision: "6",
+    orderByFields: "GEOID", resultRecordCount: String(CITY_LIMITS_MAX_FEATURES)
+  });
+  try {
+    const response = await fetch(`${CITY_LIMITS_QUERY}?${params}`, { signal: controller.signal, cache: "no-store" });
+    if (!response.ok) throw new Error("City limits request failed");
+    const data = await response.json();
+    if (version !== cityLimitsVersion || !map.hasLayer(cityLimitsLayer)) return;
+    if (data.error || data.type !== "FeatureCollection" || !Array.isArray(data.features) || data.features.some(feature => !["Polygon", "MultiPolygon"].includes(feature.geometry?.type))) throw new Error("Invalid city limits response");
+    if (data.features.length > CITY_LIMITS_MAX_FEATURES) {
+      data.features = data.features.slice(0, CITY_LIMITS_MAX_FEATURES);
+      data.exceededTransferLimit = true;
+    }
+    displayCityLimits(data);
+    cityLimitsCache.set(params.toString(), { bounds, zoom, data, expires: Date.now() + 5 * 60 * 1000 });
+    while (cityLimitsCache.size > 4) cityLimitsCache.delete(cityLimitsCache.keys().next().value);
+  } catch (_) {
+    if (version !== cityLimitsVersion || !map.hasLayer(cityLimitsLayer)) return;
+    cityLimitsHalo.clearLayers();
+    cityLimitsPolygons.clearLayers();
+    cityLimitsGeometryStatus = "City areas could not load. Toggle off/on to retry.";
+    updateCityLimitsStatus();
+  } finally {
+    clearTimeout(timeout);
+    if (cityLimitsRequest === controller) cityLimitsRequest = null;
+  }
+}
+function scheduleCityLimits() {
+  cancelCityLimitsRequest();
+  if (!map.hasLayer(cityLimitsLayer)) return;
+  cityLimitsGeometryStatus = "Loading city areas…";
+  updateCityLimitsStatus();
+  cityLimitsTimer = setTimeout(loadCityLimits, 350);
 }
 function syncCityLimits() {
   const show = cityLimitsToggle.checked && map.getZoom() >= CITY_LIMITS_MIN_ZOOM;
   if (show && !map.hasLayer(cityLimitsLayer)) {
     cityLimitsLoadFailed = false;
     cityLimitsLayer.addTo(map);
-  } else if (!show && map.hasLayer(cityLimitsLayer)) map.removeLayer(cityLimitsLayer);
+    scheduleCityLimits();
+  } else if (!show) {
+    cancelCityLimitsRequest();
+    map.removeLayer(cityLimitsLayer);
+    cityLimitsHalo.clearLayers();
+    cityLimitsPolygons.clearLayers();
+    cityLimitsCache.clear();
+  }
   updateCityLimitsStatus();
 }
-cityLimitsLayer.on("loading", () => { cityLimitsLoadFailed = false; updateCityLimitsStatus(); });
-cityLimitsLayer.on("tileerror", () => { cityLimitsLoadFailed = true; updateCityLimitsStatus(); });
-cityLimitsLayer.on("load", updateCityLimitsStatus);
+cityLimitsLabels.on("loading", () => { cityLimitsLoadFailed = false; updateCityLimitsStatus(); });
+cityLimitsLabels.on("tileerror", () => { cityLimitsLoadFailed = true; updateCityLimitsStatus(); });
+cityLimitsLabels.on("load", updateCityLimitsStatus);
 cityLimitsToggle.addEventListener("change", syncCityLimits);
 map.on("zoomend", syncCityLimits);
+map.on("movestart", cancelCityLimitsRequest);
+map.on("moveend", scheduleCityLimits);
 
 // ================= POLYGON SELECT =================
 
@@ -2397,8 +2800,8 @@ function remainingSequenceGroups(rows, scope = "", validate = true) {
 
 async function phoneSequenceStorageKey(rows) {
   // Delivery saves/undo must not invalidate the phone's order.
-  const identity = rows.map(row => Object.keys(row).filter(key => !["del_status", "del_qty"].includes(key)).sort().map(key => [key, row[key]]));
-  const bytes = new TextEncoder().encode(JSON.stringify([window._currentFilePath || "", identity]));
+  const identity = rows.map(row => Object.keys(row).filter(key => !["del_status", "del_qty", "delivery_notes"].includes(key)).sort().map(key => [key, row[key]]));
+  const bytes = new TextEncoder().encode(JSON.stringify([profileState.user?.id || "", window._currentFilePath || "", identity]));
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return "cartdelivery.optimo.sequence." + [...new Uint8Array(digest)].map(n => n.toString(16).padStart(2, "0")).join("");
 }
@@ -2870,8 +3273,8 @@ resequenceElement("saveSequenceBtn").addEventListener("click", () => {
 // Required columns: LATITUDE, LONGITUDE, ROUTE, DAY. Optional: CSADR#, CSSDIR, CSSTRT, CSSFUX
 // (address), SIZE, QTY, BINNO (popup), SEQNO (sequence), del_status ("Delivered" marks completed stops).
 // Rebuilds sequenceGroups, resets map/selection, then fills routeDayGroups by day or Delivered.
-function processExcelBuffer(buffer) {
-  const wb = XLSX.read(new Uint8Array(buffer), { type: "array" });
+function processExcelBuffer(buffer, parsedWorkbook = null) {
+  const wb = parsedWorkbook || XLSX.read(new Uint8Array(buffer), { type: "array", cellStyles: true, bookVBA: true });
   const ws = wb.Sheets[wb.SheetNames[0]];
 
   const rows = XLSX.utils.sheet_to_json(ws);
@@ -3421,186 +3824,25 @@ document.getElementById("allSavedFilesTab")
   .addEventListener("click", () => setSavedFilesTab("all"));
 
 async function listFiles() {
-  try {
-    await loadSharedCartDeliveryNames();
-  } catch (error) {
-    console.error(error);
-    if (activeSavedFilesTab === "cartDelivery" && !sharedTabLoaded) {
-      alert("Could not load the shared Cart Delivery list. Check your connection and try again.");
-    }
-  }
-  const { data, error } = await sb.storage.from(BUCKET).list();
-  if (error) {
-    console.error("Could not list saved files:", error);
-    alert("Could not load saved files. Please try again.");
-    return;
-  }
-
-  const ul = document.getElementById("savedFiles");
-  ul.innerHTML = "";
-
-  // Legacy summary files are not delivery datasets; keep them out of this list.
-  const routeFiles = {};
-  data.forEach(file => {
-    if (file.name !== SHARED_TAB_FILE && file.name !== LOAD_LOG_PREFIX && !/route[\s_.-]*summary/i.test(file.name)) routeFiles[file.name] = file.name;
-  });
-
-  // Build UI
-  const visibleRouteKeys = Object.keys(routeFiles).filter(key =>
-    activeSavedFilesTab === "all" || cartDeliveryFileNames.has(routeFiles[key])
-  );
-
-  if (!visibleRouteKeys.length) {
-    const emptyState = document.createElement("p");
-    emptyState.className = "saved-files-empty";
-    emptyState.textContent = activeSavedFilesTab === "cartDelivery"
-      ? "No Cart Delivery files yet. Open All Files and add files here."
-      : "No saved Excel files found.";
-    ul.appendChild(emptyState);
-    return;
-  }
-
-  visibleRouteKeys.forEach(key => {
-    const routeName = routeFiles[key];
-
-    const li = document.createElement("li");
-
-    const fileName = document.createElement("span");
-    fileName.className = "saved-file-name";
-    fileName.textContent = routeName;
-    li.appendChild(fileName);
-
-    const organizeBtn = document.createElement("button");
-    organizeBtn.className = "saved-file-organize-btn";
-    const isCartDeliveryFile = cartDeliveryFileNames.has(routeName);
-    organizeBtn.textContent = isCartDeliveryFile ? "Remove from Cart Delivery" : "Add to Cart Delivery";
-    organizeBtn.setAttribute("aria-pressed", String(isCartDeliveryFile));
-    organizeBtn.onclick = async () => {
-      const previous = new Set(cartDeliveryFileNames);
-      if (cartDeliveryFileNames.has(routeName)) {
-        cartDeliveryFileNames.delete(routeName);
-      } else {
-        cartDeliveryFileNames.add(routeName);
-      }
-      organizeBtn.disabled = true;
-      try {
-        await saveCartDeliveryFileNames();
-      } catch (error) {
-        console.error("Could not save Cart Delivery list:", error);
-        cartDeliveryFileNames = previous;
-        alert("Could not update the Cart Delivery tab. Check your connection and try again.");
-      }
-      listFiles();
-    };
-    li.appendChild(organizeBtn);
-
-    // OPEN MAP
-    const openBtn = document.createElement("button");
-    openBtn.className = "saved-file-btn";
-    openBtn.textContent = "Open Map";
-   openBtn.onclick = async () => {
-  try {
-
-    showLoading("Loading Excel file...");
-
-    const { data } = sb.storage.from(BUCKET).getPublicUrl(routeName);
-
-    const urlWithBypass = data.publicUrl + "?v=" + Date.now();
-
-    const r = await fetch(urlWithBypass, {
-      cache: "no-store"
-    });
-
-    window._currentFilePath = routeName;
-    setCurrentFileDisplay(window._currentFilePath);
-
-    processExcelBuffer(await r.arrayBuffer());
-
-    hideLoading("File Loaded Successfully ✅");
-    document.getElementById("fileManagerModal").style.display = "none";
-    closeMobileMenu();
-
-  } catch (err) {
-    console.error(err);
-    hideLoading();
-    alert("Error loading file.");
-  }
-};
-
-
-
-    li.appendChild(openBtn);
-
-    // DELETE
-    const delBtn = document.createElement("button");
-    delBtn.textContent = "Delete";
-    delBtn.style.marginLeft = "5px";
-
-  delBtn.onclick = async () => {
-
-  const entered = prompt("Enter password to delete this file:");
-
-  if (entered !== DELETE_PASSWORD) {
-    alert("❌ Incorrect password. File not deleted.");
-    return;
-  }
-
-  const confirmed = confirm("Are you sure you want to permanently delete this file?");
-  if (!confirmed) return;
-
-  const toDelete = [routeName];
-
-  const { error } = await sb.storage.from(BUCKET).remove(toDelete);
-  if (error) {
-    console.error("Could not delete saved file:", error);
-    alert("Could not delete this file. Please try again.");
-    return;
-  }
-
-  if (cartDeliveryFileNames.delete(routeName)) {
-    try { await saveCartDeliveryFileNames(); } catch (error) { console.error(error); }
-  }
-  alert("✅ File deleted successfully.");
-  listFiles();
-};
-
-
-    li.appendChild(delBtn);
-    ul.appendChild(li);
-  });
+  return listProfileFiles();
 }
-
 
 // ================= UPLOAD FILE =================
 async function uploadFile(file) {
-  if (!file) return;
-
+  if (!file || !requireProfile() || profileState.busy || deliverySaveInProgress || resequenceBusy) return;
+  profileState.busy = true; renderProfileState();
+  showLoading("Adding an original route file…");
   try {
-
-    showLoading("Uploading file...");
-
-    const { error } = await sb.storage
-      .from(BUCKET)
-      .upload(file.name, file, { upsert: true });
-
-    if (error) {
-      throw error;
-    }
-
-    window._currentFilePath = file.name;
-    setCurrentFileDisplay(window._currentFilePath);
-
-    processExcelBuffer(await file.arrayBuffer());
+    if (file.size > 20000000) throw new Error("FILE_TOO_LARGE");
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    for (let index = 0; index < bytes.length; index += 8192) binary += String.fromCharCode(...bytes.subarray(index, index + 8192));
+    const result = await profileApi({ action: "import", name: file.name, base64: btoa(binary), requestId: crypto.randomUUID() });
+    const copy = await profileApi({ action: "open", fileId: result.fileId, requestId: crypto.randomUUID() });
+    await displayProfileWorkbook(copy);
     closeMobileMenu();
-    listFiles();
-
-    hideLoading("Upload Complete ✅");
-
-  } catch (error) {
-    console.error("UPLOAD ERROR:", error);
-    hideLoading();
-    alert("Upload failed: " + error.message);
-  }
+  } catch (error) { alert(profileMessage(error)); }
+  finally { hideLoading(); profileState.busy = false; renderProfileState(); }
 }
 
 // ===== PLACE DELIVERY CONTROLS BASED ON SCREEN SIZE =====
@@ -3764,6 +4006,7 @@ setupPocketLock();
 const openCartCounts = setupCartCounts();
 setupLocationCopy();
 setupLoadLog();
+setupDeliveryProfiles();
 
 // ===== RIGHT SIDEBAR TOGGLE =====
 
@@ -4143,6 +4386,10 @@ if (downloadBtn && modal && confirmBtn && cancelBtn) {
       return;
     }
 
+    const workspace = profileState.workspace;
+    modal.querySelector("p").textContent = workspace?.mode === "copy"
+      ? `Download ${profileUsername(profileState.user)}’s saved copy of ${workspace.name}? Unsynced changes are included; this does not sync them to the original.`
+      : `Download the open original${workspace ? `, version ${workspace.masterRevision}` : ""}? Reopen it first if you need other teams’ latest syncs.`;
     modal.style.display = "flex";
   });
 
@@ -4517,75 +4764,9 @@ searchQuickFilters.addEventListener("click", event => {
   updateSearchFilterControls();
   searchMapByAddress();
 }));
-async function serializeDeliveryWorkbook(workbook, bookType) {
-  const options = { bookType, type: "buffer" };
-  if (window.fflate) {
-    try {
-      // Repack the Excel ZIP with stronger compression; every entry stays intact.
-      const raw = XLSX.write(workbook, { ...options, compression: false });
-      const entries = fflate.unzipSync(raw);
-      return await new Promise((resolve, reject) => {
-        let terminate;
-        const timeout = setTimeout(() => {
-          terminate?.();
-          reject(new Error("Workbook compression timed out"));
-        }, 20000);
-        try {
-          terminate = fflate.zip(entries, { level: 6 }, (error, bytes) => {
-            clearTimeout(timeout);
-            if (error) reject(error);
-            else resolve(bytes);
-          });
-        } catch (error) {
-          clearTimeout(timeout);
-          reject(error);
-        }
-      });
-    } catch (error) {
-      console.warn("Using standard workbook compression:", error);
-    }
-  }
-  return XLSX.write(workbook, { ...options, compression: true });
-}
-
-// Build a separate workbook so failed saves leave the current route unchanged.
+// The server writes an immutable copy and confirms its revision before rows change.
 async function saveWorkbookToCloud(rows, workbook, filePath, onProgress = () => {}) {
-  const started = performance.now();
-  onProgress("Preparing file");
-  // Let the phone paint the saving feedback before spreadsheet serialization.
-  await new Promise(resolve => setTimeout(resolve, 20));
-  const nextWorkbook = {
-    ...workbook,
-    Sheets: {
-      ...workbook.Sheets,
-      [workbook.SheetNames[0]]: XLSX.utils.json_to_sheet(rows)
-    }
-  };
-  const bookType = filePath.toLowerCase().endsWith(".xlsm") ? "xlsm" : "xlsx";
-  const wbArray = await serializeDeliveryWorkbook(nextWorkbook, bookType);
-  const prepared = performance.now();
-  const metrics = {
-    bytes: wbArray.byteLength,
-    preparationMs: Math.round(prepared - started),
-    uploadMs: null,
-    confirmed: false
-  };
-  window.lastDeliverySaveMetrics = metrics;
-  const size = wbArray.byteLength < 1024 * 1024
-    ? `${Math.ceil(wbArray.byteLength / 1024)} KB`
-    : `${(wbArray.byteLength / (1024 * 1024)).toFixed(1)} MB`;
-  onProgress(`Uploading ${size}`);
-  try {
-    const { error } = await sb.storage.from(BUCKET).upload(filePath, wbArray, {
-      upsert: true,
-      contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    });
-    if (error) throw error;
-    metrics.confirmed = true;
-  } finally {
-    metrics.uploadMs = Math.round(performance.now() - prepared);
-  }
-  return nextWorkbook;
+  return saveProfileWorkbook(rows, workbook, onProgress);
 }
 
 function selectedDeliveryStops() {
@@ -4728,8 +4909,7 @@ function setupCartCounts() {
 // Records one cart per stop, prompts for per-record quantities, or undoes completion.
 // Flow: collect selected rows -> upload a new workbook to Supabase -> only on success mutate
 // row.del_status, move markers between routeDayGroups keys, refresh controls and sequence styling.
-// Uploads overwrite the whole file, so never mutate rows before the upload succeeds.
-// Assumes a single editing phone at a time (viewers only read); there is no merge with remote changes.
+// Profile saves require the expected revision; only explicit reviewed sync changes an original.
 async function saveSelectedDeliveryStatus(markDelivered) {
   if (deliverySaveInProgress || resequenceBusy) return;
   const rows = window._currentRows;
@@ -4764,6 +4944,10 @@ async function saveSelectedDeliveryStatus(markDelivered) {
 
 async function persistDeliveryChanges(selected, changes, action) {
   if (deliverySaveInProgress || resequenceBusy) return false;
+  if (!profileState.user || profileState.workspace?.mode !== "copy" || profileState.busy) {
+    setDeliverySaveStatus("error", "Open your profile copy to record deliveries. The original is view only.");
+    return false;
+  }
   const rows = window._currentRows;
   const workbook = window._currentWorkbook;
   const filePath = window._currentFilePath;
@@ -4793,7 +4977,7 @@ async function persistDeliveryChanges(selected, changes, action) {
     });
   } catch (error) {
     console.error("Cloud Save Error:", error);
-    setDeliverySaveStatus("error", "Not saved — check your connection and try again.");
+    setDeliverySaveStatus("error", profileMessage(error));
     return false;
   } finally {
     clearInterval(progressTimer);
@@ -4833,7 +5017,7 @@ async function persistDeliveryChanges(selected, changes, action) {
   }
 
   const fileNote = routeIsCurrent ? "" : ` in ${filePath}`;
-  setDeliverySaveStatus("saved", `Saved — ${count} ${stopLabel} ${action}${fileNote}.`);
+  setDeliverySaveStatus("saved", `Saved to your copy — ${count} ${stopLabel} ${action}${fileNote}. Sync when ready.`);
   return true;
 }
 

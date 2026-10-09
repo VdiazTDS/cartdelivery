@@ -4731,7 +4731,7 @@ body.sun-mode .sidebar .city-limits-controls {
   --overlay-icon-bg: #fce6ef;
   --overlay-icon-ink: #9e3055;
 }
-.city-limits-key { width: 22px; flex: 0 0 22px; border-top: 2px solid #b44669; }
+.city-limits-key { width: 22px; height: 16px; box-sizing: border-box; flex: 0 0 22px; border: 3px solid #c52267; border-radius: 4px; background: rgba(237, 64, 137, 0.14); box-shadow: 0 0 0 1px #fff; }
 .city-limits-tiles .leaflet-tile { filter: drop-shadow(0 0 1px #fff); }
 @media (prefers-reduced-motion: reduce) {
   .map-overlays > summary .arrow { transition: none; }
@@ -5219,3 +5219,115 @@ body #cartCountsDialog .cart-count-entry p { grid-column: 1 / -1; margin: 0; fon
 #cartCountStatus { min-height: 20px; font-weight: 600; }
 body #cartCountsDialog #saveCartCountsBtn { width: 100%; background: #137442; color: #fff; border-color: #278c58; }
 .multi-cart-badge.is-complete { background: #bbf7d0; }
+
+/* Saved workbooks: fixed heading with a scrollable list of file cards. */
+#fileManagerModal {
+  --files-surface: #182432;
+  --files-card: #223244;
+  --files-text: #f0f6fc;
+  --files-muted: #b2c2d3;
+  --files-edge: #40536a;
+  --files-track: #101c29;
+  --files-active: #344c67;
+  --files-danger: #ffadb4;
+  padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  box-sizing: border-box;
+  background: rgba(7, 17, 29, .64);
+  backdrop-filter: blur(4px);
+}
+body.sun-mode #fileManagerModal {
+  --files-surface: #f7f9fc;
+  --files-card: #fff;
+  --files-text: #172b43;
+  --files-muted: #526780;
+  --files-edge: #d3dfea;
+  --files-track: #e5ecf4;
+  --files-active: #fff;
+  --files-danger: #ad3044;
+}
+#fileManagerModal .modal-content {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 520px;
+  max-height: min(84dvh, 800px);
+  padding: 24px;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid var(--files-edge);
+  border-radius: 24px;
+  background: var(--files-surface) !important;
+  color: var(--files-text) !important;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .3);
+  text-align: left;
+}
+#fileManagerModal .saved-files-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-shrink: 0; }
+#fileManagerModal .saved-files-eyebrow { color: var(--files-muted); font-size: 10px; font-weight: 700; letter-spacing: 1.6px; }
+#fileManagerModal h3 { margin: 5px 0 0; font-size: 23px; line-height: 1.25; color: var(--files-text); }
+#fileManagerModal #closeFileManager {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--files-edge);
+  border-radius: 50%;
+  background: var(--files-card);
+  color: var(--files-muted);
+  font-size: 27px;
+  cursor: pointer;
+}
+#fileManagerModal .saved-files-modal-help { margin: 14px 0 20px; color: var(--files-muted); font-size: 13px; line-height: 1.5; flex-shrink: 0; }
+#fileManagerModal .saved-file-tabs { display: grid; grid-template-columns: 1fr 1fr; flex-shrink: 0; gap: 4px; padding: 4px; margin: 0 0 18px; background: var(--files-track); border: 0; border-radius: 13px; }
+#fileManagerModal .saved-file-tab { min-height: 44px; padding: 10px 8px; margin: 0; border: 0; border-radius: 10px; background: transparent; color: var(--files-muted); font-size: 13px; font-weight: 700; cursor: pointer; }
+#fileManagerModal .saved-file-tab.active { background: var(--files-active); color: var(--files-text); box-shadow: 0 2px 5px rgba(0, 0, 0, .1); }
+#fileManagerModal #savedFiles { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 2px; scrollbar-width: thin; }
+#fileManagerModal .saved-file-card { display: grid; gap: 16px; margin: 0 0 12px; padding: 16px; border: 1px solid var(--files-edge); border-radius: 16px; background: var(--files-card); box-shadow: 0 3px 8px rgba(0, 0, 0, .04); }
+#fileManagerModal .saved-file-card:last-child { margin-bottom: 0; }
+#fileManagerModal .saved-file-heading { display: flex; align-items: center; gap: 12px; min-width: 0; }
+#fileManagerModal .saved-file-icon { display: flex; align-items: center; justify-content: center; flex: 0 0 44px; height: 48px; border-radius: 10px; background: #d9f2e7; color: #14613f; font-size: 11px; font-weight: 800; letter-spacing: .5px; }
+#fileManagerModal .saved-file-name { flex: 1; min-width: 0; color: var(--files-text); font-size: 14px; line-height: 1.5; font-weight: 700; overflow-wrap: anywhere; }
+#fileManagerModal #savedFiles button { min-height: 44px; width: auto; height: auto; margin: 0; padding: 10px 12px; border: 1px solid var(--files-edge) !important; border-radius: 10px; background: transparent !important; color: var(--files-text) !important; font-size: 12px; line-height: 1.4; font-weight: 600; cursor: pointer; transform: none; box-shadow: none; touch-action: manipulation; }
+#fileManagerModal #savedFiles .saved-file-btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 48px; background: #176946 !important; border-color: #176946 !important; color: #fff !important; font-size: 14px; }
+#fileManagerModal .saved-file-btn::after { content: '\2192'; font-size: 20px; line-height: 1; }
+#fileManagerModal .saved-file-secondary-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding-top: 12px; border-top: 1px solid var(--files-edge); }
+#fileManagerModal #savedFiles .saved-file-delete-btn { color: var(--files-danger) !important; border-color: transparent !important; }
+#fileManagerModal button:hover { filter: brightness(.94); }
+#fileManagerModal button:focus-visible { outline: 3px solid #4597f0; outline-offset: 2px; }
+#fileManagerModal #savedFiles button:disabled { opacity: .55; cursor: wait; }
+#fileManagerModal .saved-files-empty { padding: 28px 16px; margin: 0; border: 1px dashed var(--files-edge); border-radius: 14px; color: var(--files-muted); text-align: center; font-size: 14px; line-height: 1.6; }
+#fileManagerModal .saved-files-footer { flex-shrink: 0; margin: 16px 0 0; color: var(--files-muted); text-align: center; font-size: 11px; line-height: 1.5; }
+@media (max-width: 900px) {
+  #fileManagerModal { align-items: flex-end; }
+  #fileManagerModal .modal-content { padding: 20px; max-height: 84dvh; }
+}
+
+/* Account, private copy and explicit sync share one phone-friendly workspace. */
+#profileWorkspaceBtn { display: block; width: fit-content; max-width: 100%; min-height: 44px; margin: 4px auto 0; padding: 8px 14px; border: 1px solid #537189; border-radius: 12px; background: #203c4f; color: #eef8ff; font: inherit; font-size: 12px; overflow-wrap: anywhere; cursor: pointer; }
+body.sun-mode #profileWorkspaceBtn { background: #e4f1ed; color: #175338; border-color: #9dc8b7; }
+.profile-dialog { --profile-bg: #172736; --profile-card: #21374a; --profile-text: #edf5ff; --profile-muted: #bacddd; --profile-border: #536b82; box-sizing: border-box; width: min(660px, calc(100% - 24px - env(safe-area-inset-left) - env(safe-area-inset-right))); max-height: calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); padding: 22px; border: 1px solid var(--profile-border); border-radius: 20px; color: var(--profile-text); background: var(--profile-bg); overflow-y: auto; }
+body.sun-mode .profile-dialog { --profile-bg: #f6f9fc; --profile-card: #fff; --profile-text: #172b43; --profile-muted: #506780; --profile-border: #bccddd; }
+.profile-dialog::backdrop { background: rgba(5, 15, 25, .65); backdrop-filter: blur(3px); }
+.profile-dialog [hidden] { display: none !important; }
+.profile-heading, .profile-account { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.profile-heading h2 { font-size: 21px; margin: 0; }
+.profile-dialog p { color: var(--profile-muted); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.profile-dialog label { display: block; font-size: 14px; font-weight: 600; margin: 14px 0 6px; }
+body .profile-dialog input, body .profile-dialog select { display: block; box-sizing: border-box; width: 100%; min-height: 48px; margin: 6px 0; padding: 10px; background: var(--profile-card) !important; border: 1px solid var(--profile-border) !important; border-radius: 9px; color: var(--profile-text) !important; font-size: 16px; }
+body .profile-dialog button { min-height: 44px; padding: 10px 14px; background: var(--profile-card) !important; color: var(--profile-text) !important; border: 1px solid var(--profile-border) !important; border-radius: 10px; cursor: pointer; font: inherit; font-size: 14px; }
+body .profile-dialog .profile-primary { background: #176946 !important; color: #fff !important; border-color: #176946 !important; }
+.profile-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 18px 0; }
+.profile-dialog button:disabled { opacity: .5; cursor: wait; }
+.profile-dialog :focus-visible, #profileWorkspaceBtn:focus-visible { outline: 3px solid #489fff; outline-offset: 2px; }
+.profile-dialog small, .profile-help { color: var(--profile-muted); line-height: 1.5; }
+.profile-change { padding: 16px; margin: 12px 0; border: 1px solid var(--profile-border); border-radius: 12px; background: var(--profile-card); overflow-wrap: anywhere; }
+.profile-change p { margin: 8px 0; }
+.profile-scroll { max-height: 52dvh; overflow-y: auto; overscroll-behavior: contain; padding: 2px; }
+.profile-conflict { border: 2px solid #c9882d; }
+.profile-change summary { min-height: 44px; cursor: pointer; font-weight: 600; line-height: 1.5; }
+#confirmProfileSyncBtn { width: 100%; margin-top: 12px; }
+#profileStatus, #profileSyncStatus { white-space: pre-line; }
+#fileManagerModal .profile-file-detail { margin: -4px 0 0; color: var(--files-muted); font-size: 12px; line-height: 1.5; }
+@media (max-width: 900px) {
+  .profile-dialog { padding: 18px; }
+  .profile-actions { grid-template-columns: 1fr; }
+}

@@ -1,0 +1,11 @@
+[auth]
+enable_signup = true
+minimum_password_length = 8
+
+[auth.email]
+enable_signup = true
+enable_confirmations = false
+
+[functions.profile-workbooks]
+verify_jwt = false
+# The function validates every request with auth.getUser(token), including new signing keys.
