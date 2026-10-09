@@ -9,7 +9,7 @@ Read [README.md](./README.md) first (architecture, data model, how-to recipes).
 - Never decide selection from marker styling. Use `isStopSelected()`; after changes call `updateSelectionCount()` and `updateUndoButtonState()`.
 - Layout is phone at `window.innerWidth <= 900`. Shared buttons are moved by `placeDeliveryControls()`; update both branches.
 - `style.css` has many later "override" blocks. Search every occurrence of a selector before editing; the last one wins.
-- Delivery saves overwrite the whole workbook in Supabase. Update in-memory rows only after the upload succeeds.
+- Delivery saves commit changed fields to Supabase PostgreSQL. Update in-memory rows only after the transaction succeeds. Excel is an immutable import/export source.
 - When you change `app.js` or `style.css`, bump the `?v=` cache-buster in `index.html`.
 - Never commit secrets. The Supabase key in `app.js` is a publishable (public) key by design; do not add service keys.
 - Test with sample data and fake saves; do not upload to or delete from the real storage bucket.
@@ -18,4 +18,4 @@ Read [README.md](./README.md) first (architecture, data model, how-to recipes).
 - Read a stop's route/day only via `rowRoute(row)` / `rowDay(row)` (they use the `ROUTE` / `DAY` columns; `NEWROUTE`/`NEWDAY` are ignored).
 
 
-- Delivery status changes must stay confirm-then-mutate: upload first, update rows/markers only on success. Never make it optimistic.
+- Delivery status changes must stay confirm-then-mutate: commit first, update rows/markers only on success. Never make it optimistic.

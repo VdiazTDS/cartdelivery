@@ -3,13 +3,13 @@ import { applyEdits, changedFields, previewMerge, mergeRows } from './merge.mjs'
 export function createWorkbookService(db, XLSX) {
   const bucket = db.storage.from('profile-workbooks');
   const unwrap = ({ data, error }) => { if (error) throw new Error(error.message); return data; };
-  const one = async (table, filters) => {
-    let q = db.from(table).select('*');
+  const one = async (table, filters, columns = '*') => {
+    let q = db.from(table).select(columns);
     for (const [key, value] of Object.entries(filters)) q = q.eq(key, value);
     return unwrap(await q.maybeSingle());
   };
   const read = async path => new Uint8Array(await unwrap(await bucket.download(path)).arrayBuffer());
-  const parse = bytes => XLSX.read(bytes, { type: 'array', cellStyles: true, bookVBA: true });
+  const parse = (bytes, options = {}) => XLSX.read(bytes, { type: 'array', dense: true, cellText: false, cellStyles: true, bookVBA: true, ...options });
   const rowsOf = wb => XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
   async function put(bytes, extension = 'xlsx') {
     const path = `${crypto.randomUUID()}.${extension}`;
@@ -24,7 +24,7 @@ export function createWorkbookService(db, XLSX) {
     const range = XLSX.utils.decode_range(ws['!ref']);
     const columns = new Map();
     for (let col = range.s.c; col <= range.e.c; col++) {
-      const key = String(ws[XLSX.utils.encode_cell({ r: range.s.r, c: col })]?.v ?? '');
+      const key = String(ws[range.s.r]?.[col]?.v ?? '');
       if (key) columns.set(key, col);
     }
     rows.forEach((row, index) => {
@@ -36,7 +36,7 @@ export function createWorkbookService(db, XLSX) {
         XLSX.utils.sheet_add_aoa(ws, [[row[field] ?? '']], { origin: { r: previous[index].__rowNum__, c: columns.get(field) } });
       }
     });
-    return put(XLSX.write(wb, { type: 'array', bookType: 'xlsx', compression: true }));
+    return put(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', compression: true }));
   }
   const signed = async path => unwrap(await bucket.createSignedUrl(path, 300)).signedUrl;
   const pending = c => c?.pending_count || 0;
@@ -59,7 +59,7 @@ export function createWorkbookService(db, XLSX) {
     if (mutating) {
       if (!uuid(body.requestId)) throw new Error('INVALID_REQUEST_ID');
       hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(body))))).map(x => x.toString(16).padStart(2, '0')).join('');
-      const receipt = await one('cd_receipts', { actor_id: actor.id, request_id: body.requestId });
+      const receipt = await one('cd_receipts', { actor_id: actor.id, request_id: body.requestId }, 'request_hash,result');
       if (receipt) {
         if (receipt.request_hash !== hash) throw new Error('REQUEST_REUSED');
         return { ...receipt.result, ...(receipt.result.path ? { url: await signed(receipt.result.path) } : {}) };
@@ -83,18 +83,26 @@ export function createWorkbookService(db, XLSX) {
         bytes = Uint8Array.from(atob(body.base64), c => c.charCodeAt(0));
       }
       if (bytes.byteLength > 20_000_000) throw new Error('FILE_TOO_LARGE');
-      const wb = parse(bytes);
+      // XLSX imports keep the original bytes; only the first sheet needs decoding.
+      const wb = parse(bytes, extension === 'xlsx' ? { sheets: 0, cellStyles: false } : {});
       if (wb.vbaraw) throw new Error('INVALID_MACRO_WORKBOOK');
       const rows = rowsOf(wb);
       if (!rows.length || rows.length > 100_000) throw new Error('INVALID_ROW_COUNT');
-      const headers = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 })[0].filter(v => v != null && v !== '').map(String);
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const range = XLSX.utils.decode_range(ws['!ref']);
+      const headers = [];
+      for (let col = range.s.c; col <= range.e.c; col++) {
+        const value = ws[range.s.r]?.[col]?.v;
+        if (value != null && value !== '') headers.push(String(value));
+      }
       if (new Set(headers).size !== headers.length) throw new Error('DUPLICATE_HEADERS');
       const originalPath = await put(bytes, extension);
-      const path = extension === 'xlsx' ? originalPath : await put(XLSX.write(wb, { type: 'array', bookType: 'xlsx', compression: true }));
+      const path = extension === 'xlsx' ? originalPath : await put(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', compression: true }));
       return commit({ id: crypto.randomUUID(), name, source_key: source || null, original_path: originalPath, path, rows });
     }
     if (!uuid(body.fileId)) throw new Error('INVALID_FILE');
-    const f = await one('cd_files', { id: body.fileId });
+    const merging = action === 'preview' || action === 'sync';
+    const f = await one('cd_files', { id: body.fileId }, `id,name,revision,workbook_path${merging ? ',rows' : ''}`);
     if (!f) throw new Error('FILE_NOT_FOUND');
     if (action === 'history') {
       const offset = Number.isInteger(body.offset) && body.offset >= 0 ? body.offset : 0;
@@ -103,7 +111,8 @@ export function createWorkbookService(db, XLSX) {
       return { history };
     }
     if (action === 'original') return { ...describe(f), url: await signed(f.workbook_path), mode: 'original' };
-    const c = await one('cd_copies', { file_id: f.id, owner_id: actor.id });
+    const c = await one('cd_copies', { file_id: f.id, owner_id: actor.id },
+      `id,revision,base_revision,pending_count,workbook_path${merging || action === 'save' ? ',rows' : ''}${merging ? ',base_rows' : ''}`);
     if (action === 'open') {
       if (c) return { ...describe(f, c), url: await signed(c.workbook_path) };
       const path = await put(await read(f.workbook_path));

@@ -596,7 +596,11 @@ function profileMessage(error) {
   if (code.includes("UNRESOLVED_CONFLICT")) return "Choose how to resolve every overlapping customer before syncing.";
   if (code.includes("DUPLICATE_HEADERS")) return "This workbook has duplicate column headings. Give each column a unique heading before importing.";
   if (code.includes("INVALID_MACRO_WORKBOOK")) return "Macro-enabled workbooks are not supported. Export an XLSX copy without macros first.";
-  if (code.includes("FILE_TOO_LARGE")) return "This workbook is too large. The profile import limit is 20 MB.";
+  if (code.includes("FILE_TOO_LARGE")) return "This workbook is too large. The import limit is 50 MB.";
+  if (code.includes("CLIENT_UPDATE_REQUIRED")) return "Refresh the app to use the updated delivery profiles.";
+  if (code.includes("IMPORT_DEVICE_LIMIT")) return "This device could not finish reading the Excel file. Import it once from a computer, then reopen it on your phone.";
+  if (code.includes("INVALID_ROW_COUNT")) return "Import a first sheet containing between 1 and 100,000 records.";
+  if (code.includes("WORKER_RESOURCE_LIMIT")) return "The server ran out of resources while processing this workbook. Reopen your copy to check what saved; if it still cannot open, the workbook needs administrator attention.";
   if (code.includes("already registered")) return "That username already exists. Sign in or choose another username.";
   if (code.includes("Invalid login credentials")) return "The username or password is incorrect.";
   if (code.includes("SETUP_REQUIRED")) return "Delivery profiles need the Supabase setup first. No original files have been changed.";
@@ -614,6 +618,7 @@ async function profileApi(body) {
         body: JSON.stringify(body), cache: "no-store"
       });
       if (response.status === 404) throw new Error("SETUP_REQUIRED");
+      if (response.status === 546) throw new Error("WORKER_RESOURCE_LIMIT");
       if (response.status >= 500 && !attempt) continue;
       const result = await response.json();
       if (!response.ok || result.error) throw new Error(result.error || "REQUEST_FAILED");
@@ -660,20 +665,97 @@ function requireProfile() {
 }
 async function displayProfileWorkbook(result, mode = "copy") {
   const generation = profileState.generation;
-  const response = await fetch(result.url, { cache: "no-store" });
-  if (!response.ok) throw new Error("REQUEST_FAILED");
-  const bytes = await response.arrayBuffer();
+  const rows = [];
+  while (rows.length < result.rowCount) {
+    const page = await profileApi({ action: "rows", fileId: result.fileId, mode, offset: rows.length,
+      copyRevision: result.copyRevision, masterRevision: result.masterRevision });
+    if (!page.rows.length || page.offset !== rows.length || page.rowCount !== result.rowCount) throw new Error("ROW_STRUCTURE_CHANGED");
+    rows.push(...page.rows);
+  }
   if (generation !== profileState.generation) throw new Error("SIGN_IN_REQUIRED");
-  const parsed = XLSX.read(new Uint8Array(bytes), { type: "array", cellStyles: true, bookVBA: true });
-  if (!parsed.Sheets[parsed.SheetNames[0]]) throw new Error("INVALID_FILE");
   profileState.workspace = { ...result, mode, owner: profileState.user.id };
-  delete profileState.workspace.url;
   window._currentFilePath = result.name;
   setCurrentFileDisplay(`${result.name} · ${mode === "original" ? "Original (view only)" : profileUsername(profileState.user) + "’s copy"}`);
-  processExcelBuffer(bytes, parsed);
+  processExcelBuffer(null, profileViewWorkbook(), rows);
   profileState.preview = null;
   profileState.syncRequest = null;
   renderProfileState();
+}
+function profileViewWorkbook() {
+  // Map state needs a file handle; actual Excel cells are created only on export.
+  return { SheetNames: ["Stops"], Sheets: { Stops: {} } };
+}
+async function importProfileFile(file, localFile = null) {
+  let bytes;
+  let digest;
+  if (localFile) {
+    if (localFile.size > 50000000) throw new Error("FILE_TOO_LARGE");
+    bytes = await localFile.arrayBuffer();
+    digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))).map(x => x.toString(16).padStart(2, "0")).join("");
+  }
+  const prepared = await profileApi({ action: "import-start", name: file.name, sourceKey: file.sourceKey, digest, requestId: crypto.randomUUID() });
+  if (prepared.ready) return prepared;
+  if (prepared.upload) {
+    const { error } = await sb.storage.from(prepared.upload.bucket).uploadToSignedUrl(prepared.upload.path, prepared.upload.token, localFile);
+    if (error) throw error;
+  }
+  if (!bytes) {
+    const response = await fetch(prepared.url, { cache: "no-store" });
+    if (!response.ok) throw new Error("REQUEST_FAILED");
+    if (Number(response.headers.get("Content-Length")) > 50000000) throw new Error("FILE_TOO_LARGE");
+    bytes = await response.arrayBuffer();
+    if (bytes.byteLength > 50000000) throw new Error("FILE_TOO_LARGE");
+  }
+  showLoading("Reading Excel for first-time import…");
+  const worker = new Worker("profile-import-worker.js?v=20261009-database");
+  const request = (message, transfer = []) => new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("IMPORT_DEVICE_LIMIT")), 120000);
+    worker.onmessage = ({ data }) => { clearTimeout(timeout); data.error ? reject(new Error(data.error)) : resolve(data); };
+    worker.onerror = () => { clearTimeout(timeout); reject(new Error("IMPORT_DEVICE_LIMIT")); };
+    worker.postMessage(message, transfer);
+  });
+  try {
+    const { rowCount } = await request({ bytes }, [bytes]);
+    for (let offset = prepared.rowCount; offset < rowCount;) {
+      showLoading(`Importing records ${offset + 1}–${Math.min(offset + 250, rowCount)} of ${rowCount}…`);
+      const { rows } = await request({ offset });
+      if (!rows.length) throw new Error("INVALID_ROW_COUNT");
+      await profileApi({ action: "import-batch", fileId: prepared.fileId, offset, rows, requestId: crypto.randomUUID() });
+      offset += rows.length;
+    }
+    return await profileApi({ action: "import-finish", fileId: prepared.fileId, rowCount, requestId: crypto.randomUUID() });
+  } finally { worker.terminate(); }
+}
+async function profileExportWorkbook() {
+  const workspace = profileState.workspace;
+  if (!workspace) return window._currentWorkbook;
+  const generation = profileState.generation;
+  const rows = window._currentRows.map(row => ({ ...row }));
+  const { url } = await profileApi({ action: "export-source", fileId: workspace.fileId });
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) throw new Error("REQUEST_FAILED");
+  const workbook = XLSX.read(new Uint8Array(await response.arrayBuffer()), { type: "array", cellStyles: true, bookVBA: true, cellText: false });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const source = XLSX.utils.sheet_to_json(sheet);
+  if (rows.length !== source.length) throw new Error("ROW_STRUCTURE_CHANGED");
+  const range = XLSX.utils.decode_range(sheet["!ref"]);
+  const columns = new Map();
+  for (let col = range.s.c; col <= range.e.c; col++) {
+    const key = String(sheet[XLSX.utils.encode_cell({ r: range.s.r, c: col })]?.v ?? "");
+    if (key) columns.set(key, col);
+  }
+  rows.forEach((row, index) => {
+    for (const field of ["del_qty", "del_status", "delivery_notes"]) {
+      if (JSON.stringify(row[field] ?? null) === JSON.stringify(source[index][field] ?? null)) continue;
+      if (!columns.has(field)) {
+        columns.set(field, ++range.e.c);
+        XLSX.utils.sheet_add_aoa(sheet, [[field]], { origin: { r: range.s.r, c: range.e.c } });
+      }
+      XLSX.utils.sheet_add_aoa(sheet, [[row[field] ?? ""]], { origin: { r: source[index].__rowNum__, c: columns.get(field) } });
+    }
+  });
+  if (generation !== profileState.generation || workspace !== profileState.workspace) throw new Error("SIGN_IN_REQUIRED");
+  return workbook;
 }
 async function openProfileFile(file, mode = "copy") {
   if (!requireProfile() || profileState.busy || deliverySaveInProgress || resequenceBusy) return;
@@ -682,7 +764,7 @@ async function openProfileFile(file, mode = "copy") {
   showLoading(mode === "copy" ? "Opening your profile copy…" : "Opening original (view only)…");
   try {
     let fileId = file.fileId;
-    if (!fileId) ({ fileId } = await profileApi({ action: "import", requestId: crypto.randomUUID(), sourceKey: file.sourceKey, name: file.name }));
+    if (!fileId) ({ fileId } = await importProfileFile(file));
     const result = await profileApi({ action: mode === "copy" ? "open" : "original", fileId, requestId: crypto.randomUUID() });
     await displayProfileWorkbook(result, mode);
     profileElement("fileManagerModal").style.display = "none";
@@ -705,13 +787,10 @@ async function saveProfileWorkbook(rows, workbook, onProgress) {
   if (!edits.length) return workbook;
   onProgress("Saving your profile copy");
   const result = await profileApi({ action: "save", fileId: workspace.fileId, copyRevision: workspace.copyRevision, edits, requestId: crypto.randomUUID() });
-  const response = await fetch(result.url, { cache: "no-store" });
-  if (!response.ok) throw new Error("REQUEST_FAILED");
-  const savedWorkbook = XLSX.read(new Uint8Array(await response.arrayBuffer()), { type: "array", cellStyles: true, bookVBA: true });
   if (generation !== profileState.generation || workspace !== profileState.workspace) throw new Error("SIGN_IN_REQUIRED");
   Object.assign(workspace, { copyRevision: result.copyRevision, pending: result.pending });
   renderProfileState();
-  return savedWorkbook;
+  return profileViewWorkbook();
 }
 async function listProfileFiles() {
   const list = profileElement("savedFiles");
@@ -773,6 +852,12 @@ async function reviewProfileSync() {
   if (!requireProfile() || !profileState.workspace) return;
   await profileTask("profileStatus", async () => {
     const preview = await profileApi({ action: "preview", fileId: profileState.workspace.fileId });
+    while (preview.changes.length < preview.pending) {
+      const page = await profileApi({ action: "preview", fileId: preview.fileId, offset: preview.changes.length,
+        copyRevision: preview.copyRevision, masterRevision: preview.masterRevision });
+      if (!page.changes.length) throw new Error("STALE_VERSION");
+      preview.changes.push(...page.changes);
+    }
     profileState.preview = preview; profileState.syncRequest = null;
     const conflicts = preview.changes.filter(item => item.conflict).length;
     profileElement("profileSyncSummary").textContent = `${preview.name} · ${preview.changes.length} changed records · ${conflicts} overlaps to review. Sync also refreshes your copy with the latest original.`;
@@ -838,13 +923,30 @@ async function showProfileHistory(more = false) {
     const { history } = await profileApi({ action: "history", fileId: workspace.fileId, offset: list.children.length });
     history.forEach(entry => {
       const card = document.createElement("details"); card.className = "profile-change";
-      const summary = document.createElement("summary"); summary.textContent = `${entry.profile_name} · ${new Date(entry.created_at).toLocaleString()} · ${entry.changes.length} records changed`;
-      const version = document.createElement("p"); version.textContent = `Original version ${entry.before_revision} → ${entry.after_revision}. ${entry.resolutions.length} overlaps reviewed.`;
+      const summary = document.createElement("summary"); summary.textContent = `${entry.profile_name} · ${new Date(entry.created_at).toLocaleString()} · ${entry.change_count} records changed`;
+      const version = document.createElement("p"); version.textContent = `Original version ${entry.before_revision} → ${entry.after_revision}. ${entry.resolution_count} overlaps reviewed.`;
       card.append(summary, version);
-      entry.changes.forEach(change => {
-      const line = document.createElement("p"); line.textContent = `${change.address || "Record " + (change.index + 1)} · Bin ${change.bin || "—"}: ${change.fields.map(field => `${({ del_qty: "Carts delivered", del_status: "Status", delivery_notes: "Note" })[field.field] || field.field}: ${field.before === "" || field.before == null ? "blank" : field.before} → ${field.after === "" || field.after == null ? "blank" : field.after}`).join("; ")}`; card.append(line);
-      });
-      entry.resolutions.forEach(resolution => { const line = document.createElement("p"); line.textContent = `Record ${resolution.index + 1}: ${resolution.choice === "count" ? `final delivered total ${resolution.count}` : resolution.choice === "mine" ? "used profile changes" : "kept original values"}`; card.append(line); });
+      const detail = document.createElement("div");
+      const load = document.createElement("button"); load.textContent = "Show changes";
+      let offset = 0;
+      const loadPage = async () => {
+        if (load.disabled || load.hidden) return;
+        load.disabled = true;
+        try {
+          const page = await profileApi({ action: "history-changes", fileId: workspace.fileId, eventId: entry.id, offset });
+          page.changes.forEach(change => {
+            const line = document.createElement("p"); line.textContent = `${change.address || "Record " + (change.index + 1)} · Bin ${change.bin || "—"}: ${change.fields.map(field => `${({ del_qty: "Carts delivered", del_status: "Status", delivery_notes: "Note" })[field.field] || field.field}: ${field.before === "" || field.before == null ? "blank" : field.before} → ${field.after === "" || field.after == null ? "blank" : field.after}`).join("; ")}`; detail.append(line);
+          });
+          page.resolutions.forEach(resolution => { const line = document.createElement("p"); line.textContent = `Record ${resolution.index + 1}: ${resolution.choice === "count" ? `final delivered total ${resolution.count}` : resolution.choice === "mine" ? "used profile changes" : "kept original values"}`; detail.append(line); });
+          offset += 250;
+          load.textContent = "Show more changes";
+          load.hidden = offset >= Math.max(entry.change_count, entry.resolution_count);
+        } catch (error) { load.textContent = profileMessage(error) + " Tap to retry."; }
+        finally { load.disabled = false; }
+      };
+      load.onclick = loadPage;
+      card.ontoggle = () => { if (card.open && !offset) loadPage(); };
+      card.append(detail, load);
       list.append(card);
     });
     button.hidden = history.length < 25;
@@ -3273,11 +3375,11 @@ resequenceElement("saveSequenceBtn").addEventListener("click", () => {
 // Required columns: LATITUDE, LONGITUDE, ROUTE, DAY. Optional: CSADR#, CSSDIR, CSSTRT, CSSFUX
 // (address), SIZE, QTY, BINNO (popup), SEQNO (sequence), del_status ("Delivered" marks completed stops).
 // Rebuilds sequenceGroups, resets map/selection, then fills routeDayGroups by day or Delivered.
-function processExcelBuffer(buffer, parsedWorkbook = null) {
+function processExcelBuffer(buffer, parsedWorkbook = null, confirmedRows = null) {
   const wb = parsedWorkbook || XLSX.read(new Uint8Array(buffer), { type: "array", cellStyles: true, bookVBA: true });
   const ws = wb.Sheets[wb.SheetNames[0]];
 
-  const rows = XLSX.utils.sheet_to_json(ws);
+  const rows = confirmedRows || XLSX.utils.sheet_to_json(ws);
   resetAddressSearch();
   rebuildSequenceData(rows);
 
@@ -3833,11 +3935,7 @@ async function uploadFile(file) {
   profileState.busy = true; renderProfileState();
   showLoading("Adding an original route file…");
   try {
-    if (file.size > 20000000) throw new Error("FILE_TOO_LARGE");
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    let binary = "";
-    for (let index = 0; index < bytes.length; index += 8192) binary += String.fromCharCode(...bytes.subarray(index, index + 8192));
-    const result = await profileApi({ action: "import", name: file.name, base64: btoa(binary), requestId: crypto.randomUUID() });
+    const result = await importProfileFile({ name: file.name }, file);
     const copy = await profileApi({ action: "open", fileId: result.fileId, requestId: crypto.randomUUID() });
     await displayProfileWorkbook(copy);
     closeMobileMenu();
@@ -4399,7 +4497,7 @@ if (downloadBtn && modal && confirmBtn && cancelBtn) {
   });
 
   // Confirm download
-  confirmBtn.addEventListener("click", () => {
+  confirmBtn.addEventListener("click", async () => {
 
     modal.style.display = "none";
 
@@ -4417,7 +4515,10 @@ if (downloadBtn && modal && confirmBtn && cancelBtn) {
     const baseName = getDownloadBaseName(window._currentFilePath);
 
     const newFileName = `${baseName}_Backup_${timestamp}.xlsx`;
-    XLSX.writeFile(window._currentWorkbook, newFileName, { compression: true });
+    showLoading("Preparing your Excel download…");
+    try { XLSX.writeFile(await profileExportWorkbook(), newFileName, { compression: true }); }
+    catch (error) { alert(profileMessage(error)); }
+    finally { hideLoading(); }
   });
 }
 
