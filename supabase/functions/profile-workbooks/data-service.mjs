@@ -1,6 +1,6 @@
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const unwrap = ({ data, error }) => { if (error) throw new Error(error.message); return data; };
-const actions = new Set(['list', 'import-start', 'import-batch', 'import-finish', 'open', 'original', 'rows', 'save', 'preview', 'sync', 'history', 'history-changes', 'export-source']);
+const actions = new Set(['list', 'import-start', 'import-batch', 'import-finish', 'open', 'original', 'rows', 'save', 'preview', 'sync', 'history', 'history-changes', 'export-source', 'work-areas', 'work-areas-save']);
 export const publicActions = new Set(['public-list', 'public-original', 'public-rows', 'public-export-source']);
 
 export function createDataService(db) {
@@ -15,10 +15,11 @@ export function createDataService(db) {
     }
     if (!actor?.id || !/^[a-z0-9][a-z0-9_-]{2,29}@profiles\.cartdelivery\.invalid$/.test(actor.email || '')) throw new Error('SIGN_IN_REQUIRED');
     if (!body || !actions.has(body.action)) throw new Error('CLIENT_UPDATE_REQUIRED');
-    const mutating = ['import-start', 'import-batch', 'import-finish', 'open', 'save', 'sync'].includes(body.action);
+    const mutating = ['import-start', 'import-batch', 'import-finish', 'open', 'save', 'sync', 'work-areas-save'].includes(body.action);
     if (mutating && !uuid(body.requestId)) throw new Error('INVALID_REQUEST_ID');
     if (!['list', 'import-start'].includes(body.action) && !uuid(body.fileId)) throw new Error('INVALID_FILE');
     if (body.action === 'history-changes' && !uuid(body.eventId)) throw new Error('INVALID_HISTORY');
+    if (body.action === 'work-areas-save' && body.mode !== 'original') throw new Error('INVALID_WORK_AREA_VIEW');
     const json = JSON.stringify(body);
     if (json.length > 12_000_000 || (body.action === 'import-batch' && json.length > 750_000)) throw new Error('INVALID_REQUEST_SIZE');
     const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(json)))).map(x => x.toString(16).padStart(2, '0')).join('');
@@ -37,7 +38,8 @@ export function createDataService(db) {
       if (!file || file.owner_id !== actor.id) throw new Error('INVALID_IMPORT');
       await signed(file.source_bucket, file.source_path);
     }
-    const rpc = body.action === 'import-start' && body.fieldMapping !== undefined ? 'cd_data_import_mapped' : 'cd_data_call';
+    const rpc = body.action.startsWith('work-areas') ? 'cd_work_areas_call'
+      : body.action === 'import-start' && body.fieldMapping !== undefined ? 'cd_data_import_mapped' : 'cd_data_call';
     const result = unwrap(await db.rpc(rpc, {
       p_actor: actor.id, p_username: actor.email.split('@')[0], p_request: mutating ? body.requestId : null, p_hash: hash, p: input
     }));

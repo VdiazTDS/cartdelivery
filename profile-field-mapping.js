@@ -56,10 +56,42 @@ self.CartDeliveryFields = (() => {
         const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
         const index = days.findIndex(day => [day, day.slice(0, 3)].includes(value.trim().toLowerCase()));
         if (index !== -1) value = index + 1;
+        else if (Number.isInteger(Number(value)) && Number(value) >= 1 && Number(value) <= 7) value = Number(value);
       }
       result[field.key] = value;
     }
     return result;
   }
-  return { fields, suggest, errors, apply };
+  const numeric = value => (typeof value === 'number' || typeof value === 'string') && String(value).trim() !== '' && Number.isFinite(Number(value));
+  function validCoordinates(lat, lon) {
+    return numeric(lat) && numeric(lon) && Math.abs(Number(lat)) <= 90 && Math.abs(Number(lon)) <= 180;
+  }
+  function checkData(rows, mapping) {
+    const rowRoute = row => row.ROUTE;
+    const rowDay = row => row.DAY;
+    const issues = {
+      coordinates: { count: 0, examples: [], label: 'Missing or invalid coordinates', effect: 'These stops cannot appear on the map.' },
+      quantity: { count: 0, examples: [], label: 'Invalid cart quantities', effect: 'Use whole numbers greater than zero before recording deliveries.' },
+      day: { count: 0, examples: [], label: 'Unrecognized service days', effect: 'Use 1–7 (Monday–Sunday) or weekday names. These stops will be hidden by the day filters.' },
+      route: { count: 0, examples: [], label: 'Missing routes', effect: 'Assign a route so these stops are easy to find.' }
+    };
+    let affected = 0;
+    rows.forEach((source, index) => {
+      const row = apply(source, mapping);
+      const day = rowDay(row);
+      const failures = [
+        ['coordinates', !validCoordinates(row.LATITUDE, row.LONGITUDE)],
+        ['quantity', !numeric(row.QTY) || !Number.isSafeInteger(Number(row.QTY)) || Number(row.QTY) <= 0],
+        ['day', !numeric(day) || !Number.isInteger(Number(day)) || Number(day) < 1 || Number(day) > 7],
+        ['route', rowRoute(row) == null || !String(rowRoute(row)).trim()]
+      ].filter(([, failed]) => failed);
+      if (failures.length) affected++;
+      failures.forEach(([key]) => {
+        const issue = issues[key]; issue.count++;
+        if (issue.examples.length < 5) issue.examples.push(Number.isInteger(source.__rowNum__) ? source.__rowNum__ + 1 : index + 2);
+      });
+    });
+    return { total: rows.length, affected, mappable: rows.length - issues.coordinates.count, issues: Object.values(issues).filter(issue => issue.count) };
+  }
+  return { fields, suggest, errors, apply, validCoordinates, checkData };
 })();

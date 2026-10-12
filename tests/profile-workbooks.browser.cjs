@@ -105,6 +105,21 @@ const server = http.createServer((req, res) => {
       return page;
     };
     const a = await create(440), b = await create(1440);
+    for (const width of [360, 440]) {
+      await a.setViewportSize({ width, height: 956 });
+      for (let theme = 0; theme < 2; theme++) {
+        await a.locator('.header-top .theme-toggle').click();
+        assert.equal(await a.locator('#sunModeToggle').isChecked(), await a.locator('body').evaluate(el => el.classList.contains('sun-mode')));
+        assert.equal(await a.locator('.header-workspace').isVisible(), false, 'An empty phone workspace adds no header row');
+        assert.equal(await a.locator('#profileWorkspaceBtn').evaluate(el => el.parentElement.className), 'header-top');
+        for (const target of ['#downloadFullExcelBtn', '.theme-toggle', '#lockScreenBtn', '#profileWorkspaceBtn']) {
+          assert(await a.locator(target).evaluate(el => el.getBoundingClientRect().height >= 44));
+        }
+        assert(await a.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+        await a.locator('header').screenshot({ path: path.join(root, `local-artifacts/header-empty-${width}-${theme}.png`) });
+      }
+    }
+    await a.setViewportSize({ width: 440, height: 956 });
     const captureProfile = async (page, name, selector = '#profileDialog') => {
       for (const light of [false, true]) {
         await page.evaluate(light => document.body.classList.toggle('sun-mode', light), light);
@@ -188,10 +203,12 @@ const server = http.createServer((req, res) => {
     delaySave = true;
     await deliver(a, [0, 2]);
     await a.waitForFunction(() => deliverySaveInProgress);
+    assert.match(await a.locator('#routeContext').textContent(), /Saving to my copy/);
     assert.deepEqual(await a.evaluate(() => _currentRows.map(row => row.del_qty)), [0, 0, 0]);
     while (!releaseSave) await new Promise(resolve => setTimeout(resolve, 10));
     delaySave = false; releaseSave();
     await a.waitForFunction(() => !deliverySaveInProgress && _currentRows[0].del_qty === 1);
+    assert.match(await a.locator('#routeContext').textContent(), /2 stops waiting to sync/);
     await deliver(b, [1, 2]); await b.waitForFunction(() => !deliverySaveInProgress && _currentRows[1].del_qty === 1);
     await a.locator('#profileWorkspaceBtn').click();
     assert.match(await a.locator('#profileSaveSummary').textContent(), /saved in your copy/);
@@ -228,6 +245,8 @@ const server = http.createServer((req, res) => {
     await a.locator('#profileShareAcknowledged').check();
     await a.evaluate(() => { document.getElementById('commitProfileShareBtn').click(); document.getElementById('commitProfileShareBtn').click(); });
     await a.waitForFunction(() => !profileState.busy && profileState.workspace.pending === 0);
+    assert.match(await a.locator('#profileLastSync').textContent(), /Last sync:/);
+    assert.match(await a.locator('#routeContext').textContent(), /Nothing waiting to sync/);
     assert.equal(syncRequests, 2, 'Only the initial request and its lost-response retry are sent');
     assert.equal((await fx.pg.query('select count(*)::int n from cd_data_history')).rows[0].n, 1, 'Lost response retry syncs once');
     await review(b);
@@ -348,7 +367,7 @@ const server = http.createServer((req, res) => {
     const chooseUpload = async (page, name, buffer = uploadBytes) => {
       await page.locator('#fileInput').setInputFiles({ name, mimeType: 'application/octet-stream', buffer });
       if (/\.(xlsx|xls|csv)$/i.test(name)) {
-        await page.waitForFunction(() => teamUploadState.inspection && !teamUploadState.inspecting);
+        await page.waitForFunction(() => teamUploadState.inspection && !teamUploadState.inspecting && !teamUploadState.checking);
         await page.locator('#teamMappingConfirmed').check();
       }
     };
@@ -405,6 +424,47 @@ const server = http.createServer((req, res) => {
     assert.equal(fx.state.uploads.length, 1, 'Duplicate names never overwrite originals');
     await a.locator('#closeTeamUploadBtn').click();
     assert.deepEqual(await a.evaluate(()=>_currentRows.map(row=>row.del_qty)),[0,0,0]);
+    const mappedBytes = Buffer.from(fx.workbook([{ Lat: 30.75, Lng: -98.23, 'Route name': 'Mapped', 'Service day': 'Tuesday',
+      'Cart quantity': 3, Address: '123 Main St', 'Cart ID': '0012', 'Delivered qty': 0, 'Delivery status': '', Notes: 'Gate', Alternative: 2 }]));
+    await a.evaluate(() => openTeamUpload());
+    await chooseUpload(a, 'Mapped.xlsx', mappedBytes);
+    assert.equal(await a.locator('[data-mapping-field="QTY"]').inputValue(), 'Cart quantity');
+    assert.equal(await a.locator('[data-mapping-field="LATITUDE"]').inputValue(), 'Lat');
+    await a.locator('[data-mapping-field="QTY"]').selectOption('Alternative');
+    assert.equal(await a.locator('#teamMappingConfirmed').isChecked(), false);
+    assert.equal(await a.locator('#confirmTeamUploadBtn').isDisabled(), true);
+    assert.match(await a.locator('[id="team-sample-QTY"]').textContent(), /2/);
+    await a.locator('[data-mapping-field="LONGITUDE"]').selectOption('Lat');
+    assert.match(await a.locator('#teamMappingErrors').textContent(), /assigned more than once/);
+    await a.locator('[data-mapping-field="LONGITUDE"]').selectOption('Lng');
+    for (const width of [440, 1440]) {
+      await a.setViewportSize({ width, height: 956 });
+      await a.locator('#teamUploadDialog').evaluate(el => { el.scrollTop = 0; });
+      await captureProfile(a, 'mapping', '#teamUploadDialog');
+    }
+    await a.setViewportSize({ width: 440, height: 956 });
+    await a.locator('#teamMappingConfirmed').check();
+    await a.locator('#confirmTeamUploadBtn').click();
+    await a.waitForFunction(() => !profileState.busy && teamUploadState.added);
+    await a.locator('#openUploadedCopyBtn').click();
+    await a.waitForFunction(() => !profileState.busy && profileState.workspace?.name === 'Mapped.xlsx');
+    const mappedId = await a.evaluate(() => profileState.workspace.fileId);
+    await b.evaluate(fileId => openProfileFile({ fileId }), mappedId);
+    assert.deepEqual(await b.evaluate(() => [_currentRows[0].QTY, rowRoute(_currentRows[0]), rowDay(_currentRows[0]), _currentRows[0].BINNO]), [2, 'Mapped', 2, '0012']);
+    await b.evaluate(async () => {
+      const changes = _currentRows.map(row => ({ ...row, del_qty: 1, del_status: '', delivery_notes: 'Updated' }));
+      await saveProfileWorkbook(changes, _currentWorkbook, () => {});
+      _currentRows = changes;
+    });
+    const mappedExport = await b.evaluate(async () => {
+      const wb = await profileExportWorkbook();
+      return { row: XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]])[0], formula: wb.Sheets['Keep formula'].A1.f };
+    });
+    assert.equal(mappedExport.row['Delivered qty'], 1);
+    assert.equal(mappedExport.row.Notes, 'Updated');
+    assert.equal(mappedExport.row.del_qty, undefined, 'Mapped export updates the source heading rather than making duplicate delivery columns');
+    assert.equal(mappedExport.row['Cart quantity'], 3); assert.equal(mappedExport.row.Alternative, 2);
+    assert.equal(mappedExport.formula, '1+2');
     for (const bookType of ['xlsx','xls','csv']) {
       const workbook=fx.XLSX.utils.book_new();
       const sheet=fx.XLSX.utils.aoa_to_sheet([]);
@@ -434,6 +494,76 @@ const server = http.createServer((req, res) => {
 
     const teamA = accounts.get('team_a@profiles.cartdelivery.invalid');
     const teamB = accounts.get('team_b@profiles.cartdelivery.invalid');
+    const badRows = Array.from({ length: 8 }, () => ({ ...rows[0] }));
+    badRows[7] = { ...rows[0], LATITUDE: '', QTY: -2, DAY: 'Funday' };
+    await a.evaluate(() => openTeamUpload());
+    const uploadsBeforeCheck = fx.state.uploads.length;
+    await chooseUpload(a, 'Check.xlsx', Buffer.from(fx.workbook(badRows)));
+    assert.match(await a.locator('#teamDataCheck').textContent(), /1 of 8 rows need attention/);
+    assert.match(await a.locator('#teamDataCheck').textContent(), /Spreadsheet rows: 9/);
+    assert.equal(await a.locator('#confirmTeamUploadBtn').isDisabled(), true);
+    await a.locator('#teamDataAccepted').check();
+    assert.equal(await a.locator('#confirmTeamUploadBtn').isDisabled(), false);
+    for (const width of [440, 1440]) {
+      await a.setViewportSize({ width, height: 956 });
+      await a.locator('#teamDataCheck').scrollIntoViewIfNeeded();
+      await captureProfile(a, 'data-check', '#teamUploadDialog');
+    }
+    await a.locator('[data-mapping-field="QTY"]').selectOption('BINNO');
+    assert.equal(await a.locator('#teamDataAccepted').isChecked(), false, 'Mapping changes clear issue acceptance');
+    assert.equal(await a.locator('#confirmTeamUploadBtn').isDisabled(), true);
+    await a.locator('#closeTeamUploadBtn').click();
+    assert.equal(fx.state.uploads.length, uploadsBeforeCheck, 'Data checks do not upload sources');
+    await chooseUpload(a, 'No coordinates.xlsx', Buffer.from(fx.workbook([{ ...rows[0], LATITUDE: 100 }])));
+    assert.match(await a.locator('#teamDataCheck').textContent(), /No stops have usable coordinates/);
+    assert.equal(await a.locator('#confirmTeamUploadBtn').isDisabled(), true);
+    await a.locator('#closeTeamUploadBtn').click();
+    await a.setViewportSize({ width: 440, height: 956 });
+    const easeFile = await fx.importRows(teamA, 'Ease.xlsx', rows.map((row, index) => ({ ...row, ROUTE: index === 2 ? 'B' : 'A', DAY: index === 2 ? 2 : 1 })));
+    await a.evaluate(fileId => openProfileFile({ fileId }), easeFile.fileId);
+    await a.evaluate(() => {
+      document.querySelectorAll('#routeCheckboxes input').forEach(input => { input.checked = input.value === 'A'; });
+      document.querySelectorAll('#dayCheckboxes input').forEach(input => { input.checked = input.value === '1'; });
+      applyFilters(); map.setView([30.75, -98.23], 16, { animate: false });
+    });
+    const viewBeforeReload = await a.evaluate(() => rememberedDeliveryView());
+    await a.reload({ waitUntil: 'networkidle' });
+    await a.waitForFunction(fileId => !profileState.busy && profileState.workspace?.fileId === fileId, easeFile.fileId);
+    const viewAfterReload = await a.evaluate(() => rememberedDeliveryView());
+    assert.deepEqual(viewAfterReload.routes, ['A']); assert.deepEqual(viewAfterReload.days, ['1']);
+    assert.deepEqual(viewAfterReload.center, viewBeforeReload.center); assert.equal(viewAfterReload.zoom, 16);
+    assert.equal(await a.evaluate(() => Object.values(routeDayGroups).flatMap(group => group.layers).filter(marker => map.hasLayer(marker)).length), 2);
+    for (const width of [440, 1440]) {
+      await a.setViewportSize({ width, height: 956 });
+      await a.evaluate(() => Object.values(routeDayGroups).flatMap(group => group.layers).find(marker => marker._rowRef.ID === 0).openPopup());
+      await a.locator('.delivery-stop-card').waitFor();
+      await a.waitForFunction(() => Number(getComputedStyle(document.querySelector('.leaflet-popup')).opacity) === 1);
+      assert.match(await a.locator('.delivery-stop-card').textContent(), /Bin #: 000/);
+      assert.match(await a.locator('.delivery-stop-remaining').textContent(), /3 carts remaining/);
+      for (const light of [false, true]) {
+        await a.evaluate(light => document.body.classList.toggle('sun-mode', light), light);
+        await a.screenshot({ path: path.join(root, `local-artifacts/delivery-stop-${width}-${light ? 'light' : 'dark'}.png`) });
+        assert(await a.locator('.stop-delivery-action').evaluate(el => el.getBoundingClientRect().height >= 44));
+        assert(await a.locator('.leaflet-popup-close-button').evaluate(el => el.getBoundingClientRect().height >= 44));
+        assert(await a.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      }
+    }
+    await a.locator('.stop-delivery-action').click();
+    assert.equal(await a.locator('#cartCountEntries input').count(), 1, 'Single-stop delivery does not require selection');
+    await a.locator('#cartCountEntries input').fill('1');
+    fx.state.failCommit = true;
+    await a.locator('#saveCartCountsBtn').click();
+    await a.waitForFunction(() => !deliverySaveInProgress && document.getElementById('deliverySaveStatus').dataset.state === 'error');
+    assert.match(await a.locator('#routeContext').textContent(), /Save not confirmed/);
+    assert.equal(await a.evaluate(() => _currentRows[0].del_qty), 0);
+    fx.state.failCommit = false;
+    await a.locator('#saveCartCountsBtn').click();
+    await a.waitForFunction(() => !deliverySaveInProgress && _currentRows[0].del_qty === 1);
+    assert.match(await a.locator('#routeContext').textContent(), /1 stop waiting to sync/);
+    await a.setViewportSize({ width: 440, height: 956 });
+    await a.waitForFunction(() => document.getElementById('recordCartsBtn').parentElement.id === 'deliveryMoreActions');
+    assert.equal(await a.locator('#recordCartsBtn').evaluate(el => el.parentElement.id), 'deliveryMoreActions');
+
     const safetyFile = await fx.importRows(teamA, 'Safety.xlsx', rows);
     const safetyCopy = await fx.call(teamA, 'open', { fileId: safetyFile.fileId });
     await fx.call(teamA, 'save', { fileId: safetyFile.fileId, copyRevision: safetyCopy.copyRevision, edits: [{ index: 0, values: { del_qty: 1, del_status: '' } }] });

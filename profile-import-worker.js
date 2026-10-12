@@ -1,5 +1,5 @@
 importScripts('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
-importScripts('profile-field-mapping.js?v=20261012-field-mapping');
+importScripts('profile-field-mapping.js?v=20261012-delivery-ease');
 
 let rows;
 let mapping;
@@ -20,6 +20,8 @@ self.onmessage = ({ data }) => {
       if (mapping && CartDeliveryFields.errors(mapping, headers).length) throw new Error('INVALID_MAPPING');
       const samples = Object.fromEntries(headers.map(header => [header, rows.slice(0, 5).map(row => row[header] ?? '')]));
       self.postMessage({ rowCount: rows.length, headers, samples, sheetName: workbook.SheetNames[0] });
+    } else if (data.validate) {
+      self.postMessage({ validationId: data.validationId, quality: CartDeliveryFields.checkData(rows, data.validate) });
     } else {
       const batch = [];
       let length = 0;
@@ -32,5 +34,5 @@ self.onmessage = ({ data }) => {
       }
       self.postMessage({ rows: batch });
     }
-  } catch (error) { self.postMessage({ error: error.message || 'INVALID_FILE' }); }
+  } catch (error) { self.postMessage({ error: error.message || 'INVALID_FILE', validationId: data.validationId }); }
 };

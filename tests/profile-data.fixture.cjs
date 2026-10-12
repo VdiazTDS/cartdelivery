@@ -8,10 +8,12 @@ async function fixture({ legacySeed } = {}) {
   await fx.pg.exec(fs.readFileSync(require('node:path').join(__dirname, '../supabase/migrations/202610100002_database_deliveries.sql'), 'utf8'));
   await fx.pg.exec(fs.readFileSync(require('node:path').join(__dirname, '../supabase/migrations/202610120001_public_team_views.sql'), 'utf8'));
   await fx.pg.exec(fs.readFileSync(require('node:path').join(__dirname, '../supabase/migrations/202610120002_import_field_mapping.sql'), 'utf8'));
+  await fx.pg.exec(fs.readFileSync(require('node:path').join(__dirname, '../supabase/migrations/202610120003_last_sync_time.sql'), 'utf8'));
+  await fx.pg.exec(fs.readFileSync(require('node:path').join(__dirname, '../supabase/migrations/202610120004_profile_work_areas.sql'), 'utf8'));
   const db = { ...fx.db, rpc: async (name, args) => {
     try {
       if (name === 'cd_data_public_read') return { data: (await fx.pg.query('select public.cd_data_public_read($1) result', [args.p])).rows[0].result };
-      if (!['cd_data_call', 'cd_data_import_mapped'].includes(name)) throw new Error('Unexpected RPC');
+      if (!['cd_data_call', 'cd_data_import_mapped', 'cd_work_areas_call'].includes(name)) throw new Error('Unexpected RPC');
       if (fx.state.beforeCommit) await fx.state.beforeCommit(args);
       if (fx.state.failCommit) throw new Error('Simulated commit failure');
       const { rows } = await fx.pg.query(`select public.${name}($1,$2,$3,$4,$5) result`, [args.p_actor,args.p_username,args.p_request,args.p_hash,args.p]);

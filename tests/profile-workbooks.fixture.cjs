@@ -7,7 +7,7 @@ const { randomUUID } = require('node:crypto');
 async function fixture() {
   const pg = new PGlite();
   await pg.exec(`create role anon; create role authenticated; create role service_role bypassrls;
-    create schema auth; create table auth.users(id uuid primary key);
+    create schema auth; create table auth.users(id uuid primary key, email text);
     create schema storage; create table storage.buckets(id text primary key, name text, public boolean);
     create table storage.objects(id uuid default gen_random_uuid(), bucket_id text, name text);
     alter table storage.objects enable row level security;
@@ -65,7 +65,7 @@ async function fixture() {
   const handle = createWorkbookService(db, XLSX);
   async function actor(name) {
     const user = { id: randomUUID(), email: `${name}@profiles.cartdelivery.invalid` };
-    await pg.query('insert into auth.users(id) values($1)', [user.id]); return user;
+    await pg.query('insert into auth.users(id,email) values($1,$2)', [user.id,user.email]); return user;
   }
   const workbook = rows => {
     const wb = XLSX.utils.book_new();

@@ -38,6 +38,7 @@ let layerVisibilityState = {};
 let deliverySaveInProgress = false;
 let resequenceBusy = false;
 let optimoLocationPicker = null;
+let workAreas = null;
 let selectedPendingStopCount = 0;
 let resetAddressSearch = () => {};
 let refreshAddressSearch = () => {};
@@ -67,6 +68,9 @@ function updateDeliveryButtons() {
     cartButton.disabled = readOnly || deliverySaveInProgress || resequenceBusy || Number(document.getElementById("selectionCount").textContent) === 0;
     cartButton.textContent = document.getElementById("multipleCartsOnly").checked ? "Record carts · QTY 2+ filter on" : "Record carts";
   }
+  document.querySelectorAll('.stop-delivery-action').forEach(button => {
+    button.disabled = readOnly || deliverySaveInProgress || resequenceBusy || button.dataset.unavailable === 'true';
+  });
 }
 
 function updatePendingDeliveryCount(markers) {
@@ -83,6 +87,7 @@ function setDeliverySaveStatus(state, message) {
   status.dataset.state = state;
   status.textContent = message;
   updateDeliveryButtons();
+  renderRouteContext();
 }
 
 // ================= SUPABASE CONFIG =================
@@ -164,6 +169,7 @@ const sunToggleText = document.getElementById("sunToggleText");
 function updateSunToggleText() {
   if (!sunToggle || !sunToggleText) return;
   sunToggleText.textContent = sunToggle.checked ? "Light Mode" : "Dark Mode";
+  sunToggle.closest('label').title = sunToggle.checked ? 'Switch to dark mode' : 'Switch to light mode';
 }
 
 // Load saved preference
@@ -259,7 +265,7 @@ watchId = navigator.geolocation.watchPosition(
     }
 
     // Smooth follow
-    if (!optimoLocationPicker) map.flyTo(latlng, Math.max(map.getZoom(), 16), { duration: 1.2 });
+    if (!optimoLocationPicker && !workAreas?.mapActive) map.flyTo(latlng, Math.max(map.getZoom(), 16), { duration: 1.2 });
 
    
 
@@ -588,6 +594,51 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { st
 const profileState = { user: null, workspace: null, busy: false, generation: 0, preview: null, syncRequest: null, shareConfirmation: null, authMode: "signin" };
 const teamUploadState = { file: null, result: null, added: false, resume: false, inspection: null, mapping: null, inspecting: false, inspectToken: 0, cancelInspect: null };
 const profileElement = id => document.getElementById(id);
+let recordSingleStop = () => {};
+function rememberedDeliveryView() {
+  if (!profileState.user) return null;
+  try {
+    const view = JSON.parse(localStorage.getItem(`cartdelivery.resume.${profileState.user.id}`));
+    return view?.fileId && typeof view.name === 'string' && Array.isArray(view.routes) && Array.isArray(view.days) ? view : null;
+  } catch { return null; }
+}
+function rememberDeliveryView(force = false) {
+  const { workspace, user, busy } = profileState;
+  if ((!force && busy) || !user || workspace?.mode !== 'copy' || workspace.owner !== user.id || !window._currentRows) return;
+  const center = map.getCenter();
+  const checked = selector => [...document.querySelectorAll(selector)].filter(input => input.checked).map(input => input.value);
+  try {
+    localStorage.setItem(`cartdelivery.resume.${user.id}`, JSON.stringify({
+      fileId: workspace.fileId, name: workspace.name,
+      routes: checked('#routeCheckboxes input'), days: checked('#dayCheckboxes input'),
+      layers: layerVisibilityState, multiple: profileElement('multipleCartsOnly').checked,
+      center: [center.lat, center.lng], zoom: map.getZoom()
+    }));
+  } catch { /* Storage may be unavailable in private browsing. */ }
+}
+function restoreDeliveryView(view) {
+  if (!view || view.fileId !== profileState.workspace?.fileId) return;
+  document.querySelectorAll('#routeCheckboxes input').forEach(input => { input.checked = view.routes.includes(input.value); });
+  document.querySelectorAll('#dayCheckboxes input').forEach(input => { input.checked = view.days.includes(input.value); });
+  layerVisibilityState = view.layers && typeof view.layers === 'object' ? { ...view.layers } : {};
+  profileElement('multipleCartsOnly').checked = Boolean(view.multiple);
+  buildRouteDayLayerControls(); applyFilters();
+  if (Array.isArray(view.center) && view.center.length === 2 && view.center.every(Number.isFinite) && Math.abs(view.center[0]) <= 90 && Number.isFinite(view.zoom)) {
+    map.setView(view.center, Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), view.zoom)), { animate: false });
+  }
+}
+function copySaveSummary() {
+  if (deliverySaveInProgress) return 'Saving to my copy…';
+  if (profileElement('deliverySaveStatus')?.dataset.state === 'error') return 'Save not confirmed · Retry or reload my copy';
+  const count = profileState.workspace?.pending || 0;
+  return `Saved · ${count ? `${count} ${count === 1 ? 'stop' : 'stops'} waiting to sync` : 'Nothing waiting to sync'}`;
+}
+function lastSyncSummary() {
+  const workspace = profileState.workspace;
+  if (!workspace || workspace.mode !== 'copy') return '';
+  if (!Object.hasOwn(workspace, 'lastSyncedAt')) return 'Last sync time unavailable';
+  return workspace.lastSyncedAt ? `Last sync: ${new Date(workspace.lastSyncedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : 'Not synced yet';
+}
 const profileUsername = user => user?.email?.split("@")[0] || "";
 function profileMessage(error) {
   const code = error?.message || String(error);
@@ -638,10 +689,10 @@ async function profileApi(body) {
 }
 function renderProfileState() {
   const { user, workspace, busy } = profileState;
+  syncSavedFilesGuide();
   const username = profileUsername(user);
-  profileElement("profileWorkspaceBtn").textContent = user
-    ? `My profile · ${username}${workspace?.pending && workspace.mode === "copy" ? ` · ${workspace.pending} to sync` : ""}`
-    : "Sign in to your delivery account";
+  profileElement("profileWorkspaceBtn").textContent = user ? 'Profile' : 'Sign in';
+  profileElement('profileWorkspaceBtn').setAttribute('aria-label', user ? `Open delivery profile for ${username}` : 'Sign in to your delivery account');
   profileElement("profileTitle").textContent = user ? "My delivery work" : profileState.authMode === "create" ? "Create your account" : "Welcome back";
   profileElement("profileAuthForm").hidden = Boolean(user);
   profileElement("profileSignedIn").hidden = !user;
@@ -656,6 +707,10 @@ function renderProfileState() {
   profileElement("profileChooseFileBtn").textContent = workspace ? "Choose another file" : "Choose a file";
   profileElement("profileChooseFileBtn").classList.toggle("profile-primary", !workspace);
   profileElement("profileContinueBtn").hidden = !workspace;
+  const remembered = rememberedDeliveryView();
+  profileElement('profileResumeBtn').hidden = Boolean(workspace) || !remembered;
+  profileElement('profileResumeBtn').textContent = remembered ? `Continue where I left off — ${remembered.name}` : 'Continue where I left off';
+  profileElement('profileLastSync').textContent = lastSyncSummary();
   profileElement("profileFileTools").hidden = !workspace;
   profileElement("profileReviewBtn").hidden = workspace?.mode !== "copy";
   profileElement("profileReviewBtn").textContent = workspace?.pending ? "Sync to team Excel" : "Check for team updates";
@@ -675,6 +730,7 @@ function renderProfileState() {
   if (typeof updateDeliveryButtons === "function") updateDeliveryButtons();
   renderRouteContext();
   renderTeamUpload();
+  workAreas?.syncContext();
 }
 function renderRouteContext() {
   const { workspace, user, preview } = profileState;
@@ -684,19 +740,20 @@ function renderRouteContext() {
     banner.hidden = !workspace;
     const main = workspace?.mode === "original";
     banner.dataset.mode = sharing ? "sharing" : main ? "team" : "copy";
-    banner.querySelector("strong").textContent = sharing ? "TEAM EXCEL · SYNC SUMMARY" : main ? "TEAM EXCEL · VIEW ONLY" : `YOUR COPY · ${profileUsername(user)}`;
+    banner.querySelector("strong").textContent = sharing ? "TEAM EXCEL · SYNC SUMMARY" : main ? user ? "TEAM EXCEL" : "TEAM EXCEL · VIEW ONLY" : `YOUR COPY · ${profileUsername(user)}`;
     banner.querySelector(".route-context-file").textContent = sharing ? preview.name : workspace?.name || "";
-    banner.querySelector(".route-context-help").textContent = sharing ? "Check the totals before syncing to team Excel." : main ? "Editing is off. Use your profile copy to make changes." : "Delivery saves change your copy. Sync to team Excel when ready.";
+    banner.querySelector(".route-context-help").textContent = sharing ? "Check the totals before syncing to team Excel." : main ? "Delivery records are view only. Signed-in profiles can edit shared work areas." : "Delivery saves change your copy. Sync to team Excel when ready.";
     if (banner.id === "routeContext") {
       banner.querySelector(".route-context-help").textContent = main
-        ? "View only · Open your copy to edit"
-        : "Saves to your copy · Sync to team Excel when ready";
+        ? user ? "Deliveries view only · Shared work areas editable" : "View only · Sign in to manage work areas"
+        : copySaveSummary();
+      banner.querySelector('.route-context-help').title = main ? '' : lastSyncSummary();
     }
   });
 }
 function setupRouteContext() {
   const template = profileElement("routeContext");
-  document.querySelectorAll("dialog:not(#pocketLock):not(#teamUploadDialog), .modal-content").forEach(container => {
+  document.querySelectorAll("dialog:not(#pocketLock):not(#teamUploadDialog):not(#cartCountsDialog), .modal-content").forEach(container => {
     const banner = template.cloneNode(true);
     banner.removeAttribute("id"); banner.removeAttribute("role");
     container.prepend(banner);
@@ -736,6 +793,7 @@ function requireProfile() {
   return false;
 }
 async function displayProfileWorkbook(result, mode = "copy") {
+  const remembered = rememberedDeliveryView();
   const generation = profileState.generation;
   const rows = [];
   while (rows.length < result.rowCount) {
@@ -746,8 +804,12 @@ async function displayProfileWorkbook(result, mode = "copy") {
   }
   if (generation !== profileState.generation) throw new Error("SIGN_IN_REQUIRED");
   profileState.workspace = { ...result, mode, owner: profileState.user?.id || null };
+  if (remembered?.fileId !== result.fileId || mode !== 'copy') {
+    layerVisibilityState = {};
+    buildDayCheckboxes();
+    profileElement('multipleCartsOnly').checked = false;
+  }
   window._currentFilePath = result.name;
-  setCurrentFileDisplay(`${result.name} · ${mode === "original" ? "Team Excel (view only)" : profileUsername(profileState.user) + "’s copy"}`);
   processExcelBuffer(null, profileViewWorkbook(), rows);
   profileElement("profileStatus").textContent = "";
   delete profileElement("profileStatus").dataset.state;
@@ -755,6 +817,11 @@ async function displayProfileWorkbook(result, mode = "copy") {
   profileState.syncRequest = null;
   profileState.shareConfirmation = null;
   renderProfileState();
+  // Let the compact header settle before restoring the saved map center.
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  if (generation !== profileState.generation) throw new Error('SIGN_IN_REQUIRED');
+  map.invalidateSize({ pan: false });
+  if (mode === 'copy') { restoreDeliveryView(remembered); rememberDeliveryView(true); }
 }
 function profileViewWorkbook() {
   // Map state needs a file handle; actual Excel cells are created only on export.
@@ -784,7 +851,7 @@ async function importProfileFile(file, localFile = null, onProgress = showLoadin
     if (bytes.byteLength > 50000000) throw new Error("FILE_TOO_LARGE");
   }
   onProgress("Reading your Excel file…");
-  const worker = new Worker("profile-import-worker.js?v=20261012-field-mapping");
+  const worker = new Worker("profile-import-worker.js?v=20261012-delivery-ease");
   const request = (message, transfer = []) => new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("IMPORT_DEVICE_LIMIT")), 120000);
     worker.onmessage = ({ data }) => { clearTimeout(timeout); data.error ? reject(new Error(data.error)) : resolve(data); };
@@ -863,7 +930,6 @@ async function openProfileFile(file, mode = "copy") {
       profileState.workspace = { ...file, mode, legacy: true, owner: profileState.user?.id || null };
       window._currentFilePath = file.name;
       processExcelBuffer(bytes);
-      setCurrentFileDisplay(`${file.name} · Team Excel (view only)`);
       profileState.preview = null; profileState.syncRequest = null; profileState.shareConfirmation = null;
     } else {
       if (!fileId) ({ fileId } = await importProfileFile(file));
@@ -1253,6 +1319,9 @@ function setupDeliveryProfiles() {
   };
   profileElement("profileChooseFileBtn").onclick = () => { profileElement("profileDialog").close(); profileElement("openFileManagerBtn").click(); };
   profileElement("profileContinueBtn").onclick = () => { profileElement("profileDialog").close(); closeMobileMenu(); };
+  profileElement('profileResumeBtn').onclick = () => { const view = rememberedDeliveryView(); if (view) openProfileFile(view); };
+  map.on('moveend', () => rememberDeliveryView());
+  window.addEventListener('pagehide', () => rememberDeliveryView());
   profileElement("profileReloadCopyBtn").onclick = () => openProfileFile(profileState.workspace);
   profileElement("profileReviewBtn").onclick = reviewProfileSync;
   profileElement("confirmProfileSyncBtn").onclick = confirmProfileSync;
@@ -1287,7 +1356,7 @@ function setupDeliveryProfiles() {
         profileState.generation++;
         if (profileState.workspace?.mode !== "original") {
           profileState.workspace = null;
-          profileElement("resetMapBtn").click(); window._currentRows = null; window._currentWorkbook = null; window._currentFilePath = null; setCurrentFileDisplay(null);
+          profileElement("resetMapBtn").click(); window._currentRows = null; window._currentWorkbook = null; window._currentFilePath = null;
         }
         profileState.preview = null; profileState.syncRequest = null; profileState.shareConfirmation = null;
         profileElement("profileShareAcknowledged").checked = false;
@@ -1295,6 +1364,7 @@ function setupDeliveryProfiles() {
       }
       profileState.user = user;
       renderProfileState();
+      if (_event === 'INITIAL_SESSION' && user && !profileState.workspace && rememberedDeliveryView()) openProfileFile(rememberedDeliveryView());
     }, 0);
   });
   renderProfileState();
@@ -1315,21 +1385,13 @@ function getDownloadBaseName(filePath) {
   } while (name !== previous);
   return name.slice(0, 60) || "Export";
 }
-function setCurrentFileDisplay(filePath) {
-  const label = document.getElementById("currentFileDisplay");
-  const name = document.getElementById("currentFileName");
-  const displayName = filePath || "None";
-  if (!label) return;
-
-  if (name) {
-    name.textContent = displayName;
-    return;
-  }
-
-  label.textContent = `Current file: ${displayName}`;
+function syncSavedFilesGuide() {
+  const loaded = Boolean(window._currentWorkbook);
+  document.getElementById("savedFilesGuide").hidden = loaded;
+  document.getElementById("openFileManagerBtn").classList.toggle("attention", !loaded);
 }
 
-setCurrentFileDisplay(window._currentFilePath);
+syncSavedFilesGuide();
 
 
 // ================= MAP SETUP =================
@@ -1844,6 +1906,7 @@ function hideDrawActionBar() {
   drawActionBar.hidden = true;
 }
 map.on(L.Draw.Event.DRAWSTART, e => {
+  if (workAreas?.mapActive) return;
   if (e.layerType !== "polygon") return;
   activeDrawHandler = drawControl._toolbars.draw._modes.polygon.handler;
   drawActionBar.hidden = true;
@@ -1851,6 +1914,7 @@ map.on(L.Draw.Event.DRAWSTART, e => {
 map.on(L.Draw.Event.DRAWVERTEX, e => {
   const layers = e.layers && e.layers.getLayers();
   if (layers && layers[0] && layers[0]._icon) layers[0]._icon.classList.add("first-draw-vertex");
+  if (workAreas?.mapActive) return;
   // A polygon needs 3 points before it can be finished.
   drawActionBar.hidden = !activeDrawHandler || !layers || layers.length < 3;
 });
@@ -2129,6 +2193,7 @@ function handleMobileStopTap(latlng) {
 }
 
 map.on("click", event => {
+  if (workAreas?.mapActive) return;
   if (optimoLocationPicker) { setOptimoPickPoint(event.latlng); return; }
   if (event.layer) return;
   if (mobileStopSelectionMode && window.innerWidth <= 900) {
@@ -2137,7 +2202,7 @@ map.on("click", event => {
 });
 
 map.on("popupopen", event => {
-  if (optimoLocationPicker || (mobileStopSelectionMode && window.innerWidth <= 900)) {
+  if (workAreas?.mapActive || optimoLocationPicker || (mobileStopSelectionMode && window.innerWidth <= 900)) {
     map.closePopup(event.popup);
     requestAnimationFrame(() => {
       if (mobileStopSelectionMode && window.innerWidth <= 900) map.closePopup();
@@ -2146,6 +2211,7 @@ map.on("popupopen", event => {
 });
 
 map.on("tooltipopen", event => {
+  if (event.tooltip.options.className === 'work-area-label') return;
   if (mobileStopSelectionMode && window.innerWidth <= 900) {
     map.closeTooltip(event.tooltip);
   }
@@ -2227,6 +2293,7 @@ function highlightSelectedMarker(marker) {
 
 // ===== WHEN POLYGON IS DRAWN =====
 map.on(L.Draw.Event.CREATED, e => {
+  if (workAreas?.drawing) { workAreas.acceptCreated(e.layer); return; }
   drawnLayer.clearLayers();
   individuallyDeselectedMarkers.clear();
   drawnLayer.addLayer(e.layer);
@@ -2585,6 +2652,7 @@ function applyFilters() {
   updateStats();
   refreshAddressSearch();
   scheduleSequenceRender();
+  rememberDeliveryView();
 }
 
 
@@ -3065,7 +3133,7 @@ function refreshOptimoLocations() {
 }
 
 function beginOptimoLocationPick(kind) {
-  if (resequenceBusy || deliverySaveInProgress || optimoLocationPicker) return;
+  if (resequenceBusy || deliverySaveInProgress || optimoLocationPicker || workAreas?.mapActive) return;
   if (Object.values(drawControl._toolbars).some(toolbar => toolbar.enabled())) {
     setResequenceStatus("Finish or cancel editing your selection shape before choosing a location.");
     return;
@@ -3676,6 +3744,32 @@ resequenceElement("saveSequenceBtn").addEventListener("click", () => {
 // Required columns: LATITUDE, LONGITUDE, ROUTE, DAY. Optional: CSADR#, CSSDIR, CSSTRT, CSSFUX
 // (address), SIZE, QTY, BINNO (popup), SEQNO (sequence), del_status ("Delivered" marks completed stops).
 // Rebuilds sequenceGroups, resets map/selection, then fills routeDayGroups by day or Delivered.
+function deliveryStopCard(row, marker = null) {
+  const card = document.createElement('div'); card.className = 'delivery-stop-card';
+  const line = (tag, text, className = '') => {
+    const node = document.createElement(tag); node.textContent = text; node.className = className; card.append(node); return node;
+  };
+  line('strong', [row['CSADR#'], row.CSSDIR, row.CSSTRT, row.CSSFUX].filter(value => value != null && String(value).trim()).join(' ') || 'Address not available', 'delivery-stop-address');
+  line('div', `Bin #: ${String(row.BINNO ?? '').trim() || 'Not provided'}`, 'delivery-stop-bin');
+  const total = cartTotal(row), delivered = deliveredCartCount(row);
+  const remaining = total === null ? null : Math.max(0, total - delivered);
+  line('strong', remaining === null ? 'Cart quantity needs checking' : remaining ? `${remaining} ${remaining === 1 ? 'cart' : 'carts'} remaining` : 'All carts delivered', 'delivery-stop-remaining');
+  if (total !== null) line('div', `${delivered} of ${total} carts delivered`);
+  if (marker && profileState.workspace?.mode === 'copy') {
+    const button = line('button', remaining === 0 ? 'Delivery complete' : 'Record delivery', 'stop-delivery-action');
+    button.type = 'button';
+    button.dataset.unavailable = String(remaining === 0 || remaining === null);
+    button.disabled = !profileState.user || profileState.busy || deliverySaveInProgress || resequenceBusy || remaining === 0 || remaining === null;
+    button.onclick = () => recordSingleStop(marker);
+  } else if (profileState.workspace?.mode === 'original') line('small', 'Team Excel · View only');
+  const details = document.createElement('details');
+  const summary = document.createElement('summary'); summary.textContent = 'Route & container details'; details.append(summary);
+  const info = document.createElement('div');
+  info.textContent = `Route ${rowRoute(row) ?? '—'} · ${dayName(Number(rowDay(row))) || 'Day not provided'} · Size ${row.SIZE ?? '—'}${rowSequence(row) !== null ? ` · Stop ${rowSequence(row)}` : ''}`;
+  details.append(info); card.append(details);
+  return card;
+}
+
 function processExcelBuffer(buffer, parsedWorkbook = null, confirmedRows = null) {
   const wb = parsedWorkbook || XLSX.read(new Uint8Array(buffer), { type: "array", cellStyles: true, bookVBA: true });
   const ws = wb.Sheets[wb.SheetNames[0]];
@@ -3687,6 +3781,7 @@ function processExcelBuffer(buffer, parsedWorkbook = null, confirmedRows = null)
   // store globally for saving later
   window._currentRows = rows;
   window._currentWorkbook = wb;
+  syncSavedFilesGuide();
   if (!deliverySaveInProgress) setDeliverySaveStatus("idle", "");
 
   // Clear previous map data
@@ -3708,7 +3803,7 @@ function processExcelBuffer(buffer, parsedWorkbook = null, confirmedRows = null)
     const route = String(rowRoute(row));
     const day = String(rowDay(row));
 
-    if (!lat || !lon || !route || !day) return;
+    if (!CartDeliveryFields.validCoordinates(row.LATITUDE, row.LONGITUDE) || !route || !day) return;
 
     let key;
 
@@ -3725,31 +3820,8 @@ if (status === "delivered") {
 
     if (!routeDayGroups[key]) routeDayGroups[key] = { layers: [] };
 
-  // Build full street address safely
-const fullAddress = [
-  row["CSADR#"] || "",
-  row["CSSDIR"] || "",
-  row["CSSTRT"] || "",
-  row["CSSFUX"] || ""
-].join(" ").replace(/\s+/g, " ").trim();
-
-// Build popup content
-const popupContent = () => `
-  <div style="font-size:14px; line-height:1.4;">
-    <div style="font-weight:bold; font-size:15px; margin-bottom:6px;">
-      ${fullAddress || "Address not available"}
-    </div>
-
-    <div><strong>Container Size:</strong> ${row["SIZE"] || "-"}</div>
-    <div><strong>Quantity:</strong> ${row["QTY"] || "-"}</div>
-    <div class="cart-progress"><strong>${cartProgressText(row)}</strong></div>
-    ${rowSequence(row) !== null ? `<div><strong>Sequence:</strong> ${rowSequence(row)}</div>` : ""}
-    <div><strong>Bin #:</strong> ${row["BINNO"] || "-"}</div>
-  </div>
-`;
-
 const marker = createMarker(lat, lon, symbol)
-  .bindPopup(popupContent)
+  .bindPopup(() => deliveryStopCard(row, marker), { maxWidth: 300, minWidth: 220 })
   .addTo(map);
 // ===== STREET LABEL (ZOOM-BASED) =====
 const streetNumber = row["CSADR#"] ? String(row["CSADR#"]).trim() : "";
@@ -3758,7 +3830,8 @@ const streetName = row["CSSTRT"] ? String(row["CSSTRT"]).trim() : "";
 const labelText = `${streetNumber} ${streetName}`.trim();
 
 if (labelText) {
-  marker.bindTooltip(labelText, {
+  const streetLabelText = document.createElement('span'); streetLabelText.textContent = labelText;
+  marker.bindTooltip(streetLabelText, {
     permanent: false,
     direction: "top",
     offset: [0, -8],
@@ -3773,6 +3846,7 @@ if (labelText) {
     marker._rowRef = row;
     attachQuantityBadge(marker, row);
     marker.on("click", event => {
+      if (workAreas?.mapActive) return;
       if (optimoLocationPicker) { setOptimoPickPoint(event.latlng || marker.getLatLng()); return; }
       if (mobileStopSelectionMode && window.innerWidth <= 900) {
         L.DomEvent.stop(event.originalEvent || event);
@@ -3809,7 +3883,7 @@ if (status === "delivered") {
   buildRouteDayLayerControls();
   applyFilters();
 
-  if (globalBounds.isValid()) map.fitBounds(globalBounds);
+  if (globalBounds.isValid()) map.fitBounds(globalBounds, { animate: false });
 }
 
 
@@ -4235,6 +4309,11 @@ function resetTeamMapping() {
   teamUploadState.inspectToken++;
   teamUploadState.cancelInspect?.();
   teamUploadState.cancelInspect = null;
+  teamUploadState.worker?.terminate(); teamUploadState.worker = null;
+  clearTimeout(teamUploadState.validationTimeout);
+  teamUploadState.quality = null; teamUploadState.checking = false;
+  teamUploadState.validationId = (teamUploadState.validationId || 0) + 1;
+  profileElement('teamDataAccepted').checked = false;
   teamUploadState.inspection = null; teamUploadState.mapping = null; teamUploadState.inspecting = false;
   profileElement('teamMappingConfirmed').checked = false;
   profileElement('teamMappingFields').replaceChildren();
@@ -4268,7 +4347,7 @@ function renderTeamMapping() {
       if (select.value) mapping[field.key] = select.value; else delete mapping[field.key];
       hint.textContent = 'Your selection';
       profileElement('teamMappingConfirmed').checked = false;
-      updateSample(); renderTeamUpload();
+      updateSample(); validateTeamData();
     };
     updateSample(); card.append(label, select, hint, sample);
     (index < 5 ? primary : optional).append(card);
@@ -4284,7 +4363,7 @@ async function inspectTeamUpload(file) {
   try {
     const bytes = await file.arrayBuffer();
     if (token !== teamUploadState.inspectToken) return;
-    worker = new Worker('profile-import-worker.js?v=20261012-field-mapping');
+    worker = new Worker('profile-import-worker.js?v=20261012-delivery-ease');
     const inspection = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('IMPORT_DEVICE_LIMIT')), 120000);
       teamUploadState.cancelInspect = () => { clearTimeout(timeout); worker.terminate(); resolve(null); };
@@ -4296,19 +4375,78 @@ async function inspectTeamUpload(file) {
     const { mapping, hints } = CartDeliveryFields.suggest(inspection.headers);
     teamUploadState.inspection = { ...inspection, hints };
     teamUploadState.mapping = mapping;
+    teamUploadState.worker = worker;
+    worker.onmessage = ({ data }) => {
+      if (token !== teamUploadState.inspectToken || data.validationId !== teamUploadState.validationId) return;
+      clearTimeout(teamUploadState.validationTimeout);
+      teamUploadState.quality = data.quality;
+      if (data.error) profileElement('teamUploadStatus').textContent = 'The data check could not finish. Choose this file again to retry.';
+      teamUploadState.checking = false; renderTeamUpload();
+    };
+    worker.onerror = () => {
+      if (token !== teamUploadState.inspectToken) return;
+      clearTimeout(teamUploadState.validationTimeout);
+      teamUploadState.quality = null; teamUploadState.checking = false;
+      profileElement('teamUploadStatus').textContent = 'The data check could not finish. Choose this file again to retry.';
+      renderTeamUpload();
+    };
     renderTeamMapping();
     profileElement('teamUploadStatus').textContent = '';
+    validateTeamData();
   } catch (error) {
     if (token === teamUploadState.inspectToken) {
       profileElement('teamUploadStatus').textContent = profileMessage(error);
       profileElement('teamUploadStatus').dataset.state = 'error';
     }
   } finally {
-    worker?.terminate();
+    if (teamUploadState.worker !== worker) worker?.terminate();
     if (token === teamUploadState.inspectToken) {
       teamUploadState.inspecting = false; teamUploadState.cancelInspect = null; renderTeamUpload();
     }
   }
+}
+function validateTeamData() {
+  teamUploadState.quality = null;
+  teamUploadState.validationId = (teamUploadState.validationId || 0) + 1;
+  teamUploadState.checking = false;
+  clearTimeout(teamUploadState.validationTimeout);
+  profileElement('teamDataAccepted').checked = false;
+  if (teamUploadState.worker && !CartDeliveryFields.errors(teamUploadState.mapping, teamUploadState.inspection.headers).length) {
+    teamUploadState.checking = true;
+    const validationId = teamUploadState.validationId;
+    teamUploadState.validationTimeout = setTimeout(() => {
+      if (validationId !== teamUploadState.validationId) return;
+      teamUploadState.validationId++; teamUploadState.checking = false;
+      profileElement('teamUploadStatus').textContent = 'The data check could not finish. Choose this file again to retry.';
+      renderTeamUpload();
+    }, 120000);
+    teamUploadState.worker.postMessage({ validate: teamUploadState.mapping, validationId });
+  }
+  renderTeamUpload();
+}
+function teamDataReady() {
+  const quality = teamUploadState.quality;
+  return quality && !teamUploadState.checking && quality.mappable > 0 && (!quality.affected || profileElement('teamDataAccepted').checked);
+}
+function renderTeamDataCheck() {
+  const { quality, checking } = teamUploadState;
+  const container = profileElement('teamDataCheck'); container.replaceChildren();
+  const heading = document.createElement('h3'); heading.textContent = 'Upload data check'; container.append(heading);
+  const summary = document.createElement('p');
+  summary.textContent = checking ? 'Checking every row with your column matches…' : !quality ? 'Choose valid column matches to check your data.'
+    : quality.affected ? `${quality.affected.toLocaleString()} of ${quality.total.toLocaleString()} rows need attention.` : `All ${quality.total.toLocaleString()} rows passed the data check.`;
+  container.append(summary);
+  quality?.issues.forEach(issue => {
+    const item = document.createElement('p');
+    const label = document.createElement('strong'); label.textContent = `${issue.count.toLocaleString()} · ${issue.label}`;
+    const explanation = document.createElement('span'); explanation.textContent = `${issue.effect} Spreadsheet rows: ${issue.examples.join(', ')}${issue.count > issue.examples.length ? '…' : '.'}`;
+    item.append(label, document.createElement('br'), explanation); container.append(item);
+  });
+  if (quality?.mappable === 0) {
+    const blocked = document.createElement('p'); blocked.textContent = 'No stops have usable coordinates. Fix the spreadsheet or change the column matches before uploading.'; container.append(blocked);
+  }
+  profileElement('teamDataAcceptLabel').hidden = !quality?.affected || quality.mappable === 0;
+  profileElement('teamDataAccepted').disabled = profileState.busy || Boolean(teamUploadState.result);
 }
 function renderTeamUpload() {
   const { file, result, added } = teamUploadState;
@@ -4324,13 +4462,14 @@ function renderTeamUpload() {
   profileElement('chooseTeamExcelBtn').disabled = busy || Boolean(result);
   const inspection = teamUploadState.inspection;
   const errors = inspection ? CartDeliveryFields.errors(teamUploadState.mapping, inspection.headers) : [];
+  renderTeamDataCheck();
   profileElement('teamUploadMapping').hidden = !inspection || added;
   profileElement('teamMappingErrors').textContent = errors.join(' ');
   profileElement('teamMappingConfirmed').disabled = busy || Boolean(result) || errors.length > 0;
   profileElement('teamMappingFields').querySelectorAll('select').forEach(select => { select.disabled = busy || Boolean(result); });
   const confirm = profileElement('confirmTeamUploadBtn');
   confirm.hidden = added;
-  confirm.disabled = busy || !file || (!result && (!inspection || teamUploadState.inspecting || errors.length > 0 || !profileElement('teamMappingConfirmed').checked));
+  confirm.disabled = busy || !file || (!result && (!inspection || teamUploadState.inspecting || errors.length > 0 || !teamDataReady() || !profileElement('teamMappingConfirmed').checked));
   confirm.textContent = busy ? 'Adding your team Excel…' : teamUploadState.inspecting ? 'Reading columns…' : !profileState.user ? 'Sign in to upload this file' : result ? 'Retry adding to Cart Delivery' : 'Upload & add to Cart Delivery';
   profileElement('viewUploadedFileBtn').hidden = !added;
   profileElement('openUploadedCopyBtn').hidden = !added;
@@ -4364,7 +4503,7 @@ async function uploadFile(file = teamUploadState.file) {
   if (file !== teamUploadState.file) openTeamUpload(file);
   if (teamUploadFileError(file)) return;
   if (!teamUploadState.result && (!teamUploadState.inspection || teamUploadState.inspecting ||
-    CartDeliveryFields.errors(teamUploadState.mapping, teamUploadState.inspection.headers).length || !profileElement('teamMappingConfirmed').checked)) return;
+    CartDeliveryFields.errors(teamUploadState.mapping, teamUploadState.inspection.headers).length || !teamDataReady() || !profileElement('teamMappingConfirmed').checked)) return;
   if (!profileState.user) {
     teamUploadState.resume = true;
     profileElement('teamUploadDialog').close();
@@ -4394,8 +4533,9 @@ async function uploadFile(file = teamUploadState.file) {
     }
     if (generation !== profileState.generation) return;
     teamUploadState.added = true;
+    teamUploadState.worker?.terminate(); teamUploadState.worker = null;
     status.dataset.state = 'saved';
-    status.textContent = `${result.name} · ${result.rowCount.toLocaleString()} stops. Added to Open Saved Files → Cart Delivery for everyone. Open your own copy when you’re ready to record deliveries.`;
+    status.textContent = `${result.name} · ${result.rowCount.toLocaleString()} stops. Added to Open / Switch File → Cart Delivery for everyone. Open your own copy when you’re ready to record deliveries.`;
   } catch (error) {
     if (generation === profileState.generation) {
       status.dataset.state = 'error';
@@ -4436,15 +4576,17 @@ function placeDeliveryControls() {
   const copyLocationBtn = document.getElementById("copyLocationBtn");
   const loadLogBtn = document.getElementById("loadLogBtn");
   const recordCartsBtn = document.getElementById("recordCartsBtn");
+  const profileButton = document.getElementById('profileWorkspaceBtn');
 
   if (window.innerWidth <= 900) {
+    document.querySelector('.header-top').append(profileButton);
     quickActions.insertBefore(locateBtn, moreBtn);
     quickActions.insertBefore(copyLocationBtn, moreBtn);
     moreActions.append(clearBtn, undoBtn, streetLabel, refreshBtn);
-    moreActions.prepend(loadLogBtn);
-    dock.querySelector(".delivery-controls-main").append(recordCartsBtn);
+    moreActions.prepend(recordCartsBtn, loadLogBtn);
     dock.insertBefore(saveStatus, quickActions);
   } else {
+    document.querySelector('.header-workspace').append(profileButton);
     selectionBox.insertBefore(clearBtn, desktopContainer);
     desktopContainer.append(locateBtn, copyLocationBtn, recordCartsBtn, completeBtn, saveStatus, undoBtn, streetLabel, loadLogBtn);
     headerContainer.appendChild(refreshBtn);
@@ -4561,12 +4703,267 @@ function setupPocketLock() {
   document.addEventListener("visibilitychange", cancelHold);
 }
 
+// Shared boundaries have their own layers and revision, independent of delivery selection.
+function setupWorkAreas() {
+  const el = id => document.getElementById(id);
+  const dialog = el('workAreasDialog'), visible = el('workAreasVisible');
+  const pane = map.createPane('workAreasPane'); pane.style.zIndex = '310'; pane.style.pointerEvents = 'none';
+  const labelPane = map.createPane('workAreaLabelsPane'); labelPane.style.zIndex = '360'; labelPane.style.pointerEvents = 'none';
+  const layer = L.layerGroup(), draftLayer = L.featureGroup().addTo(map);
+  let state = {}, contextKey = '';
+  const node = (tag, text, className) => {
+    const n = document.createElement(tag); n.textContent = text;
+    if (className) n.className = className;
+    return n;
+  };
+  const canEdit = () => Boolean(profileState.user && profileState.workspace?.fileId &&
+    profileState.workspace.mode === 'original' && !profileState.busy && state.loaded);
+  const message = text => { el('workAreaSaveStatus').textContent = text; };
+  const errorText = error => {
+    if (/CLIENT_UPDATE_REQUIRED|cd_work_areas|SETUP_REQUIRED/.test(error.message)) return 'Work areas need the server update before they can be used.';
+    if (/STALE_VERSION/.test(error.message)) return 'Another profile changed these areas. Your edit was not saved. Cancel this edit, refresh, and reopen the area to use the latest boundaries.';
+    if (/INVALID_WORK_AREA_PROFILE/.test(error.message)) return 'That profile is no longer available. Cancel and refresh to choose a current profile.';
+    if (/INVALID_WORK_AREA/.test(error.message)) return 'Check the profile, name and boundary. Use a closed area with 3–500 corners; keep the total under 100 areas and 10,000 points.';
+    return 'Could not confirm the shared save. Retry uses the same request. Close and refresh to check what reached the server.';
+  };
+  function renderMap() {
+    layer.clearLayers();
+    for (const area of state.snapshot?.areas || []) {
+      const title = node('span', `${area.profileName} · ${area.name}`);
+      L.geoJSON(area.geometry, { pane: 'workAreasPane', interactive: false,
+        style: { color: area.color, fillColor: area.color, fillOpacity: 0.12, opacity: 0.95, weight: 3 }
+      }).eachLayer(polygon => {
+        polygon.bindTooltip(title, { permanent: true, direction: 'center', className: 'work-area-label',
+          pane: 'workAreaLabelsPane', interactive: false });
+      }).addTo(layer);
+    }
+    if (visible.checked && profileState.user && state.loaded) layer.addTo(map);
+    else if (map.hasLayer(layer)) map.removeLayer(layer);
+  }
+  function render() {
+    const workspace = profileState.workspace, signed = Boolean(profileState.user), editable = canEdit();
+    visible.disabled = !signed || !workspace?.fileId;
+    el('manageWorkAreasBtn').disabled = !state.loaded || state.busy || !signed;
+    el('manageWorkAreasBtn').textContent = editable ? 'Manage work areas' : 'View work areas';
+    el('prepareWorkAreasBtn').hidden = !(signed && workspace?.legacy && workspace.mode === 'original');
+    el('prepareWorkAreasBtn').disabled = profileState.busy;
+    el('refreshWorkAreasBtn').disabled = !signed || !workspace?.fileId || state.loading || state.busy;
+    el('workAreasStatus').textContent = !signed ? 'Sign in to see profile work areas.' : !workspace ? 'Open a team file or your copy to see work areas.'
+      : !workspace.fileId ? 'Enable work areas on the team Excel to share boundaries for this file.'
+      : state.error || (state.loading && !state.loaded ? 'Loading shared work areas…'
+      : `${state.snapshot?.areas.length || 0} shared areas. ${workspace.mode === 'original' ? 'Edit here for everyone.' : 'View only in your copy; edit on the team Excel.'}`);
+    el('workAreasHelp').textContent = `${workspace?.name || ''} · ${editable ? 'Changes save directly for everyone. Each profile can have several areas. Delivery records stay unchanged.' : 'These are the shared team boundaries. Open the team Excel while signed in to edit them.'}`;
+    const legend = el('workAreasLegend'); legend.replaceChildren();
+    const profiles = new Map();
+    for (const area of state.snapshot?.areas || []) {
+      const key = `${area.profileId}:${area.color}`;
+      const entry = profiles.get(key) || { ...area, count: 0 }; entry.count++; profiles.set(key, entry);
+    }
+    for (const profile of profiles.values()) {
+      const item = node('div', '', 'work-area-legend-item');
+      const swatch = node('i', '', 'work-area-swatch'); swatch.style.backgroundColor = profile.color;
+      item.append(swatch, node('span', `${profile.profileName}${profile.profileId === profileState.user?.id ? ' (you)' : ''} · ${profile.count}`)); legend.append(item);
+    }
+    el('workAreasBrowse').hidden = Boolean(state.draft);
+    el('workAreaForm').hidden = !state.draft;
+    el('newWorkAreaBtn').hidden = !editable;
+    el('newWorkAreaBtn').disabled = state.busy || Boolean(state.pending) || (state.snapshot?.areas.length || 0) >= 100;
+    el('workAreaFields').disabled = !editable || state.busy || Boolean(state.pending);
+    el('saveWorkAreaBtn').disabled = !editable || state.busy || state.conflict || !state.draft?.geometry;
+    el('saveWorkAreaBtn').textContent = state.busy ? 'Saving…' : state.pending ? 'Retry save for everyone' : 'Save for everyone';
+    el('cancelWorkAreaBtn').disabled = state.busy;
+    el('closeWorkAreasBtn').disabled = state.busy;
+    el('retryWorkAreaSaveBtn').hidden = !state.pending || Boolean(state.draft) || state.conflict;
+    el('retryWorkAreaSaveBtn').disabled = state.busy || !editable;
+    el('workAreaBoundaryStatus').textContent = state.draft?.geometry ? 'Boundary ready to save. Changes are not shared until you save.' : 'Draw the boundary on the map before saving.';
+    el('drawWorkAreaBtn').textContent = state.draft?.geometry ? 'Redraw boundary' : 'Draw boundary';
+    el('adjustWorkAreaBtn').hidden = !state.draft?.geometry;
+    const list = el('workAreasList'); list.replaceChildren();
+    if (!state.snapshot?.areas.length) list.append(node('p', 'No work areas have been saved for this team file yet.'));
+    for (const area of state.snapshot?.areas || []) {
+      const card = node('article', '', 'work-area-card'); card.style.borderLeftColor = area.color;
+      card.append(node('strong', area.name), node('p', `Assigned to ${area.profileName}`));
+      const zoom = node('button', 'Show on map'); zoom.type = 'button';
+      zoom.disabled = state.busy || Boolean(state.pending);
+      zoom.onclick = () => {
+        visible.checked = true; renderMap(); dialog.close(); closeMobileMenu();
+        map.fitBounds(L.geoJSON(area.geometry).getBounds(), { padding: [30,30], maxZoom: 17 });
+      };
+      card.append(zoom);
+      if (editable) {
+        const edit = node('button', 'Edit'), remove = node('button', 'Delete');
+        edit.type = remove.type = 'button'; edit.disabled = remove.disabled = state.busy || Boolean(state.pending);
+        edit.onclick = () => editArea(area);
+        remove.onclick = () => {
+          if (!canEdit() || state.busy || state.pending || !confirm(`Delete "${area.name}" for everyone using ${workspace.name}?`)) return;
+          const { revision, areas } = state.snapshot;
+          saveSnapshot(areas.filter(item => item.id !== area.id), revision);
+        };
+        card.append(edit, remove);
+      }
+      list.append(card);
+    }
+  }
+  async function refresh() {
+    if (!profileState.user || !profileState.workspace?.fileId || state.loading || state.busy) return;
+    const session = state, fileId = profileState.workspace.fileId;
+    session.loading = true; render();
+    try {
+      const result = await profileApi({ action: 'work-areas', fileId });
+      if (session !== state || state.busy) return;
+      if (!result || result.fileId !== fileId || !Array.isArray(result.areas) || !Array.isArray(result.profiles)) throw new Error('SETUP_REQUIRED');
+      if (!state.snapshot || result.revision >= state.snapshot.revision) state.snapshot = result;
+      state.loaded = true; state.error = ''; renderMap();
+    } catch (error) {
+      if (session === state) state.error = /CLIENT_UPDATE_REQUIRED|SETUP_REQUIRED/.test(error.message) ? errorText(error)
+        : `Could not refresh work areas.${state.loaded ? ' Showing the last confirmed boundaries.' : ' Tap Refresh areas to retry.'}`;
+    } finally { if (session === state) { state.loading = false; render(); } }
+  }
+  function syncContext() {
+    const workspace = profileState.workspace;
+    const key = `${profileState.user?.id || ''}:${workspace?.fileId || workspace?.sourceKey || ''}:${workspace?.mode || ''}`;
+    if (key === contextKey) { render(); return; }
+    stopBoundary(false, false); dialog.close(); contextKey = key;
+    state = { loaded: false, loading: false, busy: false, snapshot: null, draft: null, pending: null, error: '', conflict: false, mapMode: null };
+    layer.clearLayers(); if (map.hasLayer(layer)) map.removeLayer(layer);
+    message(''); render(); refresh();
+  }
+  function editArea(area = null) {
+    if (!canEdit() || state.busy || state.pending) return;
+    const own = state.snapshot.areas.find(item => item.profileId === profileState.user.id);
+    state.draft = { id: area?.id || crypto.randomUUID(), geometry: area ? structuredClone(area.geometry) : null,
+      revision: state.snapshot.revision, areas: structuredClone(state.snapshot.areas) };
+    state.conflict = false;
+    el('workAreaName').value = area?.name || '';
+    el('workAreaProfile').replaceChildren(...state.snapshot.profiles.map(profile => new Option(profile.name, profile.id)));
+    el('workAreaProfile').value = area?.profileId || profileState.user.id;
+    el('workAreaColor').value = area?.color || own?.color || '#2563eb';
+    if (!el('workAreaColor').value) el('workAreaColor').value = '#2563eb';
+    message(''); render(); el('workAreaName').focus();
+  }
+  function startBoundary(adjust = false) {
+    if (!canEdit() || !state.draft || state.busy || state.pending || optimoLocationPicker || resequenceBusy || deliverySaveInProgress) return;
+    if (Object.values(drawControl._toolbars).some(toolbar => toolbar.enabled())) {
+      message('Finish or cancel your stop-selection shape before editing a work area.'); return;
+    }
+    state.mapMode = adjust ? 'adjust' : 'draw';
+    dialog.close(); closeMobileMenu(); map.closePopup(); el('mobileStopPicker').hidden = true;
+    document.body.classList.add('editing-work-area');
+    el('workAreaMapEditor').hidden = false;
+    el('workAreaMapTitle').textContent = `${adjust ? 'Adjust' : 'Draw'} boundary · ${el('workAreaName').value.trim() || 'New area'}`;
+    el('workAreaMapHelp').textContent = adjust ? 'Drag corners or midpoint handles. Use boundary returns to the shared-save review.' : 'Tap each corner, then Finish boundary. Pan or pinch to move around the map.';
+    el('finishWorkAreaBoundary').disabled = !adjust;
+    el('finishWorkAreaBoundary').textContent = adjust ? 'Use boundary' : 'Finish boundary';
+    if (adjust) {
+      state.shape = L.geoJSON(state.draft.geometry, { style: { color: el('workAreaColor').value, weight: 3, dashArray: '8 6', fillOpacity: 0.15 } }).getLayers()[0];
+      state.shape.options.poly = { allowIntersection: false };
+      state.shape.addTo(draftLayer); state.shape.editing.enable();
+      map.fitBounds(state.shape.getBounds(), { padding: [45,45], maxZoom: 17 });
+      map.fire('draw:editstart');
+    } else {
+      state.drawer = new L.Draw.Polygon(map, { allowIntersection: false, showArea: false,
+        shapeOptions: { color: el('workAreaColor').value, weight: 3, dashArray: '8 6', fillOpacity: 0.15 } });
+      state.drawer.enable();
+    }
+  }
+  function stopBoundary(accept = false, reopen = true, geometry = null) {
+    const mode = state.mapMode;
+    if (accept && state.draft) state.draft.geometry = geometry || state.shape?.toGeoJSON().geometry || state.draft.geometry;
+    state.mapMode = null;
+    state.drawer?.disable(); state.drawer = null;
+    state.shape?.editing?.disable(); state.shape = null; draftLayer.clearLayers();
+    if (mode === 'adjust') map.fire('draw:editstop');
+    el('workAreaMapEditor').hidden = true; document.body.classList.remove('editing-work-area');
+    if (mode && reopen && state.draft && canEdit()) { render(); dialog.showModal(); }
+  }
+  async function saveSnapshot(areas, revision) {
+    if (!canEdit() || state.busy || state.conflict) return;
+    const session = state;
+    state.pending ||= { action: 'work-areas-save', fileId: profileState.workspace.fileId, mode: 'original', revision,
+      areas, requestId: crypto.randomUUID() };
+    state.busy = true; message('Saving shared work areas…'); render();
+    try {
+      const result = await profileApi(state.pending);
+      if (session !== state) return;
+      state.snapshot = result; state.loaded = true; state.draft = null; state.pending = null; state.error = '';
+      renderMap(); message('Saved for everyone. Other open maps refresh within 15 seconds.');
+    } catch (error) {
+      if (session !== state) return;
+      state.conflict = /STALE_VERSION|INVALID_WORK_AREA/.test(error.message);
+      message(errorText(error));
+    } finally { if (session === state) { state.busy = false; render(); } }
+  }
+  function cancelEdit() {
+    if (state.busy) return;
+    state.draft = null; state.pending = null; state.conflict = false; message(''); render(); refresh();
+  }
+  function closeDialog() {
+    if (state.busy) return;
+    cancelEdit(); dialog.close();
+  }
+  el('manageWorkAreasBtn').onclick = () => { if (state.loaded && !state.busy) { render(); dialog.showModal(); refresh(); } };
+  el('closeWorkAreasBtn').onclick = closeDialog;
+  dialog.addEventListener('cancel', event => { event.preventDefault(); closeDialog(); });
+  el('newWorkAreaBtn').onclick = () => editArea();
+  el('cancelWorkAreaBtn').onclick = cancelEdit;
+  el('refreshWorkAreasBtn').onclick = refresh;
+  el('retryWorkAreaSaveBtn').onclick = () => saveSnapshot();
+  el('drawWorkAreaBtn').onclick = () => startBoundary();
+  el('adjustWorkAreaBtn').onclick = () => startBoundary(true);
+  el('finishWorkAreaBoundary').onclick = () => { if (state.mapMode === 'draw') state.drawer?.completeShape(); else stopBoundary(true); };
+  el('cancelWorkAreaBoundary').onclick = () => stopBoundary();
+  el('workAreaForm').onsubmit = event => {
+    event.preventDefault();
+    if (!state.draft || !canEdit()) return;
+    if (state.pending) { saveSnapshot(); return; }
+    if (!el('workAreaForm').reportValidity() || !el('workAreaName').value.trim()) return;
+    const draft = state.draft;
+    const area = { id: draft.id, name: el('workAreaName').value.trim(), profileId: el('workAreaProfile').value,
+      color: el('workAreaColor').value, geometry: draft.geometry };
+    const areas = draft.areas.filter(item => item.id !== draft.id); areas.push(area);
+    saveSnapshot(areas, draft.revision);
+  };
+  el('prepareWorkAreasBtn').onclick = async () => {
+    const workspace = profileState.workspace;
+    if (!profileState.user || !workspace?.legacy || workspace.mode !== 'original') return;
+    await profileTask('profileStatus', async () => {
+      showLoading('Preparing shared work areas…');
+      try {
+        const imported = await importProfileFile(workspace);
+        await displayProfileWorkbook(await profileApi({ action: 'public-original', fileId: imported.fileId }), 'original');
+      } finally { hideLoading(); }
+    });
+    if (profileElement('profileStatus').dataset.state === 'error') { state.error = profileElement('profileStatus').textContent; render(); }
+  };
+  visible.onchange = () => { renderMap(); if (visible.checked) refresh(); };
+  map.on('draw:drawvertex', event => {
+    if (state.mapMode === 'draw') el('finishWorkAreaBoundary').disabled = (event.layers?.getLayers().length || 0) < 3;
+  });
+  map.on('draw:drawstop', () => { if (state.mapMode === 'draw') stopBoundary(); });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape' && state.mapMode) stopBoundary(); });
+  const autoRefresh = () => { if (!document.hidden && (visible.checked || dialog.open || el('workAreasSection').open)) refresh(); };
+  setInterval(autoRefresh, 15000);
+  window.addEventListener('focus', autoRefresh);
+  window.addEventListener('online', autoRefresh);
+  document.addEventListener('visibilitychange', autoRefresh);
+  return { syncContext, refresh, get mapActive() { return Boolean(state.mapMode); }, get drawing() { return state.mapMode === 'draw'; },
+    acceptCreated(polygon) { stopBoundary(true, true, polygon.toGeoJSON().geometry); } };
+}
+
 function initApp() { //begining of initApp=================================================================
 
 setupPocketLock();
 const openCartCounts = setupCartCounts();
+recordSingleStop = marker => {
+  if (profileState.workspace?.mode !== 'copy' || !profileState.user || profileState.busy || deliverySaveInProgress || resequenceBusy) return;
+  const entry = Object.entries(routeDayGroups).find(([, group]) => group.layers.includes(marker));
+  if (!entry || !map.hasLayer(marker) || !window._currentRows?.includes(marker._rowRef)) return;
+  marker.closePopup();
+  openCartCounts([{ key: entry[0], marker, row: marker._rowRef }], true);
+};
 setupLocationCopy();
 setupLoadLog();
+workAreas = setupWorkAreas();
 setupDeliveryProfiles();
 
 // ===== RIGHT SIDEBAR TOGGLE =====
@@ -4631,27 +5028,14 @@ clearBtn.onclick = () => {
 
   
 // ===== FILE UPLOAD (DRAG + CLICK) =====
-const dropZone = document.getElementById("dropZone");
+const dropZone = document.getElementById("uploadTeamExcelBtn");
+const fileInput = document.getElementById("fileInput");
 
-// create hidden file input dynamically (so no HTML change needed)
-let fileInput = document.getElementById("fileInput");
-if (!fileInput) {
-  fileInput = document.createElement("input");
-  fileInput.type = "file";
-  fileInput.accept = ".xlsx,.xls,.csv";
-  fileInput.id = "fileInput";
-  fileInput.hidden = true;
-  document.body.appendChild(fileInput);
-}
-
-dropZone.addEventListener("click", () => openTeamUpload());
-dropZone.addEventListener('keydown', event => {
-  if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openTeamUpload(); }
-});
 profileElement('uploadTeamExcelBtn').onclick = () => openTeamUpload();
 profileElement('chooseTeamExcelBtn').onclick = () => { fileInput.value = ''; fileInput.click(); };
 profileElement('confirmTeamUploadBtn').onclick = () => uploadFile();
 profileElement('teamMappingConfirmed').onchange = renderTeamUpload;
+profileElement('teamDataAccepted').onchange = renderTeamUpload;
 const closeTeamUpload = () => { if (!profileState.busy) profileElement('teamUploadDialog').close(); };
 profileElement('closeTeamUploadBtn').onclick = closeTeamUpload;
 profileElement('teamUploadDialog').addEventListener('cancel', event => { event.preventDefault(); closeTeamUpload(); });
@@ -4838,7 +5222,7 @@ if (resetBtn) {
   resetBtn.addEventListener("click", () => {
 
     // 1. Reset map view
-    map.setView([39.5, -98.35], 4);
+    map.setView([39.5, -98.35], 4, { animate: false });
 
     // 2. Clear drawn polygon
     drawnLayer.clearLayers();
@@ -4915,20 +5299,10 @@ window.removeEventListener("deviceorientation", updateHeading);
 const fileManagerModal = document.getElementById("fileManagerModal");
 const openFileManagerBtn = document.getElementById("openFileManagerBtn");
 const closeFileManagerBtn = document.getElementById("closeFileManager");
-const savedFilesGuide = document.getElementById("savedFilesGuide");
-
-function markSavedFilesGuideSeen() {
-  localStorage.setItem("savedFilesGuideSeen", "1");
-}
 
 if (openFileManagerBtn) {
-  if (savedFilesGuide) savedFilesGuide.classList.remove("hidden");
-
-  openFileManagerBtn.classList.add("attention");
-
   openFileManagerBtn.addEventListener("click", () => {
     fileManagerModal.style.display = "flex";
-    markSavedFilesGuideSeen();
     setSavedFilesTab("cartDelivery");
   });
 }
@@ -5364,6 +5738,8 @@ function setupCartCounts() {
   const dialog = el("cartCountsDialog");
   let snapshot = null;
   let saving = false;
+  const operationValue = () => dialog.querySelector('[name="cartCountOperation"]:checked').value;
+  let lastBulkOperation = 'add';
 
   el("multipleCartsOnly").addEventListener("change", () => {
     applyFilters();
@@ -5373,11 +5749,12 @@ function setupCartCounts() {
 
   function preview() {
     if (!snapshot) return null;
-    const operation = el("cartCountOperation").value;
+    const operation = operationValue();
     const perRecord = operation === "each";
     const adding = operation !== "set";
     const changes = new Map();
     let error = "";
+    let added = 0, removed = 0, changedStops = 0, completed = 0;
     const list = el("cartCountPreview");
     list.replaceChildren();
     snapshot.selected.forEach(({ row }, index) => {
@@ -5385,34 +5762,63 @@ function setupCartCounts() {
       const amount = (perRecord ? entry.input : el("cartCountAmount")).value.trim();
       const value = Number(amount);
       const valid = amount !== "" && Number.isSafeInteger(value) && value >= (adding && !perRecord ? 1 : 0);
-      if (!valid) error ||= perRecord ? "Enter a whole-number quantity for every record. Use 0 for a stop with no carts delivered this visit."
+      if (!valid) error ||= perRecord ? "Enter a whole number for each stop. Use 0 where you did not deliver any carts this visit."
         : adding ? "Enter a whole number of at least 1." : "Enter a whole number of 0 or more.";
       const total = cartTotal(row);
       const current = deliveredCartCount(row);
       const next = adding ? current + value : value;
-      if (total === null) error ||= "Every selected stop needs a positive whole-number QTY. Deselect stops with missing or invalid quantities.";
-      else if (next > total) error ||= "This would exceed QTY at one or more stops. Lower the count or change the selection; no stops will be saved.";
+      if (total === null) error ||= "A selected stop has no valid number of carts needed. Remove it from your selection before saving.";
+      else if (next > total) error ||= `This is more than the carts needed at ${formatStopAddress(row)} (Bin ${String(row.BINNO ?? '—')}). ${adding ? `Only ${total - current} remain.` : `The total cannot be higher than ${total}.`}`;
       if (!perRecord || value > 0) changes.set(row, { del_qty: next, del_status: next === total ? "Delivered" : "" });
-      entry.progress.textContent = total === null ? "Invalid QTY" : valid ? `After saving: ${next} of ${total} delivered · ${Math.max(0, total - next)} remaining` : `${current} of ${total} delivered · ${total - current} remaining`;
+      if (valid && total !== null && next <= total && next !== current) {
+        changedStops++; added += Math.max(0, next - current); removed += Math.max(0, current - next);
+        if (next === total) completed++;
+      }
+      entry.progress.textContent = total === null ? "Carts needed: not available" : valid && next <= total ? `After saving: ${next} of ${total} delivered · ${Math.max(0, total - next)} remaining` : `Saved now: ${current} of ${total} delivered · ${total - current} remaining`;
       entry.input.setAttribute("aria-invalid", String(!valid || total === null || next > total));
       if (index >= 50) return;
       const item = document.createElement("li");
-      item.textContent = `${formatStopAddress(row)} · Bin ${String(row.BINNO ?? "—")} · ${total === null ? "Invalid QTY" : `${current} → ${Number.isSafeInteger(next) ? next : "?"} of ${total} delivered`}`;
+      const address = document.createElement('strong'); address.textContent = `${formatStopAddress(row)} · Bin ${String(row.BINNO ?? '—')}`;
+      const counts = document.createElement('span'); counts.textContent = total === null ? 'Carts needed: not available' : `Saved now: ${current} of ${total} · After saving: ${valid && next <= total ? next : '—'} of ${total}`;
+      item.append(address, counts);
       list.append(item);
     });
     if (!error && !changes.size) error = "Enter at least one delivered cart to save. Use Close to cancel.";
-    el("cartCountSummary").textContent = `${snapshot.selected.length} selected ${snapshot.selected.length === 1 ? "stop" : "stops"}. ${perRecord ? "Enter carts delivered this visit for each record, not the total delivered so far." : `${snapshot.selected.length > 50 ? "Showing the first 50 below. " : ""}Counts apply to each selected stop separately.`}`;
+    if (!error && !changedStops) error = 'These totals are already saved. Change a number or close this window.';
+    el("cartCountSummary").textContent = `${snapshot.selected.length} selected ${snapshot.selected.length === 1 ? 'stop' : 'stops'} · Only these stops will be updated.`;
+    const impact = el('cartCountImpact'); impact.replaceChildren();
+    if (!error) {
+      const total = document.createElement('strong');
+      total.textContent = operation === 'set' ? `${added} carts added · ${removed} carts removed from saved totals` : `${added} ${added === 1 ? 'cart' : 'carts'} delivered this visit`;
+      const stops = document.createElement('span'); stops.textContent = `${changedStops} ${changedStops === 1 ? 'stop' : 'stops'} will change${completed ? ` · ${completed} fully delivered after saving` : ''}.`;
+      impact.append(total, stops);
+    }
+    impact.hidden = Boolean(error);
+    el('cartCountDetailsTitle').textContent = snapshot.selected.length > 50 ? `See changes by stop (first 50 of ${snapshot.selected.length})` : 'See changes by stop';
+    el('cartCountAmount').setAttribute('aria-invalid', String(!perRecord && Boolean(error)));
     el("cartCountStatus").textContent = error;
+    el('saveCartCountsBtn').textContent = saving ? 'Saving…' : operation === 'set' ? 'Save corrected totals to my copy' : 'Save deliveries to my copy';
     el("saveCartCountsBtn").disabled = Boolean(error) || saving;
     return error ? null : changes;
   }
 
   function syncMode() {
-    const perRecord = el("cartCountOperation").value === "each";
+    const operation = operationValue();
+    const perRecord = operation === 'each';
+    // A correction needs a deliberate total, not the previous visit's amount.
+    if (!perRecord && operation !== lastBulkOperation) el('cartCountAmount').value = operation === 'set' ? '' : '1';
+    if (!perRecord) lastBulkOperation = operation;
+    el('cartCountAmountLabel').textContent = operation === 'set' ? 'Correct total delivered so far, at each stop' : 'Carts delivered this visit, per stop';
+    el('cartCountAmount').min = operation === 'set' ? '0' : '1';
+    el('cartCountModeHelp').textContent = operation === 'set'
+      ? 'This replaces each saved total. Example: 2 already saved → enter 1 → total becomes 1. It can lower a count; 0 resets it.'
+      : perRecord ? 'Add only what you delivered this visit. Example: 1 already saved + 2 entered = 3 delivered in total.'
+      : `Example: enter 1 for each of ${snapshot.selected.length} ${snapshot.selected.length === 1 ? 'stop' : 'stops'} = ${snapshot.selected.length} ${snapshot.selected.length === 1 ? 'cart' : 'carts'} this visit. Existing deliveries are kept.`;
+    dialog.dataset.operation = operation;
     el("cartCountBulkAmount").hidden = perRecord;
     el("cartCountAmount").disabled = perRecord;
     el("cartCountEntries").hidden = !perRecord;
-    el("cartCountPreview").hidden = perRecord;
+    el("cartCountDetails").hidden = perRecord;
     snapshot.entries.forEach(entry => { entry.input.disabled = !perRecord; });
     preview();
   }
@@ -5421,6 +5827,8 @@ function setupCartCounts() {
     if (deliverySaveInProgress || resequenceBusy) return;
     if (!selected.length) return;
     snapshot = { selected, rows: window._currentRows, workbook: window._currentWorkbook, filePath: window._currentFilePath, entries: [] };
+    el('cartCountContext').textContent = `Your copy · ${profileUsername(profileState.user)} · ${profileState.workspace?.name || window._currentFilePath || ''}`;
+    el('cartCountDetails').open = false;
     el("cartCountEntries").replaceChildren();
     selected.forEach(({ row }, index) => {
       const card = document.createElement("div");
@@ -5431,6 +5839,8 @@ function setupCartCounts() {
       const detail = document.createElement("span");
       detail.textContent = `Bin ${String(row.BINNO ?? "—")} · Route ${rowRoute(row)} · ${dayName(Number(rowDay(row))) || rowDay(row)}`;
       info.append(address, detail);
+      const saved = document.createElement('span'); saved.textContent = cartTotal(row) === null ? 'Carts needed: not available' : `Saved now: ${deliveredCartCount(row)} of ${cartTotal(row)} delivered`;
+      info.append(saved);
       const label = document.createElement("label");
       label.htmlFor = `cartCountEntry${index}`;
       label.append(document.createTextNode("This visit"));
@@ -5447,13 +5857,14 @@ function setupCartCounts() {
       el("cartCountEntries").append(card);
       snapshot.entries.push({ input, progress });
     });
-    el("cartCountOperation").value = perRecord ? "each" : "add";
+    dialog.querySelector(`[name="cartCountOperation"][value="${perRecord ? 'each' : 'add'}"]`).checked = true;
+    lastBulkOperation = 'add';
     el("cartCountAmount").value = "1";
     syncMode();
     dialog.showModal();
   }
   el("recordCartsBtn").addEventListener("click", () => open(selectedDeliveryStops()));
-  el("cartCountOperation").addEventListener("change", syncMode);
+  dialog.querySelectorAll('[name="cartCountOperation"]').forEach(input => input.addEventListener('change', syncMode));
   el("cartCountAmount").addEventListener("input", preview);
   el("closeCartCountsBtn").addEventListener("click", () => { if (!saving) dialog.close(); });
   dialog.addEventListener("cancel", event => { if (saving) event.preventDefault(); });
@@ -5470,6 +5881,7 @@ function setupCartCounts() {
     el("cartCountFields").disabled = true;
     el("closeCartCountsBtn").disabled = true;
     el("saveCartCountsBtn").disabled = true;
+    el('saveCartCountsBtn').textContent = 'Saving…';
     el("cartCountStatus").textContent = "Saving cart counts… Keep the app open.";
     try {
       const saved = await persistDeliveryChanges(snapshot.selected.filter(({ row }) => changes.has(row)), changes, "cart counts updated");
@@ -5480,6 +5892,7 @@ function setupCartCounts() {
       el("cartCountFields").disabled = false;
       el("closeCartCountsBtn").disabled = false;
       el("saveCartCountsBtn").disabled = false;
+      el('saveCartCountsBtn').textContent = operationValue() === 'set' ? 'Save corrected totals to my copy' : 'Save deliveries to my copy';
     }
   });
   return open;

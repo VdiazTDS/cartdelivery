@@ -78,8 +78,9 @@ const sample = [1, 2, '3', 0, '', 'bad', -1, 1.5, 3, 5, 2, 3].map((qty, i) => ({
     }, { key, checked });
     const begin = async (ids, operation = 'add', amount = '1') => {
       await select(ids);
+      if (!await page.locator('#recordCartsBtn').isVisible()) await page.locator('#deliveryMoreBtn').click();
       await page.locator('#recordCartsBtn').click();
-      await page.locator('#cartCountOperation').selectOption(operation);
+      await page.locator('[name=cartCountOperation][value=' + operation + ']').check();
       await page.locator('#cartCountAmount').fill(amount);
     };
     const submit = async () => {
@@ -127,6 +128,7 @@ const sample = [1, 2, '3', 0, '', 'bad', -1, 1.5, 3, 5, 2, 3].map((qty, i) => ({
       individuallyDeselectedMarkers.add(excluded);
       updateSelectionCount(); updateUndoButtonState();
     });
+    if (!await page.locator('#recordCartsBtn').isVisible()) await page.locator('#deliveryMoreBtn').click();
     await page.locator('#recordCartsBtn').click();
     assert.match(await page.locator('#cartCountSummary').textContent(), /^1 selected stop/);
     assert.match(await page.locator('#cartCountPreview').textContent(), /Bin 001/);
@@ -135,6 +137,12 @@ const sample = [1, 2, '3', 0, '', 'bad', -1, 1.5, 3, 5, 2, 3].map((qty, i) => ({
     // First pass, including one-cart stops. No local state changes until upload confirmation.
     await toggle('multipleCartsOnly', false);
     await begin([0, 1, 2]);
+    assert.match(await page.locator('#cartCountImpact').textContent(), /3 carts delivered this visit/);
+    assert.match(await page.locator('#cartCountModeHelp').textContent(), /Existing deliveries are kept/);
+    assert.equal(await page.locator('#cartCountDetails').getAttribute('open'), null);
+    await page.locator('#cartCountDetails summary').click();
+    assert.match(await page.locator('#cartCountPreview').textContent(), /Saved now: 0 of 1 · After saving: 1 of 1/);
+    await page.locator('#cartCountDetails summary').click();
     const before = await state();
     const fingerprint = await page.evaluate(() => phoneSequenceStorageKey(window._currentRows));
     await page.evaluate(() => { window.oldWorkbook = window._currentWorkbook; });
@@ -166,7 +174,7 @@ const sample = [1, 2, '3', 0, '', 'bad', -1, 1.5, 3, 5, 2, 3].map((qty, i) => ({
     assert.equal((await state()).stops[2].badge, '2/3');
     await begin([2], 'add', '2');
     assert.equal(await page.locator('#saveCartCountsBtn').isDisabled(), true);
-    assert.match(await page.locator('#cartCountStatus').textContent(), /exceed QTY/);
+    assert.match(await page.locator('#cartCountStatus').textContent(), /more than the carts needed/);
     await page.locator('#cartCountAmount').fill('0.5');
     assert.equal(await page.locator('#saveCartCountsBtn').isDisabled(), true);
     await page.locator('#closeCartCountsBtn').click();
@@ -176,6 +184,26 @@ const sample = [1, 2, '3', 0, '', 'bad', -1, 1.5, 3, 5, 2, 3].map((qty, i) => ({
 
     // Correct a legacy Delivered stop to one cart, then reset a partial count to zero.
     await layer('A|Delivered', true);
+    await begin([8]);
+    await page.locator('[name=cartCountOperation][value=set]').check();
+    assert.equal(await page.locator('#cartCountAmount').inputValue(), '', 'Correction requires a deliberate replacement total');
+    assert.equal(await page.locator('#saveCartCountsBtn').isDisabled(), true);
+    assert.match(await page.locator('#cartCountModeHelp').textContent(), /replaces each saved total/);
+    await page.locator('#cartCountAmount').fill('3');
+    assert.equal(await page.locator('#saveCartCountsBtn').isDisabled(), true, 'An unchanged total needs no save');
+    await page.locator('#cartCountAmount').fill('1');
+    assert.match(await page.locator('#cartCountImpact').textContent(), /2 carts removed/);
+    for (const width of [440, 1440]) {
+      await page.setViewportSize({ width, height: 956 });
+      for (const light of [false, true]) {
+        await page.evaluate(light => document.body.classList.toggle('sun-mode', light), light);
+        await page.screenshot({ path: path.join(root, `local-artifacts/cart-correction-${width}-${light}.png`) });
+        assert(await page.locator('#cartCountsDialog').evaluate(el => el.scrollWidth <= el.clientWidth));
+        for (const card of await page.locator('#cartCountModes label').all()) assert(await card.evaluate(el => el.getBoundingClientRect().height >= 44));
+      }
+    }
+    await page.setViewportSize({ width: 440, height: 956 });
+    await page.locator('#closeCartCountsBtn').click();
     await begin([8], 'set', '1'); await submit(); await resolve();
     assert.equal(await page.evaluate(() => isDeliveredRow(window._currentRows[8])), false);
     await layer('A|1', true);
@@ -252,7 +280,7 @@ const sample = [1, 2, '3', 0, '', 'bad', -1, 1.5, 3, 5, 2, 3].map((qty, i) => ({
         await select([0, 1, 2, 11]);
         const uploadsBefore = await page.evaluate(() => window.uploads.length);
         await clickDeliver();
-        assert.equal(await page.locator('#cartCountOperation').inputValue(), 'each');
+        assert.equal(await page.locator('[name=cartCountOperation]:checked').inputValue(), 'each');
         const fields = page.locator('#cartCountEntries input');
         assert.equal(await fields.count(), 3);
         assert.equal(await fields.nth(0).inputValue(), '');
@@ -260,7 +288,7 @@ const sample = [1, 2, '3', 0, '', 'bad', -1, 1.5, 3, 5, 2, 3].map((qty, i) => ({
         await fields.nth(0).fill('2');
         await fields.nth(1).fill('2');
         await fields.nth(2).fill('0');
-        assert.match(await page.locator('#cartCountStatus').textContent(), /exceed QTY/);
+        assert.match(await page.locator('#cartCountStatus').textContent(), /more than the carts needed/);
         await fields.nth(0).fill('0.5');
         assert.equal(await page.locator('#saveCartCountsBtn').isDisabled(), true);
         await fields.nth(0).fill('-1');
