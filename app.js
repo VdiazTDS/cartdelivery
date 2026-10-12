@@ -585,15 +585,20 @@ if (hardRefreshBtn) {
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { storageKey: "cartdelivery.profiles.auth" } });
 
 // Profile workbooks are server-versioned; no browser can overwrite an original.
-const profileState = { user: null, workspace: null, busy: false, generation: 0, preview: null, syncRequest: null };
+const profileState = { user: null, workspace: null, busy: false, generation: 0, preview: null, syncRequest: null, shareConfirmation: null, authMode: "signin" };
+const teamUploadState = { file: null, result: null, added: false, resume: false, inspection: null, mapping: null, inspecting: false, inspectToken: 0, cancelInspect: null };
 const profileElement = id => document.getElementById(id);
 const profileUsername = user => user?.email?.split("@")[0] || "";
 function profileMessage(error) {
   const code = error?.message || String(error);
-  if (code.includes("STALE_VERSION")) return "Another phone saved or synced first. Reopen your copy, then review again. Nothing from this attempt was applied.";
-  if (code.includes("NAME_EXISTS")) return "An original with this name already exists. Choose it from Saved Files, or rename the new file.";
+  if (code.includes('MAPPING_SETUP_REQUIRED')) return 'Column mapping needs a server update before this file can be uploaded. Ask the app administrator to finish the update.';
+  if (code.includes('INVALID_MAPPING')) return 'Check your column matches. Latitude and longitude need separate columns, and each column can only be used once.';
+  if (code.includes('INVALID_HEADERS')) return 'Use column names under 200 characters and avoid reserved names such as __rowNum__, constructor or prototype.';
+  if (code.includes("TEAM_VIEW_SETUP_REQUIRED")) return "Team viewing needs a server update. Ask the app administrator to finish the update, then try again.";
+  if (code.includes("STALE_VERSION")) return "Your copy or the team Excel changed on another device. Reload your saved copy, then review again. Nothing from this attempt was applied.";
+  if (code.includes("NAME_EXISTS")) return "A team Excel with this name already exists. Choose it from Saved Files, or rename the new file.";
   if (code.includes("SIGN_IN_REQUIRED")) return "Sign in to your delivery profile first.";
-  if (code.includes("UNRESOLVED_CONFLICT")) return "Choose how to resolve every overlapping customer before syncing.";
+  if (code.includes("UNRESOLVED_CONFLICT")) return "Choose which values to keep for every highlighted stop before syncing.";
   if (code.includes("DUPLICATE_HEADERS")) return "This workbook has duplicate column headings. Give each column a unique heading before importing.";
   if (code.includes("INVALID_MACRO_WORKBOOK")) return "Macro-enabled workbooks are not supported. Export an XLSX copy without macros first.";
   if (code.includes("FILE_TOO_LARGE")) return "This workbook is too large. The import limit is 50 MB.";
@@ -601,7 +606,7 @@ function profileMessage(error) {
   if (code.includes("IMPORT_DEVICE_LIMIT")) return "This device could not finish reading the Excel file. Import it once from a computer, then reopen it on your phone.";
   if (code.includes("INVALID_ROW_COUNT")) return "Import a first sheet containing between 1 and 100,000 records.";
   if (code.includes("WORKER_RESOURCE_LIMIT")) return "The server ran out of resources while processing this workbook. Reopen your copy to check what saved; if it still cannot open, the workbook needs administrator attention.";
-  if (code.includes("already registered")) return "That username already exists. Sign in or choose another username.";
+  if (code.includes("already registered")) return "That username already exists. Choose Sign in if it is yours, or try a different username.";
   if (code.includes("Invalid login credentials")) return "The username or password is incorrect.";
   if (code.includes("SETUP_REQUIRED")) return "Delivery profiles need the Supabase setup first. No original files have been changed.";
   if (code.includes("INVALID_")) return "The changes could not be accepted. Reopen your copy and check the selected records and quantities.";
@@ -610,13 +615,15 @@ function profileMessage(error) {
 async function profileApi(body) {
   const generation = profileState.generation;
   const { data: { session } } = await sb.auth.getSession();
-  if (!session) throw new Error("SIGN_IN_REQUIRED");
+  const publicRead = ["public-list", "public-original", "public-rows", "public-export-source"].includes(body.action);
+  if (!session && !publicRead) throw new Error("SIGN_IN_REQUIRED");
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const response = await fetch(`${SUPABASE_URL}/functions/v1/profile-workbooks`, {
-        method: "POST", headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY, Authorization: `Bearer ${session.access_token}` },
+        method: "POST", headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY, ...(!publicRead && session ? { Authorization: `Bearer ${session.access_token}` } : {}) },
         body: JSON.stringify(body), cache: "no-store"
       });
+      if (publicRead && (response.status === 401 || response.status === 404)) throw new Error("TEAM_VIEW_SETUP_REQUIRED");
       if (response.status === 404) throw new Error("SETUP_REQUIRED");
       if (response.status === 546) throw new Error("WORKER_RESOURCE_LIMIT");
       if (response.status >= 500 && !attempt) continue;
@@ -633,33 +640,98 @@ function renderProfileState() {
   const { user, workspace, busy } = profileState;
   const username = profileUsername(user);
   profileElement("profileWorkspaceBtn").textContent = user
-    ? `${username} · ${workspace ? workspace.mode === "original" ? "Viewing original" : `${workspace.pending || 0} to sync` : "Choose file"}`
-    : "Sign in · Delivery profiles";
+    ? `My profile · ${username}${workspace?.pending && workspace.mode === "copy" ? ` · ${workspace.pending} to sync` : ""}`
+    : "Sign in to your delivery account";
+  profileElement("profileTitle").textContent = user ? "My delivery work" : profileState.authMode === "create" ? "Create your account" : "Welcome back";
   profileElement("profileAuthForm").hidden = Boolean(user);
   profileElement("profileSignedIn").hidden = !user;
   profileElement("profileAccountName").textContent = username;
-  profileElement("profileFileSummary").textContent = workspace
-    ? `${workspace.name} · ${workspace.mode === "original" ? "Original — view only" : `Your copy · ${workspace.pending || 0} changed records to sync`}`
-    : "Choose a saved file to create or reopen your copy.";
-  document.querySelectorAll("#profileDialog button, #profileSyncDialog button, #fileManagerModal button").forEach(button => { button.disabled = busy; });
+  profileElement("profileFileSummary").textContent = workspace?.name || "Open a file to start your day";
+  profileElement("profileWorkspaceLabel").textContent = !workspace ? "GET STARTED" : workspace.mode === "original" ? "TEAM EXCEL · VIEW ONLY" : "YOUR SAVED COPY";
+  profileElement("profileSaveSummary").textContent = !workspace
+    ? "Your saved copies follow your account. Choose a file to continue where you left off."
+    : workspace.mode === "original" ? "You're viewing the shared team Excel. Open your own copy to record deliveries."
+    : workspace.pending ? `${workspace.pending} changed ${workspace.pending === 1 ? "stop is" : "stops are"} saved in your copy, ready to sync to team Excel.`
+    : "No changes waiting to sync. You can check for team updates before you continue.";
+  profileElement("profileChooseFileBtn").textContent = workspace ? "Choose another file" : "Choose a file";
+  profileElement("profileChooseFileBtn").classList.toggle("profile-primary", !workspace);
+  profileElement("profileContinueBtn").hidden = !workspace;
+  profileElement("profileFileTools").hidden = !workspace;
+  profileElement("profileReviewBtn").hidden = workspace?.mode !== "copy";
+  profileElement("profileReviewBtn").textContent = workspace?.pending ? "Sync to team Excel" : "Check for team updates";
+  profileElement("profileReviewBtn").classList.toggle("profile-primary", Boolean(workspace?.pending));
+  profileElement("profileContinueBtn").classList.toggle("profile-primary", !workspace?.pending);
+  profileElement("profileDialog").setAttribute("aria-busy", String(busy));
+  profileElement("profileAuthForm").querySelectorAll("input").forEach(input => { input.disabled = busy; });
+  document.querySelectorAll("#profileDialog button, #profileSyncDialog button, #profileShareDialog button, #fileManagerModal button").forEach(button => { button.disabled = busy; });
+  profileElement("profileShareAcknowledged").disabled = busy;
+  profileElement("commitProfileShareBtn").disabled = busy || !profileState.shareConfirmation || !profileElement("profileShareAcknowledged").checked;
+  profileElement("profileSyncChanges").querySelectorAll("input, select").forEach(input => { input.disabled = busy || Boolean(profileState.syncRequest); });
   ["profileReviewBtn", "profileReloadCopyBtn", "profileHistoryBtn"].forEach(id => { profileElement(id).disabled = busy || !workspace; });
+  profileElement("profileHistoryBtn").disabled = busy || !workspace?.fileId;
   profileElement("profileReviewBtn").disabled = busy || workspace?.mode !== "copy";
-  profileElement("profileReloadCopyBtn").textContent = workspace?.mode === "original" ? "Open my copy" : "Reopen my copy";
+  profileElement("profileReloadCopyBtn").textContent = workspace?.mode === "original" ? "Open my own copy" : "Reload my saved copy";
+  profileElement("profileReloadCopyBtn").classList.toggle("profile-primary", workspace?.mode === "original");
   if (typeof updateDeliveryButtons === "function") updateDeliveryButtons();
+  renderRouteContext();
+  renderTeamUpload();
+}
+function renderRouteContext() {
+  const { workspace, user, preview } = profileState;
+  document.querySelectorAll(".route-context").forEach(banner => {
+    const dialog = banner.closest("dialog");
+    const sharing = preview?.changes.length > 0 && ["profileSyncDialog", "profileShareDialog"].includes(dialog?.id);
+    banner.hidden = !workspace;
+    const main = workspace?.mode === "original";
+    banner.dataset.mode = sharing ? "sharing" : main ? "team" : "copy";
+    banner.querySelector("strong").textContent = sharing ? "TEAM EXCEL · SYNC SUMMARY" : main ? "TEAM EXCEL · VIEW ONLY" : `YOUR COPY · ${profileUsername(user)}`;
+    banner.querySelector(".route-context-file").textContent = sharing ? preview.name : workspace?.name || "";
+    banner.querySelector(".route-context-help").textContent = sharing ? "Check the totals before syncing to team Excel." : main ? "Editing is off. Use your profile copy to make changes." : "Delivery saves change your copy. Sync to team Excel when ready.";
+    if (banner.id === "routeContext") {
+      banner.querySelector(".route-context-help").textContent = main
+        ? "View only · Open your copy to edit"
+        : "Saves to your copy · Sync to team Excel when ready";
+    }
+  });
+}
+function setupRouteContext() {
+  const template = profileElement("routeContext");
+  document.querySelectorAll("dialog:not(#pocketLock):not(#teamUploadDialog), .modal-content").forEach(container => {
+    const banner = template.cloneNode(true);
+    banner.removeAttribute("id"); banner.removeAttribute("role");
+    container.prepend(banner);
+  });
+  renderRouteContext();
+}
+function setProfileAuthMode(mode) {
+  if (profileState.busy) return;
+  profileState.authMode = mode;
+  const create = mode === "create";
+  profileElement("profileSignInMode").setAttribute("aria-pressed", String(!create));
+  profileElement("profileCreateMode").setAttribute("aria-pressed", String(create));
+  profileElement("profileSignInBtn").hidden = create;
+  profileElement("createProfileBtn").hidden = !create;
+  profileElement("profilePassword").autocomplete = create ? "new-password" : "current-password";
+  profileElement("profileAuthIntro").textContent = create ? "One account keeps your saved delivery copies available on your phone and computer." : "Sign in with the same username on your phone or computer to open your saved copies.";
+  profileElement("profileUsernameHelp").textContent = create ? "Choose 3–30 letters, numbers, underscores or hyphens. Start with a letter or number." : "Use your username, not an email address. Capitalization does not matter.";
+  profileElement("profilePasswordHelp").textContent = create ? "Choose a password with at least 8 characters." : "Enter the password you used to create your account.";
+  profileElement("profileStatus").textContent = "";
+  renderProfileState();
 }
 async function profileTask(statusId, action) {
   if (profileState.busy || deliverySaveInProgress || resequenceBusy) return;
   profileState.busy = true;
   profileElement(statusId).textContent = "Working…";
+  delete profileElement(statusId).dataset.state;
   renderProfileState();
   try { await action(); }
-  catch (error) { profileElement(statusId).textContent = profileMessage(error); }
+  catch (error) { profileElement(statusId).textContent = profileMessage(error); profileElement(statusId).dataset.state = "error"; }
   finally { profileState.busy = false; renderProfileState(); }
 }
 function requireProfile() {
   if (profileState.user) return true;
   profileElement("fileManagerModal").style.display = "none";
-  profileElement("profileStatus").textContent = "Sign in or create a profile to work on your own copy.";
+  profileElement("profileStatus").textContent = "Sign in to open your saved delivery work.";
   if (!profileElement("profileDialog").open) profileElement("profileDialog").showModal();
   return false;
 }
@@ -667,25 +739,28 @@ async function displayProfileWorkbook(result, mode = "copy") {
   const generation = profileState.generation;
   const rows = [];
   while (rows.length < result.rowCount) {
-    const page = await profileApi({ action: "rows", fileId: result.fileId, mode, offset: rows.length,
+    const page = await profileApi({ action: mode === "original" ? "public-rows" : "rows", fileId: result.fileId, mode, offset: rows.length,
       copyRevision: result.copyRevision, masterRevision: result.masterRevision });
     if (!page.rows.length || page.offset !== rows.length || page.rowCount !== result.rowCount) throw new Error("ROW_STRUCTURE_CHANGED");
     rows.push(...page.rows);
   }
   if (generation !== profileState.generation) throw new Error("SIGN_IN_REQUIRED");
-  profileState.workspace = { ...result, mode, owner: profileState.user.id };
+  profileState.workspace = { ...result, mode, owner: profileState.user?.id || null };
   window._currentFilePath = result.name;
-  setCurrentFileDisplay(`${result.name} · ${mode === "original" ? "Original (view only)" : profileUsername(profileState.user) + "’s copy"}`);
+  setCurrentFileDisplay(`${result.name} · ${mode === "original" ? "Team Excel (view only)" : profileUsername(profileState.user) + "’s copy"}`);
   processExcelBuffer(null, profileViewWorkbook(), rows);
+  profileElement("profileStatus").textContent = "";
+  delete profileElement("profileStatus").dataset.state;
   profileState.preview = null;
   profileState.syncRequest = null;
+  profileState.shareConfirmation = null;
   renderProfileState();
 }
 function profileViewWorkbook() {
   // Map state needs a file handle; actual Excel cells are created only on export.
   return { SheetNames: ["Stops"], Sheets: { Stops: {} } };
 }
-async function importProfileFile(file, localFile = null) {
+async function importProfileFile(file, localFile = null, onProgress = showLoading, fieldMapping = null) {
   let bytes;
   let digest;
   if (localFile) {
@@ -693,7 +768,9 @@ async function importProfileFile(file, localFile = null) {
     bytes = await localFile.arrayBuffer();
     digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))).map(x => x.toString(16).padStart(2, "0")).join("");
   }
-  const prepared = await profileApi({ action: "import-start", name: file.name, sourceKey: file.sourceKey, digest, requestId: crypto.randomUUID() });
+  const prepared = await profileApi({ action: "import-start", name: file.name, sourceKey: file.sourceKey, digest, ...(fieldMapping ? { fieldMapping } : {}), requestId: crypto.randomUUID() });
+  if (fieldMapping && (!prepared.fieldMapping || Object.keys(fieldMapping).length !== Object.keys(prepared.fieldMapping).length ||
+    Object.entries(fieldMapping).some(([key, value]) => prepared.fieldMapping[key] !== value))) throw new Error('MAPPING_SETUP_REQUIRED');
   if (prepared.ready) return prepared;
   if (prepared.upload) {
     const { error } = await sb.storage.from(prepared.upload.bucket).uploadToSignedUrl(prepared.upload.path, prepared.upload.token, localFile);
@@ -706,8 +783,8 @@ async function importProfileFile(file, localFile = null) {
     bytes = await response.arrayBuffer();
     if (bytes.byteLength > 50000000) throw new Error("FILE_TOO_LARGE");
   }
-  showLoading("Reading Excel for first-time import…");
-  const worker = new Worker("profile-import-worker.js?v=20261009-database");
+  onProgress("Reading your Excel file…");
+  const worker = new Worker("profile-import-worker.js?v=20261012-field-mapping");
   const request = (message, transfer = []) => new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("IMPORT_DEVICE_LIMIT")), 120000);
     worker.onmessage = ({ data }) => { clearTimeout(timeout); data.error ? reject(new Error(data.error)) : resolve(data); };
@@ -715,9 +792,9 @@ async function importProfileFile(file, localFile = null) {
     worker.postMessage(message, transfer);
   });
   try {
-    const { rowCount } = await request({ bytes }, [bytes]);
+    const { rowCount } = await request({ bytes, mapping: fieldMapping }, [bytes]);
     for (let offset = prepared.rowCount; offset < rowCount;) {
-      showLoading(`Importing records ${offset + 1}–${Math.min(offset + 250, rowCount)} of ${rowCount}…`);
+      onProgress(`Adding stops ${offset + 1}–${Math.min(offset + 250, rowCount)} of ${rowCount}…`);
       const { rows } = await request({ offset });
       if (!rows.length) throw new Error("INVALID_ROW_COUNT");
       await profileApi({ action: "import-batch", fileId: prepared.fileId, offset, rows, requestId: crypto.randomUUID() });
@@ -728,10 +805,10 @@ async function importProfileFile(file, localFile = null) {
 }
 async function profileExportWorkbook() {
   const workspace = profileState.workspace;
-  if (!workspace) return window._currentWorkbook;
+  if (!workspace || workspace.legacy) return window._currentWorkbook;
   const generation = profileState.generation;
   const rows = window._currentRows.map(row => ({ ...row }));
-  const { url } = await profileApi({ action: "export-source", fileId: workspace.fileId });
+  const { url } = await profileApi({ action: workspace.mode === "original" ? "public-export-source" : "export-source", fileId: workspace.fileId });
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) throw new Error("REQUEST_FAILED");
   const workbook = XLSX.read(new Uint8Array(await response.arrayBuffer()), { type: "array", cellStyles: true, bookVBA: true, cellText: false });
@@ -744,29 +821,55 @@ async function profileExportWorkbook() {
     const key = String(sheet[XLSX.utils.encode_cell({ r: range.s.r, c: col })]?.v ?? "");
     if (key) columns.set(key, col);
   }
+  const exportColumns = new Map();
+  for (const field of ['del_qty', 'del_status', 'delivery_notes']) {
+    let header = workspace.fieldMapping ? workspace.fieldMapping[field] : field;
+    if (!header) {
+      header = field;
+      for (let suffix = 1; columns.has(header); suffix++) header = `${field}_app${suffix === 1 ? '' : suffix}`;
+    }
+    exportColumns.set(field, header);
+  }
   rows.forEach((row, index) => {
     for (const field of ["del_qty", "del_status", "delivery_notes"]) {
-      if (JSON.stringify(row[field] ?? null) === JSON.stringify(source[index][field] ?? null)) continue;
-      if (!columns.has(field)) {
-        columns.set(field, ++range.e.c);
-        XLSX.utils.sheet_add_aoa(sheet, [[field]], { origin: { r: range.s.r, c: range.e.c } });
+      const originalHeader = workspace.fieldMapping ? workspace.fieldMapping[field] : field;
+      if (JSON.stringify(row[field] ?? null) === JSON.stringify((originalHeader ? source[index][originalHeader] : null) ?? null)) continue;
+      const header = exportColumns.get(field);
+      if (!columns.has(header)) {
+        columns.set(header, ++range.e.c);
+        XLSX.utils.sheet_add_aoa(sheet, [[header]], { origin: { r: range.s.r, c: range.e.c } });
       }
-      XLSX.utils.sheet_add_aoa(sheet, [[row[field] ?? ""]], { origin: { r: source[index].__rowNum__, c: columns.get(field) } });
+      XLSX.utils.sheet_add_aoa(sheet, [[row[field] ?? ""]], { origin: { r: source[index].__rowNum__, c: columns.get(header) } });
     }
   });
   if (generation !== profileState.generation || workspace !== profileState.workspace) throw new Error("SIGN_IN_REQUIRED");
   return workbook;
 }
 async function openProfileFile(file, mode = "copy") {
-  if (!requireProfile() || profileState.busy || deliverySaveInProgress || resequenceBusy) return;
+  if ((mode !== "original" && !requireProfile()) || profileState.busy || deliverySaveInProgress || resequenceBusy) return;
   profileState.busy = true;
   renderProfileState();
-  showLoading(mode === "copy" ? "Opening your profile copy…" : "Opening original (view only)…");
+  showLoading(mode === "copy" ? "Opening your saved copy…" : "Opening team Excel (view only)…");
   try {
     let fileId = file.fileId;
-    if (!fileId) ({ fileId } = await importProfileFile(file));
-    const result = await profileApi({ action: mode === "copy" ? "open" : "original", fileId, requestId: crypto.randomUUID() });
-    await displayProfileWorkbook(result, mode);
+    if (!fileId && mode === "original") {
+      // Unimported public sources can be viewed without creating database records.
+      const generation = profileState.generation;
+      const { data } = sb.storage.from(BUCKET).getPublicUrl(file.sourceKey);
+      const response = await fetch(data.publicUrl, { cache: "no-store" });
+      if (!response.ok) throw new Error("REQUEST_FAILED");
+      const bytes = await response.arrayBuffer();
+      if (generation !== profileState.generation) throw new Error("SIGN_IN_REQUIRED");
+      profileState.workspace = { ...file, mode, legacy: true, owner: profileState.user?.id || null };
+      window._currentFilePath = file.name;
+      processExcelBuffer(bytes);
+      setCurrentFileDisplay(`${file.name} · Team Excel (view only)`);
+      profileState.preview = null; profileState.syncRequest = null; profileState.shareConfirmation = null;
+    } else {
+      if (!fileId) ({ fileId } = await importProfileFile(file));
+      const result = await profileApi({ action: mode === "copy" ? "open" : "public-original", fileId, ...(mode === "copy" ? { requestId: crypto.randomUUID() } : {}) });
+      await displayProfileWorkbook(result, mode);
+    }
     profileElement("fileManagerModal").style.display = "none";
     profileElement("profileDialog").close();
     closeMobileMenu();
@@ -797,15 +900,12 @@ async function listProfileFiles() {
   list.replaceChildren();
   const message = document.createElement("p");
   message.className = "saved-files-empty";
-  message.textContent = profileState.user ? "Loading your files…" : "Sign in to open a profile copy. Originals stay unchanged until you sync.";
+  profileElement("savedFilesAccount").textContent = profileState.user ? `SIGNED IN AS ${profileUsername(profileState.user)}` : "DELIVERY FILES";
+  message.textContent = profileState.user ? "Finding your saved copies and team Excel files…" : "Finding team Excel files to view…";
   list.append(message);
-  if (!profileState.user) {
-    const button = document.createElement("button"); button.textContent = "Sign in / create profile";
-    button.onclick = requireProfile; list.append(button); return;
-  }
   const generation = profileState.generation;
   try {
-    const managed = await profileApi({ action: "list" });
+    const managed = await profileApi({ action: profileState.user ? "list" : "public-list" });
     await loadSharedCartDeliveryNames();
     const legacy = [];
     for (let offset = 0; ; offset += 100) {
@@ -819,7 +919,7 @@ async function listProfileFiles() {
     legacy.forEach(file => { if (!files.some(f => f.sourceKey === file.name || f.name === file.name)) files.push({ name: file.name, sourceKey: file.name }); });
     const visible = files.filter(file => activeSavedFilesTab === "all" || cartDeliveryFileNames.has(file.sourceKey || file.name));
     list.replaceChildren();
-    if (!visible.length) { message.textContent = activeSavedFilesTab === "all" ? "No saved files yet. Add an original route file to get started." : "No Cart Delivery files yet. Open All Files and add the files you use."; list.append(message); }
+    if (!visible.length) { message.textContent = activeSavedFilesTab === "all" ? "No team Excel files yet. Upload a route file from the menu to get started." : "No shortcuts yet. Choose All Files to find a team Excel and open your copy."; list.append(message); }
     visible.forEach(file => {
       const card = document.createElement("article"); card.className = "saved-file-card";
       const heading = document.createElement("div"); heading.className = "saved-file-heading";
@@ -827,13 +927,13 @@ async function listProfileFiles() {
       const name = document.createElement("span"); name.className = "saved-file-name"; name.textContent = file.name;
       heading.append(icon, name);
       const detail = document.createElement("p"); detail.className = "profile-file-detail";
-      detail.textContent = file.copyId ? `Your copy · ${file.pending} changed records to sync` : "Creates a separate copy for your profile";
-      const open = document.createElement("button"); open.className = "saved-file-btn"; open.textContent = file.copyId ? "Open my copy" : "Create my copy & open";
-      open.onclick = () => openProfileFile(file);
+      detail.textContent = !profileState.user ? "View the team Excel without signing in. Sign in to work in your own copy." : file.copyId ? file.pending ? `Saved to your account · ${file.pending} ${file.pending === 1 ? "change" : "changes"} waiting to sync` : "Your saved copy is ready to reopen on this device." : "Start your own copy. Your delivery saves stay separate until you sync them.";
+      const open = document.createElement("button"); open.className = "saved-file-btn"; open.textContent = !profileState.user ? "View team Excel (read only)" : file.copyId ? "Continue my work" : "Start my own copy";
+      open.onclick = () => openProfileFile(file, profileState.user ? "copy" : "original");
       const actions = document.createElement("div"); actions.className = "saved-file-secondary-actions";
-      const original = document.createElement("button"); original.textContent = "View original"; original.onclick = () => openProfileFile(file, "original");
+      const original = document.createElement("button"); original.textContent = "View team Excel (read only)"; original.onclick = () => openProfileFile(file, "original");
       const organize = document.createElement("button"); const key = file.sourceKey || file.name;
-      const included = cartDeliveryFileNames.has(key); organize.textContent = included ? "Remove from tab" : "Add to Cart Delivery";
+      const included = cartDeliveryFileNames.has(key); organize.textContent = included ? "Remove shortcut" : "Add to Cart Delivery";
       organize.setAttribute("aria-pressed", String(included));
       organize.onclick = async () => {
         organize.disabled = true; const before = new Set(cartDeliveryFileNames);
@@ -841,12 +941,92 @@ async function listProfileFiles() {
         try { await saveCartDeliveryFileNames(); } catch (error) { cartDeliveryFileNames = before; alert(profileMessage(error)); }
         await listFiles();
       };
-      actions.append(original, organize); card.append(heading, detail, open, actions); list.append(card);
+      if (profileState.user) actions.append(original, organize);
+      else { const signIn = document.createElement("button"); signIn.textContent = "Sign in to make changes in my copy"; signIn.onclick = requireProfile; actions.append(signIn); }
+      card.append(heading, detail, open, actions); list.append(card);
     });
   } catch (error) { message.textContent = profileMessage(error); list.replaceChildren(message); }
 }
 function profileCountText(row) {
   return `${deliveredCartCount(row)} of ${cartTotal(row) ?? "?"} carts delivered${row.delivery_notes ? ` · ${row.delivery_notes}` : ""}`;
+}
+function profileSyncImpact(preview, resolutions = []) {
+  const choices = new Map(resolutions.map(choice => [choice.index, choice]));
+  const impact = { stops: 0, added: 0, removed: 0, completed: 0, reopened: 0, notes: 0, unknown: 0, unchanged: 0, unresolved: 0, routes: [] };
+  const groups = new Map();
+  for (const item of preview.changes) {
+    const choice = choices.get(item.index);
+    if (item.conflict && (!choice || !['original', 'mine', 'count'].includes(choice.choice) || (choice.choice === 'count' &&
+      (!Number.isSafeInteger(choice.count) || cartTotal(item.original) === null || choice.count < 0 || choice.count > cartTotal(item.original))))) {
+      impact.unresolved++; continue;
+    }
+    if (item.conflict && choice.choice === 'original') { impact.unchanged++; continue; }
+    // Match the sync transaction: apply edited fields over the latest team values.
+    const delta = Object.fromEntries(item.fields.map(field => [field, item.mine[field]]));
+    if ('del_qty' in delta || 'del_status' in delta) Object.assign(delta, { del_qty: item.mine.del_qty ?? '', del_status: item.mine.del_status ?? '' });
+    if (item.conflict && choice.choice === 'count') Object.assign(delta, {
+      del_qty: choice.count, del_status: choice.count === cartTotal(item.original) ? 'Delivered' : ''
+    });
+    const after = { ...item.original, ...delta };
+    const changed = ['del_qty', 'del_status', 'delivery_notes'].filter(field => JSON.stringify(after[field] ?? null) !== JSON.stringify(item.original[field] ?? null));
+    if (!changed.length) { impact.unchanged++; continue; }
+    impact.stops++;
+    const route = String(rowRoute(item.original) ?? '').trim() || 'Unassigned';
+    const day = String(rowDay(item.original) ?? '').trim();
+    const key = JSON.stringify([route, day]);
+    if (!groups.has(key)) groups.set(key, { route, day, stops: 0, added: 0, removed: 0 });
+    const group = groups.get(key); group.stops++;
+    if (changed.includes('delivery_notes')) impact.notes++;
+    if (changed.includes('del_qty') || changed.includes('del_status')) {
+      if (cartTotal(after) === null) impact.unknown++;
+      else {
+        const difference = deliveredCartCount(after) - deliveredCartCount(item.original);
+        const added = Math.max(0, difference), removed = Math.max(0, -difference);
+        impact.added += added; impact.removed += removed; group.added += added; group.removed += removed;
+      }
+      if (!isDeliveredRow(item.original) && isDeliveredRow(after)) impact.completed++;
+      if (isDeliveredRow(item.original) && !isDeliveredRow(after)) impact.reopened++;
+    }
+  }
+  impact.routes = [...groups.values()].sort((a, b) => a.route.localeCompare(b.route, undefined, { numeric: true }) || a.day.localeCompare(b.day, undefined, { numeric: true }));
+  return impact;
+}
+function profileSyncChoices() {
+  return [...profileElement('profileSyncChanges').querySelectorAll('[data-conflict-index]')].map(select => {
+    const input = profileElement('profileSyncChanges').querySelector(`[data-conflict-count="${select.dataset.conflictIndex}"]`);
+    return { index: Number(select.dataset.conflictIndex), choice: select.value, count: input.value.trim() ? Number(input.value) : null };
+  });
+}
+function renderProfileSyncImpact(container, preview, resolutions) {
+  const impact = profileSyncImpact(preview, resolutions);
+  container.replaceChildren();
+  const title = document.createElement('h3'); title.textContent = impact.unresolved ? 'Sync totals so far' : 'What will change in team Excel';
+  const metrics = document.createElement('dl'); metrics.className = 'profile-sync-metrics';
+  for (const [label, value] of [['Stops updated', impact.stops], ['Carts added to delivered total', impact.added], ['Carts removed from delivered total', impact.removed], ['Stops completed', impact.completed]]) {
+    const box = document.createElement('div'), term = document.createElement('dt'), count = document.createElement('dd');
+    term.textContent = label; count.textContent = value.toLocaleString(); box.append(term, count); metrics.append(box);
+  }
+  container.append(title, metrics);
+  const notes = document.createElement('p');
+  notes.textContent = [
+    impact.reopened ? `${impact.reopened} completed stops return to pending.` : '',
+    impact.notes ? `${impact.notes} stops have note updates.` : '',
+    impact.unchanged ? `${impact.unchanged} stops keep the current team Excel values.` : '',
+    impact.unknown ? `${impact.unknown} stops have no valid QTY; excluded from cart totals.` : '',
+    impact.unresolved ? `${impact.unresolved} conflicts still need a decision and are excluded from these totals.` : 'Totals compare your sync with the current team Excel values.'
+  ].filter(Boolean).join(' ');
+  container.append(notes);
+  if (impact.routes.length) {
+    const routes = document.createElement('details'); routes.className = 'profile-explainer';
+    const summary = document.createElement('summary'); summary.textContent = `Routes / days affected (${impact.routes.length})`;
+    const list = document.createElement('ul');
+    for (const group of impact.routes) {
+      const line = document.createElement('li'); line.textContent = `Route ${group.route} · ${dayName(Number(group.day)) || (group.day ? `Day ${group.day}` : 'No day')} — ${group.stops} stops · +${group.added} / −${group.removed} carts`;
+      list.append(line);
+    }
+    routes.append(summary, list); container.append(routes);
+  }
+  return impact;
 }
 async function reviewProfileSync() {
   if (!requireProfile() || !profileState.workspace) return;
@@ -858,41 +1038,69 @@ async function reviewProfileSync() {
       if (!page.changes.length) throw new Error("STALE_VERSION");
       preview.changes.push(...page.changes);
     }
-    profileState.preview = preview; profileState.syncRequest = null;
+    profileState.preview = preview; profileState.syncRequest = null; profileState.shareConfirmation = null;
     const conflicts = preview.changes.filter(item => item.conflict).length;
-    profileElement("profileSyncSummary").textContent = `${preview.name} · ${preview.changes.length} changed records · ${conflicts} overlaps to review. Sync also refreshes your copy with the latest original.`;
+    profileElement("profileSyncSummary").textContent = preview.name;
+    profileElement("profileSyncHelp").textContent = conflicts
+      ? `${preview.changes.length} changed ${preview.changes.length === 1 ? "stop" : "stops"} to sync. The team also changed ${conflicts} of these. Choose which values to keep at each highlighted stop.`
+      : preview.changes.length ? `${preview.changes.length} saved ${preview.changes.length === 1 ? "stop" : "stops"} ready to sync. No conflicts — you can confirm the totals without reviewing each stop.`
+      : "You have no changes waiting to sync. Update your copy to get the team's latest deliveries.";
     profileElement("profileSyncStatus").textContent = "";
     const list = profileElement("profileSyncChanges"); list.replaceChildren();
-    preview.changes.forEach(item => {
+    const createChangeCard = item => {
       const card = document.createElement("article"); card.className = "profile-change";
       const title = document.createElement("strong"); title.textContent = `${formatStopAddress(item.mine)} · Bin ${item.mine.BINNO ?? "—"} · Record ${item.index + 1}`;
       card.append(title);
-      [["When your copy was last synced", item.base], ["Original now", item.original], ["Your copy", item.mine]].forEach(([label, row]) => {
-        const line = document.createElement("p"); line.textContent = `${label}: ${profileCountText(row)}`; card.append(line);
+      [["Your copy started with", item.base], ["Team Excel now", item.original], ["Your saved changes", item.mine]].forEach(([label, row]) => {
+        const line = document.createElement("div"); line.className = "profile-comparison";
+        const heading = document.createElement("span"); heading.textContent = label;
+        const value = document.createElement("strong"); value.textContent = profileCountText(row);
+        line.append(heading, value); card.append(line);
       });
       if (item.conflict) {
         card.classList.add("profile-conflict");
-        const label = document.createElement("label"); label.textContent = "Another profile changed this customer. Choose the result:";
+        const label = document.createElement("label"); label.textContent = "The team changed this stop too. Which values should everyone use?";
         const select = document.createElement("select"); select.dataset.conflictIndex = item.index; select.setAttribute("aria-label", `Resolve record ${item.index + 1}`);
-        [["", "Choose a resolution"], ["original", "Keep original’s values"], ["mine", "Use my copy’s changed values"], ...(cartTotal(item.original) !== null ? [["count", "Enter the final delivered cart total"]] : [])].forEach(([value, text]) => select.add(new Option(text, value)));
+        [["", "Choose which values to keep"], ["original", "Keep the team's values"], ["mine", "Use my changes"], ...(cartTotal(item.original) !== null ? [["count", "Enter the correct total delivered"]] : [])].forEach(([value, text]) => select.add(new Option(text, value)));
         const countLabel = document.createElement("label"); countLabel.textContent = "Final total delivered (all teams combined)"; countLabel.hidden = true;
         const input = document.createElement("input"); Object.assign(input, { type: "number", inputMode: "numeric", min: "0", max: String(cartTotal(item.original)), step: "1" }); input.dataset.conflictCount = item.index;
-        countLabel.append(input); select.onchange = () => { countLabel.hidden = select.value !== "count"; };
+        const refresh = () => renderProfileSyncImpact(profileElement('profileSyncImpact'), preview, profileSyncChoices());
+        countLabel.append(input); select.onchange = () => { countLabel.hidden = select.value !== "count"; refresh(); };
+        input.oninput = refresh;
         label.append(select); card.append(label, countLabel);
       }
-      list.append(card);
-    });
-    if (!preview.changes.length) list.textContent = "You have no changes to apply. You can still refresh your copy from the original.";
-    profileElement("confirmProfileSyncBtn").textContent = preview.changes.length ? "Confirm sync to original" : "Refresh my copy from original";
+      return card;
+    };
+    preview.changes.filter(item => item.conflict).forEach(item => list.append(createChangeCard(item)));
+    const ordinary = preview.changes.filter(item => !item.conflict);
+    if (ordinary.length) {
+      const details = document.createElement('details'); details.className = 'profile-explainer'; details.id = 'profileSyncDetails';
+      const summary = document.createElement('summary'); summary.textContent = `View individual stops (${ordinary.length}) · optional`;
+      const cards = document.createElement('div');
+      const more = document.createElement('button'); more.type = 'button'; more.textContent = 'Show more stops';
+      let offset = 0;
+      const append = () => {
+        ordinary.slice(offset, offset + 50).forEach(item => cards.append(createChangeCard(item)));
+        offset += 50; more.hidden = offset >= ordinary.length;
+      };
+      details.ontoggle = () => { if (details.open && !offset) append(); };
+      more.onclick = append;
+      details.append(summary, cards, more); list.append(details);
+    }
+    renderProfileSyncImpact(profileElement('profileSyncImpact'), preview, []);
+    profileElement('profileSyncImpact').hidden = !preview.changes.length;
+    list.hidden = !preview.changes.length;
+    profileElement("confirmProfileSyncBtn").textContent = preview.changes.length ? "Next: confirm sync" : "Next: confirm copy update";
     profileElement("profileStatus").textContent = "";
     profileElement("profileDialog").close(); profileElement("profileSyncDialog").showModal();
   });
 }
 async function confirmProfileSync() {
   const preview = profileState.preview;
-  if (!preview || !requireProfile()) return;
-  await profileTask("profileSyncStatus", async () => {
-    if (!profileState.syncRequest) {
+  if (!preview || !requireProfile() || profileState.busy || deliverySaveInProgress || resequenceBusy) return;
+  try {
+    let request = profileState.syncRequest;
+    if (!request) {
       const resolutions = preview.changes.filter(item => item.conflict).map(item => {
         const choice = document.querySelector(`[data-conflict-index="${item.index}"]`).value;
         if (!choice) throw new Error("UNRESOLVED_CONFLICT");
@@ -900,15 +1108,50 @@ async function confirmProfileSync() {
         if (choice === "count" && (!input.value.trim() || !input.checkValidity())) throw new Error("INVALID_QUANTITY");
         return { index: item.index, choice, ...(choice === "count" ? { count: Number(input.value) } : {}) };
       });
-      profileState.syncRequest = { action: "sync", fileId: preview.fileId, copyRevision: preview.copyRevision,
+      request = { action: "sync", fileId: preview.fileId, copyRevision: preview.copyRevision,
         masterRevision: preview.masterRevision, resolutions, requestId: crypto.randomUUID() };
     }
+    profileState.shareConfirmation = { request, preview, generation: profileState.generation, owner: profileState.user.id };
+    const sharing = preview.changes.length > 0;
+    profileElement("profileShareTitle").textContent = sharing ? "Sync to team Excel?" : "Update your copy?";
+    profileElement("profileShareAccount").textContent = profileUsername(profileState.user);
+    profileElement("profileShareFile").textContent = preview.name;
+    const impact = renderProfileSyncImpact(profileElement('profileShareImpact'), preview, request.resolutions);
+    profileElement('profileShareImpact').hidden = !sharing;
+    profileElement("profileShareCount").textContent = `${impact.stops} stops updated · ${impact.unresolved} unresolved conflicts`;
+    profileElement("profileShareEffect").textContent = sharing
+      ? "This updates team Excel with the totals above and your conflict choices. Your copy will also receive the latest team Excel updates."
+      : "This brings the team's latest saved deliveries into your copy. You have no changes to send to the team Excel.";
+    profileElement("profileShareAcknowledgement").textContent = sharing ? "I want to sync these totals and conflict choices to team Excel." : "I want to update my copy with the team's latest saved work.";
+    profileElement("commitProfileShareBtn").textContent = sharing ? "Confirm sync to team Excel" : "Confirm & update my copy";
+    profileElement("cancelProfileShareBtn").textContent = sharing ? "Go back without syncing" : "Go back without updating";
+    profileElement("profileShareAcknowledged").checked = false;
+    profileElement("profileShareStatus").textContent = "";
+    profileElement("profileSyncStatus").textContent = "";
+    renderProfileState();
+    profileElement("profileSyncDialog").close(); profileElement("profileShareDialog").showModal();
+  } catch (error) {
+    profileElement("profileSyncStatus").textContent = profileMessage(error);
+    profileElement("profileSyncStatus").dataset.state = "error";
+  }
+}
+async function commitProfileShare() {
+  const confirmation = profileState.shareConfirmation;
+  if (!confirmation || !profileElement("profileShareDialog").open || !profileElement("profileShareAcknowledged").checked || profileState.busy) return;
+  const { preview, request, generation, owner } = confirmation;
+  if (generation !== profileState.generation || owner !== profileState.user?.id || preview !== profileState.preview || preview.fileId !== profileState.workspace?.fileId) return;
+  await profileTask("profileShareStatus", async () => {
+    profileElement("profileShareStatus").textContent = "Confirming with the server…";
+    profileState.syncRequest = request;
     // Retain this request ID after an uncertain response so retry cannot apply it twice.
-    const result = await profileApi(profileState.syncRequest);
+    const result = await profileApi(request);
     await displayProfileWorkbook(result);
-    profileElement("profileSyncDialog").close(); profileElement("profileDialog").showModal();
-    profileElement("profileStatus").textContent = "Sync confirmed. Your original and profile copy are up to date. Changes are recorded in the original’s history.";
+    profileElement("profileShareDialog").close(); profileElement("profileDialog").showModal();
+    profileElement("profileStatus").textContent = preview.changes.length ? "Synced to team Excel. Your copy now includes the team's latest updates." : "Your copy now includes the team's latest updates. You're ready to continue.";
   });
+  profileElement("profileShareAcknowledged").checked = false;
+  if (profileElement("profileShareDialog").open) profileElement("profileShareStatus").textContent += " A retry uses the same reviewed choices. Reopen your saved copy to check what was confirmed.";
+  renderProfileState();
 }
 async function showProfileHistory(more = false) {
   const workspace = profileState.workspace;
@@ -923,8 +1166,8 @@ async function showProfileHistory(more = false) {
     const { history } = await profileApi({ action: "history", fileId: workspace.fileId, offset: list.children.length });
     history.forEach(entry => {
       const card = document.createElement("details"); card.className = "profile-change";
-      const summary = document.createElement("summary"); summary.textContent = `${entry.profile_name} · ${new Date(entry.created_at).toLocaleString()} · ${entry.change_count} records changed`;
-      const version = document.createElement("p"); version.textContent = `Original version ${entry.before_revision} → ${entry.after_revision}. ${entry.resolution_count} overlaps reviewed.`;
+      const summary = document.createElement("summary"); summary.textContent = `${entry.profile_name} synced ${entry.change_count} ${entry.change_count === 1 ? "change" : "changes"} · ${new Date(entry.created_at).toLocaleString()}`;
+      const version = document.createElement("p"); version.textContent = entry.resolution_count ? `${entry.resolution_count} conflicting team changes were reviewed before syncing.` : "No conflicting team changes needed review.";
       card.append(summary, version);
       const detail = document.createElement("div");
       const load = document.createElement("button"); load.textContent = "Show changes";
@@ -937,7 +1180,7 @@ async function showProfileHistory(more = false) {
           page.changes.forEach(change => {
             const line = document.createElement("p"); line.textContent = `${change.address || "Record " + (change.index + 1)} · Bin ${change.bin || "—"}: ${change.fields.map(field => `${({ del_qty: "Carts delivered", del_status: "Status", delivery_notes: "Note" })[field.field] || field.field}: ${field.before === "" || field.before == null ? "blank" : field.before} → ${field.after === "" || field.after == null ? "blank" : field.after}`).join("; ")}`; detail.append(line);
           });
-          page.resolutions.forEach(resolution => { const line = document.createElement("p"); line.textContent = `Record ${resolution.index + 1}: ${resolution.choice === "count" ? `final delivered total ${resolution.count}` : resolution.choice === "mine" ? "used profile changes" : "kept original values"}`; detail.append(line); });
+          page.resolutions.forEach(resolution => { const line = document.createElement("p"); line.textContent = `Record ${resolution.index + 1}: ${resolution.choice === "count" ? `final delivered total ${resolution.count}` : resolution.choice === "mine" ? "used this person's changes" : "kept the team's values"}`; detail.append(line); });
           offset += 250;
           load.textContent = "Show more changes";
           load.hidden = offset >= Math.max(entry.change_count, entry.resolution_count);
@@ -950,15 +1193,21 @@ async function showProfileHistory(more = false) {
       list.append(card);
     });
     button.hidden = history.length < 25;
-    profileElement("profileHistoryStatus").textContent = list.children.length ? `${workspace.name} · Newest syncs first. Expand a sync to see its changes.` : "No profiles have synced changes to this original yet.";
+    profileElement("profileHistoryStatus").textContent = list.children.length ? `${workspace.name} · Most recent first. Tap an entry to see what changed.` : "No changes have been synced to team Excel yet. Delivery saves stay in each person's copy until they sync them.";
   } catch (error) { profileElement("profileHistoryStatus").textContent = profileMessage(error); }
   finally { button.disabled = false; profileState.busy = false; renderProfileState(); }
 }
 function setupDeliveryProfiles() {
+  setupRouteContext();
   profileElement("profileWorkspaceBtn").onclick = () => { renderProfileState(); profileElement("profileDialog").showModal(); };
   [["closeProfileBtn", "profileDialog"], ["closeProfileSyncBtn", "profileSyncDialog"], ["closeProfileHistoryBtn", "profileHistoryDialog"]].forEach(([button, dialog]) => {
-    profileElement(button).onclick = () => { if (!profileState.busy) profileElement(dialog).close(); };
-    profileElement(dialog).addEventListener("cancel", event => { if (profileState.busy) event.preventDefault(); });
+    const close = () => {
+      if (profileState.busy) return;
+      profileElement(dialog).close();
+      if (dialog !== "profileDialog") { renderProfileState(); profileElement("profileDialog").showModal(); }
+    };
+    profileElement(button).onclick = close;
+    profileElement(dialog).addEventListener("cancel", event => { event.preventDefault(); close(); });
   });
   async function authenticate(create) {
     if (!profileElement("profileAuthForm").reportValidity()) return;
@@ -969,19 +1218,59 @@ function setupDeliveryProfiles() {
       if (error) throw error;
       if (!data.session) throw new Error("SETUP_REQUIRED");
       profileState.user = data.user; profileElement("profilePassword").value = "";
-      profileElement("profileStatus").textContent = create ? "Profile created. Choose a file to create your copy." : "Signed in. Choose a file to continue.";
+      profileElement("profilePassword").type = "password";
+      profileElement("profileShowPassword").textContent = "Show";
+      profileElement("profileShowPassword").setAttribute("aria-label", "Show password");
+      profileElement("profileShowPassword").setAttribute("aria-pressed", "false");
+      profileElement("profileStatus").textContent = create ? "Account created. Choose a file to start your own copy." : "You're signed in. Choose a file to pick up your saved work.";
     });
+    if (teamUploadState.resume && profileState.user) {
+      teamUploadState.resume = false;
+      openTeamUpload();
+    }
   }
-  profileElement("profileAuthForm").onsubmit = event => { event.preventDefault(); authenticate(false); };
-  profileElement("createProfileBtn").onclick = () => authenticate(true);
-  profileElement("signOutProfileBtn").onclick = () => profileTask("profileStatus", async () => {
-    const { error } = await sb.auth.signOut(); if (error) throw error;
-    profileElement("profileStatus").textContent = "Signed out. Your saved profile work stays available when you sign in again.";
-  });
+  profileElement("profileAuthForm").onsubmit = event => { event.preventDefault(); authenticate(profileState.authMode === "create"); };
+  profileElement("profileSignInMode").onclick = () => setProfileAuthMode("signin");
+  profileElement("profileCreateMode").onclick = () => setProfileAuthMode("create");
+  profileElement("profileShowPassword").onclick = () => {
+    const input = profileElement("profilePassword"), button = profileElement("profileShowPassword");
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    button.textContent = show ? "Hide" : "Show";
+    button.setAttribute("aria-label", show ? "Hide password" : "Show password");
+    button.setAttribute("aria-pressed", String(show));
+  };
+  profileElement("signOutProfileBtn").onclick = async () => {
+    let signedOut = false;
+    await profileTask("profileStatus", async () => {
+      const { error } = await sb.auth.signOut(); if (error) throw error;
+      signedOut = true;
+    });
+    if (signedOut) {
+      setProfileAuthMode("signin");
+      profileElement("profileStatus").textContent = "Signed out. Your saved copies will be here when you sign in again.";
+    }
+  };
   profileElement("profileChooseFileBtn").onclick = () => { profileElement("profileDialog").close(); profileElement("openFileManagerBtn").click(); };
+  profileElement("profileContinueBtn").onclick = () => { profileElement("profileDialog").close(); closeMobileMenu(); };
   profileElement("profileReloadCopyBtn").onclick = () => openProfileFile(profileState.workspace);
   profileElement("profileReviewBtn").onclick = reviewProfileSync;
   profileElement("confirmProfileSyncBtn").onclick = confirmProfileSync;
+  profileElement("profileShareAcknowledged").onchange = renderProfileState;
+  profileElement("commitProfileShareBtn").onclick = commitProfileShare;
+  const cancelShare = () => {
+    if (profileState.busy) return;
+    profileState.shareConfirmation = null;
+    profileElement("profileShareAcknowledged").checked = false;
+    profileElement("profileShareDialog").close();
+    if (profileState.preview) {
+      if (profileState.syncRequest) profileElement("profileSyncStatus").textContent = "The last attempt could not be confirmed. Retry keeps the same choices. Return to your profile and reload your saved copy to check what was saved.";
+      profileElement("profileSyncDialog").showModal();
+    }
+    renderProfileState();
+  };
+  profileElement("cancelProfileShareBtn").onclick = cancelShare;
+  profileElement("profileShareDialog").addEventListener("cancel", event => { event.preventDefault(); cancelShare(); });
   profileElement("profileHistoryBtn").onclick = () => showProfileHistory();
   profileElement("moreProfileHistoryBtn").onclick = () => showProfileHistory(true);
   sb.auth.onAuthStateChange((_event, session) => {
@@ -989,11 +1278,23 @@ function setupDeliveryProfiles() {
     setTimeout(() => {
       const user = session?.user || null;
       if (profileState.user?.id !== user?.id) {
-        profileState.generation++; profileState.workspace = null; profileState.preview = null; profileState.syncRequest = null;
-        profileElement("resetMapBtn").click(); window._currentRows = null; window._currentWorkbook = null; window._currentFilePath = null; setCurrentFileDisplay(null);
-        ["profileSyncDialog", "profileHistoryDialog"].forEach(id => profileElement(id).close());
+        teamUploadState.result = null; teamUploadState.added = false;
+        if (profileState.user) {
+          resetTeamMapping();
+          teamUploadState.file = null; teamUploadState.resume = false;
+          profileElement('teamUploadDialog').close();
+        }
+        profileState.generation++;
+        if (profileState.workspace?.mode !== "original") {
+          profileState.workspace = null;
+          profileElement("resetMapBtn").click(); window._currentRows = null; window._currentWorkbook = null; window._currentFilePath = null; setCurrentFileDisplay(null);
+        }
+        profileState.preview = null; profileState.syncRequest = null; profileState.shareConfirmation = null;
+        profileElement("profileShareAcknowledged").checked = false;
+        ["profileSyncDialog", "profileShareDialog", "profileHistoryDialog"].forEach(id => profileElement(id).close());
       }
-      profileState.user = user; renderProfileState();
+      profileState.user = user;
+      renderProfileState();
     }, 0);
   });
   renderProfileState();
@@ -3883,7 +4184,7 @@ async function loadSharedCartDeliveryNames() {
     cartDeliveryFileNames = new Set(names.filter(name => typeof name === "string"));
   } else if (response.status === 400 || response.status === 404) {
     // Not created yet: seed it from this browser's previous local list (if any).
-    if (cartDeliveryFileNames.size) await saveCartDeliveryFileNames();
+    if (profileState.user && cartDeliveryFileNames.size) await saveCartDeliveryFileNames();
   } else {
     throw new Error("Could not read shared Cart Delivery list (HTTP " + response.status + ").");
   }
@@ -3930,17 +4231,179 @@ async function listFiles() {
 }
 
 // ================= UPLOAD FILE =================
-async function uploadFile(file) {
-  if (!file || !requireProfile() || profileState.busy || deliverySaveInProgress || resequenceBusy) return;
-  profileState.busy = true; renderProfileState();
-  showLoading("Adding an original route file…");
+function resetTeamMapping() {
+  teamUploadState.inspectToken++;
+  teamUploadState.cancelInspect?.();
+  teamUploadState.cancelInspect = null;
+  teamUploadState.inspection = null; teamUploadState.mapping = null; teamUploadState.inspecting = false;
+  profileElement('teamMappingConfirmed').checked = false;
+  profileElement('teamMappingFields').replaceChildren();
+}
+function renderTeamMapping() {
+  const { inspection, mapping } = teamUploadState;
+  const container = profileElement('teamMappingFields'); container.replaceChildren();
+  if (!inspection) return;
+  profileElement('teamMappingSummary').textContent = `${inspection.sheetName} · ${inspection.rowCount.toLocaleString()} stops · ${inspection.headers.length} columns`;
+  const primary = document.createElement('div'); primary.className = 'team-mapping-grid';
+  const extra = document.createElement('details'); extra.className = 'profile-explainer';
+  const summary = document.createElement('summary'); summary.textContent = 'Address, bins and existing deliveries';
+  const optional = document.createElement('div'); optional.className = 'team-mapping-grid';
+  extra.append(summary, optional); container.append(primary, extra);
+  CartDeliveryFields.fields.forEach((field, index) => {
+    const card = document.createElement('div'); card.className = 'team-mapping-field';
+    const label = document.createElement('label'); label.htmlFor = `team-map-${field.key}`;
+    label.textContent = `${field.label}${field.required ? ' *' : ''}`;
+    const select = document.createElement('select'); select.id = label.htmlFor; select.dataset.mappingField = field.key;
+    select.add(new Option(field.required ? 'Choose a column…' : 'Not used', ''));
+    inspection.headers.forEach(header => select.add(new Option(header, header)));
+    select.value = mapping[field.key] || '';
+    const hint = document.createElement('small'); hint.textContent = inspection.hints[field.key];
+    const sample = document.createElement('p'); sample.className = 'team-mapping-sample'; sample.id = `team-sample-${field.key}`;
+    select.setAttribute('aria-describedby', sample.id);
+    const updateSample = () => {
+      const values = (inspection.samples[select.value] || []).map(value => String(value)).filter(value => value.trim()).slice(0, 3);
+      sample.textContent = select.value ? values.length ? `Sample: ${values.map(value => value.length > 80 ? value.slice(0, 77) + '…' : value).join(' · ')}` : 'The first five stops have no values in this column.' : 'This field will not be imported.';
+    };
+    select.onchange = () => {
+      if (select.value) mapping[field.key] = select.value; else delete mapping[field.key];
+      hint.textContent = 'Your selection';
+      profileElement('teamMappingConfirmed').checked = false;
+      updateSample(); renderTeamUpload();
+    };
+    updateSample(); card.append(label, select, hint, sample);
+    (index < 5 ? primary : optional).append(card);
+  });
+}
+async function inspectTeamUpload(file) {
+  resetTeamMapping();
+  const token = teamUploadState.inspectToken;
+  teamUploadState.inspecting = true;
+  profileElement('teamUploadStatus').textContent = 'Reading column names and sample values on this device…';
+  renderTeamUpload();
+  let worker;
   try {
-    const result = await importProfileFile({ name: file.name }, file);
-    const copy = await profileApi({ action: "open", fileId: result.fileId, requestId: crypto.randomUUID() });
-    await displayProfileWorkbook(copy);
-    closeMobileMenu();
-  } catch (error) { alert(profileMessage(error)); }
-  finally { hideLoading(); profileState.busy = false; renderProfileState(); }
+    const bytes = await file.arrayBuffer();
+    if (token !== teamUploadState.inspectToken) return;
+    worker = new Worker('profile-import-worker.js?v=20261012-field-mapping');
+    const inspection = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('IMPORT_DEVICE_LIMIT')), 120000);
+      teamUploadState.cancelInspect = () => { clearTimeout(timeout); worker.terminate(); resolve(null); };
+      worker.onmessage = ({ data }) => { clearTimeout(timeout); data.error ? reject(new Error(data.error)) : resolve(data); };
+      worker.onerror = () => { clearTimeout(timeout); reject(new Error('IMPORT_DEVICE_LIMIT')); };
+      worker.postMessage({ bytes }, [bytes]);
+    });
+    if (token !== teamUploadState.inspectToken || !inspection) return;
+    const { mapping, hints } = CartDeliveryFields.suggest(inspection.headers);
+    teamUploadState.inspection = { ...inspection, hints };
+    teamUploadState.mapping = mapping;
+    renderTeamMapping();
+    profileElement('teamUploadStatus').textContent = '';
+  } catch (error) {
+    if (token === teamUploadState.inspectToken) {
+      profileElement('teamUploadStatus').textContent = profileMessage(error);
+      profileElement('teamUploadStatus').dataset.state = 'error';
+    }
+  } finally {
+    worker?.terminate();
+    if (token === teamUploadState.inspectToken) {
+      teamUploadState.inspecting = false; teamUploadState.cancelInspect = null; renderTeamUpload();
+    }
+  }
+}
+function renderTeamUpload() {
+  const { file, result, added } = teamUploadState;
+  const busy = profileState.busy;
+  profileElement('teamUploadTitle').textContent = added ? 'Your team Excel is ready' : 'Upload new team Excel';
+  profileElement('teamUploadSetup').hidden = added;
+  profileElement('teamUploadSelection').hidden = !file;
+  profileElement('teamUploadFileName').textContent = file?.name || '';
+  profileElement('teamUploadFileSize').textContent = file ? `${(file.size / 1024 / 1024).toFixed(2)} MB · Destination: Cart Delivery` : '';
+  profileElement('chooseTeamExcelBtn').textContent = file ? 'Choose a different file' : 'Choose Excel file';
+  profileElement('teamUploadDialog').setAttribute('aria-busy', String(busy));
+  profileElement('teamUploadDialog').querySelectorAll('button').forEach(button => { button.disabled = busy; });
+  profileElement('chooseTeamExcelBtn').disabled = busy || Boolean(result);
+  const inspection = teamUploadState.inspection;
+  const errors = inspection ? CartDeliveryFields.errors(teamUploadState.mapping, inspection.headers) : [];
+  profileElement('teamUploadMapping').hidden = !inspection || added;
+  profileElement('teamMappingErrors').textContent = errors.join(' ');
+  profileElement('teamMappingConfirmed').disabled = busy || Boolean(result) || errors.length > 0;
+  profileElement('teamMappingFields').querySelectorAll('select').forEach(select => { select.disabled = busy || Boolean(result); });
+  const confirm = profileElement('confirmTeamUploadBtn');
+  confirm.hidden = added;
+  confirm.disabled = busy || !file || (!result && (!inspection || teamUploadState.inspecting || errors.length > 0 || !profileElement('teamMappingConfirmed').checked));
+  confirm.textContent = busy ? 'Adding your team Excel…' : teamUploadState.inspecting ? 'Reading columns…' : !profileState.user ? 'Sign in to upload this file' : result ? 'Retry adding to Cart Delivery' : 'Upload & add to Cart Delivery';
+  profileElement('viewUploadedFileBtn').hidden = !added;
+  profileElement('openUploadedCopyBtn').hidden = !added;
+}
+function teamUploadFileError(file) {
+  if (!/\.(xlsx|xls|csv)$/i.test(file.name)) return 'Choose an Excel (.xlsx or .xls) or CSV file.';
+  if (file.name.length > 180 || /[\/\\\x00-\x1f]/.test(file.name)) return 'Shorten the filename to 180 characters or fewer and remove slashes, then choose it again.';
+  if (!file.size) return 'This file is empty. Choose an Excel file with delivery stops.';
+  if (file.size > 50000000) return 'This file is over 50 MB. Choose a smaller file.';
+  return '';
+}
+function openTeamUpload(file = null) {
+  if (profileState.busy || deliverySaveInProgress || resequenceBusy) return;
+  if (file || teamUploadState.added) {
+    resetTeamMapping();
+    teamUploadState.file = file; teamUploadState.result = null; teamUploadState.added = false;
+    const error = file ? teamUploadFileError(file) : '';
+    if (error) teamUploadState.file = null;
+    profileElement('teamUploadStatus').textContent = error;
+    profileElement('teamUploadStatus').dataset.state = error ? 'error' : '';
+  }
+  profileElement('fileManagerModal').style.display = 'none';
+  profileElement('profileDialog').close();
+  closeMobileMenu();
+  renderTeamUpload();
+  if (!profileElement('teamUploadDialog').open) profileElement('teamUploadDialog').showModal();
+  if (file && teamUploadState.file) inspectTeamUpload(file);
+}
+async function uploadFile(file = teamUploadState.file) {
+  if (!file || profileState.busy || deliverySaveInProgress || resequenceBusy) return;
+  if (file !== teamUploadState.file) openTeamUpload(file);
+  if (teamUploadFileError(file)) return;
+  if (!teamUploadState.result && (!teamUploadState.inspection || teamUploadState.inspecting ||
+    CartDeliveryFields.errors(teamUploadState.mapping, teamUploadState.inspection.headers).length || !profileElement('teamMappingConfirmed').checked)) return;
+  if (!profileState.user) {
+    teamUploadState.resume = true;
+    profileElement('teamUploadDialog').close();
+    requireProfile();
+    profileElement('profileStatus').textContent = 'Sign in to add this team Excel. Your selected file will be waiting here.';
+    return;
+  }
+  const generation = profileState.generation;
+  profileState.busy = true; renderProfileState();
+  const status = profileElement('teamUploadStatus');
+  status.dataset.state = '';
+  const progress = message => { if (generation === profileState.generation) status.textContent = message; };
+  progress('Uploading your team Excel. Keep this screen open…');
+  try {
+    const result = teamUploadState.result || await importProfileFile({ name: file.name }, file, progress, { ...teamUploadState.mapping });
+    if (generation !== profileState.generation) return;
+    teamUploadState.result = result;
+    progress('Adding your file to the Cart Delivery tab…');
+    await loadSharedCartDeliveryNames();
+    if (generation !== profileState.generation) return;
+    const before = new Set(cartDeliveryFileNames);
+    const key = result.sourceKey || result.name;
+    if (!cartDeliveryFileNames.has(key)) {
+      cartDeliveryFileNames.add(key);
+      try { await saveCartDeliveryFileNames(); }
+      catch (error) { cartDeliveryFileNames = before; throw error; }
+    }
+    if (generation !== profileState.generation) return;
+    teamUploadState.added = true;
+    status.dataset.state = 'saved';
+    status.textContent = `${result.name} · ${result.rowCount.toLocaleString()} stops. Added to Open Saved Files → Cart Delivery for everyone. Open your own copy when you’re ready to record deliveries.`;
+  } catch (error) {
+    if (generation === profileState.generation) {
+      status.dataset.state = 'error';
+      status.textContent = teamUploadState.result
+        ? 'Your team Excel is saved, but we could not confirm it was added to Cart Delivery. Retry below to finish adding it. You do not need to upload it again.'
+        : error.message?.includes('NAME_EXISTS') ? 'A team Excel with this name already exists. Close this window to open it from Saved Files, or rename your new file and choose it again.' : profileMessage(error);
+    }
+  } finally { profileState.busy = false; renderProfileState(); }
 }
 
 // ===== PLACE DELIVERY CONTROLS BASED ON SCREEN SIZE =====
@@ -4181,13 +4644,28 @@ if (!fileInput) {
   document.body.appendChild(fileInput);
 }
 
-// CLICK → open picker
-dropZone.addEventListener("click", () => fileInput.click());
+dropZone.addEventListener("click", () => openTeamUpload());
+dropZone.addEventListener('keydown', event => {
+  if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openTeamUpload(); }
+});
+profileElement('uploadTeamExcelBtn').onclick = () => openTeamUpload();
+profileElement('chooseTeamExcelBtn').onclick = () => { fileInput.value = ''; fileInput.click(); };
+profileElement('confirmTeamUploadBtn').onclick = () => uploadFile();
+profileElement('teamMappingConfirmed').onchange = renderTeamUpload;
+const closeTeamUpload = () => { if (!profileState.busy) profileElement('teamUploadDialog').close(); };
+profileElement('closeTeamUploadBtn').onclick = closeTeamUpload;
+profileElement('teamUploadDialog').addEventListener('cancel', event => { event.preventDefault(); closeTeamUpload(); });
+profileElement('viewUploadedFileBtn').onclick = () => { closeTeamUpload(); profileElement('openFileManagerBtn').click(); };
+profileElement('openUploadedCopyBtn').onclick = () => {
+  const file = teamUploadState.result;
+  closeTeamUpload();
+  if (file) openProfileFile(file);
+};
 
 // FILE SELECTED
 fileInput.addEventListener("change", e => {
   const file = e.target.files[0];
-  if (file) uploadFile(file);
+  if (file) openTeamUpload(file);
 });
 
 // PREVENT browser opening file on drop
@@ -4206,7 +4684,7 @@ fileInput.addEventListener("change", e => {
 // DROP → upload
 dropZone.addEventListener("drop", e => {
   const file = e.dataTransfer.files[0];
-  if (file) uploadFile(file);
+  if (file) openTeamUpload(file);
 });
 
 
@@ -4486,8 +4964,8 @@ if (downloadBtn && modal && confirmBtn && cancelBtn) {
 
     const workspace = profileState.workspace;
     modal.querySelector("p").textContent = workspace?.mode === "copy"
-      ? `Download ${profileUsername(profileState.user)}’s saved copy of ${workspace.name}? Unsynced changes are included; this does not sync them to the original.`
-      : `Download the open original${workspace ? `, version ${workspace.masterRevision}` : ""}? Reopen it first if you need other teams’ latest syncs.`;
+      ? `Download ${profileUsername(profileState.user)}’s saved copy of ${workspace.name}? This includes your saved changes, even those you haven't synced. Downloading does not sync them to team Excel.`
+      : "Download the team Excel currently open? Reopen it first if you need the latest synced changes.";
     modal.style.display = "flex";
   });
 
@@ -5046,7 +5524,7 @@ async function saveSelectedDeliveryStatus(markDelivered) {
 async function persistDeliveryChanges(selected, changes, action) {
   if (deliverySaveInProgress || resequenceBusy) return false;
   if (!profileState.user || profileState.workspace?.mode !== "copy" || profileState.busy) {
-    setDeliverySaveStatus("error", "Open your profile copy to record deliveries. The original is view only.");
+    setDeliverySaveStatus("error", "Open your own copy to record deliveries. The team Excel is view only.");
     return false;
   }
   const rows = window._currentRows;
@@ -5118,7 +5596,7 @@ async function persistDeliveryChanges(selected, changes, action) {
   }
 
   const fileNote = routeIsCurrent ? "" : ` in ${filePath}`;
-  setDeliverySaveStatus("saved", `Saved to your copy — ${count} ${stopLabel} ${action}${fileNote}. Sync when ready.`);
+  setDeliverySaveStatus("saved", `Saved to your copy — ${count} ${stopLabel} ${action}${fileNote}. Sync to team Excel when ready.`);
   return true;
 }
 

@@ -8,4 +8,4 @@ enable_confirmations = false
 
 [functions.profile-workbooks]
 verify_jwt = false
-# The function validates every request with auth.getUser(token), including new signing keys.
+# Only public shared-original reads skip auth.getUser(token); all other actions require it.

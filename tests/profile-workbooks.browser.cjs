@@ -21,6 +21,9 @@ const server = http.createServer((req, res) => {
     const accounts = new Map(), tokens = new Map(), errors = [];
     let delaySave, releaseSave, loseSyncResponse = false, loseImportBatchResponse = true, failImport = true, failedImportRequests = 0;
     let sourceDownloads = 0;
+    let syncRequests = 0;
+    let oldPublicApi = false, missingSharedList = false, shortcutWrites = 0;
+    let sharedNames = ['Trash.xlsx'], failShortcutWrite = false;
     const dialogs = [];
     const create = async width => {
       const context = await browser.newContext({ viewport: { width, height: 956 }, hasTouch: width === 440, serviceWorkers: 'block' });
@@ -50,6 +53,8 @@ const server = http.createServer((req, res) => {
           }
           if (url.pathname.includes('/functions/v1/profile-workbooks')) {
             const body = request.postDataJSON();
+            if (oldPublicApi && body.action.startsWith('public-')) return json({ error: 'SIGN_IN_REQUIRED' }, 401);
+            if (body.action === 'sync') syncRequests++;
             const user = tokens.get(request.headers().authorization?.replace('Bearer ', ''));
             if (body.action === 'import-start' && failImport) {
               failedImportRequests++;
@@ -63,7 +68,23 @@ const server = http.createServer((req, res) => {
               return json(result);
             } catch (error) { return json({ error: error.message }, error.message.includes('STALE') ? 409 : 400); }
           }
-          if (url.pathname.includes('_cart-delivery-tab.json')) return json(['Trash.xlsx']);
+          if (url.pathname.includes('_cart-delivery-tab.json')) {
+            if (request.method() !== 'GET') {
+              shortcutWrites++;
+              if (failShortcutWrite) return json({ message: 'Simulated list save failure' }, 500);
+              const type = request.headers()['content-type'];
+              if (type.startsWith('multipart/')) {
+                const form = await new Response(request.postDataBuffer(), { headers: { 'Content-Type': type } }).formData();
+                sharedNames = JSON.parse(await form.get('').text());
+              } else sharedNames = JSON.parse(request.postData());
+              return json({ Key: 'excel-files/_cart-delivery-tab.json' });
+            }
+            return missingSharedList ? json({ error: 'Not found' }, 404) : json(sharedNames);
+          }
+          if (url.pathname.includes('/storage/v1/object/public/excel-files/')) {
+            const bytes = fx.objects.get('excel-files/' + decodeURIComponent(url.pathname.split('/excel-files/')[1]));
+            return route.fulfill({ status: bytes ? 200 : 404, contentType: 'application/octet-stream', body: bytes ? Buffer.from(bytes) : '' });
+          }
           if (url.pathname.includes('/storage/v1/object/upload/sign/')) {
             const key = decodeURIComponent(url.pathname.split('/storage/v1/object/upload/sign/')[1]);
             const form = await new Response(request.postDataBuffer(), { headers: { 'Content-Type': request.headers()['content-type'] } }).formData();
@@ -84,17 +105,64 @@ const server = http.createServer((req, res) => {
       return page;
     };
     const a = await create(440), b = await create(1440);
+    const captureProfile = async (page, name, selector = '#profileDialog') => {
+      for (const light of [false, true]) {
+        await page.evaluate(light => document.body.classList.toggle('sun-mode', light), light);
+        await page.screenshot({ path: path.join(root, `local-artifacts/profile-ui-${name}-${page.viewportSize().width}-${light ? 'light' : 'dark'}.png`) });
+        assert(await page.locator(selector).evaluate(el => el.scrollWidth <= el.clientWidth), 'Profile screens fit without horizontal scrolling');
+        for (const button of await page.locator(`${selector} button:visible`).all()) {
+          assert(await button.evaluate(el => el.getBoundingClientRect().height >= 44), 'Profile tap targets are at least 44px');
+        }
+      }
+    };
+    for (const page of [a, b]) {
+      await page.locator('#profileWorkspaceBtn').click();
+      await captureProfile(page, 'signin');
+      await page.locator('#closeProfileBtn').click();
+    }
     const signup = async (page, username) => {
       await page.locator('#profileWorkspaceBtn').click();
+      assert.equal(await page.locator('#profileSignInBtn').isVisible(), true);
+      await page.locator('#profileCreateMode').click();
+      assert.equal(await page.locator('#profilePassword').getAttribute('autocomplete'), 'new-password');
       await page.locator('#profileUsername').fill(username); await page.locator('#profilePassword').fill('test-password');
+      await page.locator('#profileShowPassword').click();
+      assert.equal(await page.locator('#profilePassword').getAttribute('type'), 'text');
+      await page.locator('#profileShowPassword').click();
       await page.locator('#createProfileBtn').click();
       await page.waitForFunction(() => profileState.user !== null && !profileState.busy);
       assert.equal(await page.locator('#profileAccountName').textContent(), username.toLowerCase());
+      assert.equal(await page.locator('#profileReviewBtn').isVisible(), false, 'No irrelevant sharing controls before a file is open');
     };
     await signup(a, 'Team_A'); await signup(b, 'team_b');
+    await captureProfile(a, 'choose-file');
     const rows = [0, 1, 2].map(index => ({ ID: index, QTY: 3, ROUTE: 'A', DAY: 1, 'CSADR#': 100 + index, CSSTRT: 'Test', BINNO: `00${index}`, LATITUDE: 30.75 + index * .001, LONGITUDE: -98.23, del_qty: 0, del_status: '' }));
     fx.objects.set('excel-files/Trash.xlsx', fx.workbook(rows));
+    const guest = await create(440);
+    oldPublicApi = true;
+    await guest.evaluate(() => document.getElementById('openFileManagerBtn').click());
+    await guest.getByText('Team viewing needs a server update.', { exact: false }).waitFor();
+    assert.equal(await guest.locator('.saved-file-card').count(), 0, 'An outdated backend never falls back to potentially stale source data');
+    await guest.locator('#closeFileManager').click();
+    oldPublicApi = false;
+    missingSharedList = true;
+    await guest.evaluate(() => { cartDeliveryFileNames = new Set(['Trash.xlsx']); });
+    const openGuestFile = async () => {
+      await guest.evaluate(() => document.getElementById('openFileManagerBtn').click());
+      await guest.locator('.saved-file-btn').click();
+      await guest.waitForFunction(() => profileState.workspace?.mode === 'original' && !profileState.busy);
+    };
+    await openGuestFile();
+    assert.equal(shortcutWrites, 0, 'Guest viewing never seeds or changes the shared shortlist');
+    missingSharedList = false;
+    assert.equal(await guest.evaluate(() => profileState.user), null);
+    assert.equal(await guest.evaluate(() => profileState.workspace.legacy), true);
+    assert.equal(await guest.locator('#recordCartsBtn').isDisabled(), true);
+    assert.match(await guest.locator('#routeContext').textContent(), /TEAM EXCEL · VIEW ONLY/);
+    assert.equal((await fx.pg.query('select count(*)::int n from cd_data_files')).rows[0].n, 0, 'Anonymous source viewing does not import or create copies');
     await a.locator('#profileChooseFileBtn').click();
+    await a.locator('.saved-file-btn').waitFor();
+    await captureProfile(a, 'files', '#fileManagerModal .modal-content');
     await a.locator('.saved-file-btn').click();
     await a.waitForFunction(() => !profileState.busy);
     assert.equal(failedImportRequests, 1, 'A resource-limit response is not automatically retried');
@@ -125,19 +193,54 @@ const server = http.createServer((req, res) => {
     delaySave = false; releaseSave();
     await a.waitForFunction(() => !deliverySaveInProgress && _currentRows[0].del_qty === 1);
     await deliver(b, [1, 2]); await b.waitForFunction(() => !deliverySaveInProgress && _currentRows[1].del_qty === 1);
+    await a.locator('#profileWorkspaceBtn').click();
+    assert.match(await a.locator('#profileSaveSummary').textContent(), /saved in your copy/);
+    await captureProfile(a, 'saved-work');
+    await a.locator('#profileContinueBtn').click();
+    assert.equal(await a.locator('#profileDialog').isVisible(), false);
     assert.deepEqual((await fx.read(accounts.get('team_a@profiles.cartdelivery.invalid'), await a.evaluate(() => profileState.workspace.fileId), 'original')).map(row => row.del_qty), [0, 0, 0]);
     const review = async page => { await page.locator('#profileWorkspaceBtn').click(); await page.locator('#profileReviewBtn').click(); await page.waitForFunction(() => profileState.preview !== null && !profileState.busy); };
     await review(a); loseSyncResponse = true;
+    assert.equal(await a.locator('#profileSyncDetails').getAttribute('open'), null);
+    assert.equal(await a.locator('#profileSyncChanges .profile-change').count(), 0, 'Routine changes are not rendered until requested');
+    assert.deepEqual(await a.locator('#profileSyncImpact dd').allTextContents(), ['2', '2', '0', '0']);
+    await a.locator('#profileSyncDetails summary').click();
+    await a.locator('#profileSyncDetails .profile-change').first().waitFor();
+    assert.equal(await a.locator('#profileSyncDetails .profile-change').count(), 2);
+    await a.locator('#profileSyncDetails summary').click();
     await a.locator('#confirmProfileSyncBtn').click();
+    assert.equal(syncRequests, 0, 'Review Next never sends a sync');
+    assert.equal(await a.locator('#profileShareFile').textContent(), 'Trash.xlsx');
+    assert.equal(await a.locator('#profileShareAccount').textContent(), 'team_a');
+    assert.equal(await a.locator('#commitProfileShareBtn').isDisabled(), true);
+    await a.evaluate(() => commitProfileShare());
+    assert.equal(syncRequests, 0, 'Commit handler refuses an unchecked acknowledgement');
+    await a.locator('#profileShareAcknowledged').check();
+    await a.locator('#cancelProfileShareBtn').click();
+    assert.equal(syncRequests, 0, 'Backing out with a checked acknowledgement sends nothing');
+    assert.equal(await a.locator('#profileSyncDialog').isVisible(), true);
+    await a.locator('#confirmProfileSyncBtn').click();
+    assert.equal(await a.locator('#profileShareAcknowledged').isChecked(), false, 'Every final check starts unchecked');
+    await captureProfile(a, 'final-check', '#profileShareDialog');
+    await a.keyboard.press('Escape');
+    assert.equal(syncRequests, 0, 'Escape cancels without sharing');
+    await a.locator('#confirmProfileSyncBtn').click();
+    await a.locator('#profileShareAcknowledged').check();
+    await a.evaluate(() => { document.getElementById('commitProfileShareBtn').click(); document.getElementById('commitProfileShareBtn').click(); });
     await a.waitForFunction(() => !profileState.busy && profileState.workspace.pending === 0);
+    assert.equal(syncRequests, 2, 'Only the initial request and its lost-response retry are sent');
     assert.equal((await fx.pg.query('select count(*)::int n from cd_data_history')).rows[0].n, 1, 'Lost response retry syncs once');
     await review(b);
     assert.equal(await b.locator('[data-conflict-index]').count(), 1);
+    assert.deepEqual(await b.locator('#profileSyncImpact dd').allTextContents(), ['1', '1', '0', '0']);
+    assert.match(await b.locator('#profileSyncImpact').textContent(), /1 conflicts still need a decision/);
     await b.locator('#confirmProfileSyncBtn').click();
     await b.waitForFunction(() => !profileState.busy);
-    assert.match(await b.locator('#profileSyncStatus').textContent(), /every overlapping/);
+    assert.match(await b.locator('#profileSyncStatus').textContent(), /every highlighted stop/);
+    assert.equal(await b.locator('#profileShareDialog').isVisible(), false, 'Conflicts block the final check');
     await b.locator('[data-conflict-index="2"]').selectOption('count');
     await b.locator('[data-conflict-count="2"]').fill('2');
+    assert.deepEqual(await b.locator('#profileSyncImpact dd').allTextContents(), ['2', '2', '0', '0'], 'Conflict totals compare against the latest team counts');
     for (const width of [440, 1440]) {
       await b.setViewportSize({ width, height: 956 });
       for (const light of [false, true]) {
@@ -148,8 +251,24 @@ const server = http.createServer((req, res) => {
       }
     }
     await b.locator('#confirmProfileSyncBtn').click();
+    await captureProfile(b, 'final-check', '#profileShareDialog');
+    await b.locator('#profileShareAcknowledged').check();
+    await b.locator('#commitProfileShareBtn').click();
     await b.waitForFunction(() => !profileState.busy && profileState.workspace.pending === 0);
     assert.deepEqual(await b.evaluate(() => _currentRows.map(row => row.del_qty)), [1, 1, 2]);
+    const copiesBeforeGuest = (await fx.pg.query('select count(*)::int n from cd_data_copies')).rows[0].n;
+    await openGuestFile();
+    assert.deepEqual(await guest.evaluate(() => _currentRows.map(row => row.del_qty)), [1, 1, 2], 'Anonymous database view includes current shared deliveries');
+    assert.equal((await fx.pg.query('select count(*)::int n from cd_data_copies')).rows[0].n, copiesBeforeGuest);
+    for (const width of [440, 1440]) {
+      await guest.setViewportSize({ width, height: 956 });
+      await guest.screenshot({ path: path.join(root, `local-artifacts/team-view-${width}.png`) });
+      assert(await guest.locator('#routeContext').isVisible());
+      assert(await guest.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Team banner fits the viewport');
+      await guest.locator('#profileWorkspaceBtn').click();
+      assert.match(await guest.locator('#profileDialog .route-context').textContent(), /TEAM EXCEL · VIEW ONLY/);
+      await guest.locator('#closeProfileBtn').click();
+    }
     const exported = await b.evaluate(async () => {
       const workbook = await profileExportWorkbook();
       return { rows: XLSX.utils.sheet_to_json(workbook.Sheets.Stops), formula: workbook.Sheets['Keep formula'].A1.f };
@@ -165,20 +284,34 @@ const server = http.createServer((req, res) => {
     await b.waitForFunction(() => document.querySelector('#profileHistoryEntries details[open]')?.textContent.includes('Carts delivered'));
     await b.screenshot({ path: path.join(root, 'local-artifacts/profiles-history.png') });
     await b.locator('#closeProfileHistoryBtn').click();
-    await b.locator('#profileWorkspaceBtn').click(); await b.locator('#profileChooseFileBtn').click();
-    await b.getByRole('button', { name: 'View original', exact: true }).click();
+    assert.equal(await b.locator('#profileDialog').isVisible(), true, 'History Back returns to profile');
+    await b.locator('#profileChooseFileBtn').click();
+    await b.getByRole('button', { name: 'View team Excel (read only)', exact: true }).click();
     await b.waitForFunction(() => profileState.workspace?.mode === 'original' && !profileState.busy);
     await select(b, [0]); assert.equal(await b.locator('#recordCartsBtn').isDisabled(), true);
     await b.locator('#profileWorkspaceBtn').click(); await b.locator('#signOutProfileBtn').click();
     await b.waitForFunction(() => !profileState.user && !profileState.busy);
-    assert.equal(await b.evaluate(() => _currentWorkbook), null);
+    assert.equal(await b.evaluate(() => profileState.workspace.mode), 'original', 'Public team view remains visible after signing out');
+    assert.equal(await b.locator('#recordCartsBtn').isDisabled(), true);
+    assert.equal(await b.locator('#profileSignInBtn').isVisible(), true);
+    await b.locator('#profileCreateMode').click();
     await b.locator('#profileUsername').fill('TEAM_A'); await b.locator('#profilePassword').fill('test-password');
     await b.locator('#createProfileBtn').click(); await b.waitForFunction(() => !profileState.busy);
     assert.match(await b.locator('#profileStatus').textContent(), /already exists/);
-    await b.locator('#profileAuthForm button[type="submit"]').click();
+    await b.locator('#profileSignInMode').click();
+    await b.locator('#profileSignInBtn').click();
     await b.waitForFunction(() => profileState.user !== null && !profileState.busy);
     await openCopy(b);
     assert.deepEqual(await b.evaluate(() => _currentRows.map(row => row.del_qty)), [1, 0, 1], 'Reopen same profile snapshot across devices');
+    await review(b);
+    assert.equal(await b.locator('#profileSyncChanges').isVisible(), false);
+    assert.match(await b.locator('#confirmProfileSyncBtn').textContent(), /confirm copy update/);
+    await b.locator('#confirmProfileSyncBtn').click();
+    assert.match(await b.locator('#profileShareEffect').textContent(), /no changes to send/);
+    await b.locator('#cancelProfileShareBtn').click();
+    await b.locator('#closeProfileSyncBtn').click();
+    assert.equal(await b.locator('#profileDialog').isVisible(), true, 'Review Back returns to profile without sharing');
+    await b.locator('#profileContinueBtn').click();
     const bigRows = Array.from({ length: 5364 }, (_, index) => ({ ID:index,QTY:3,ROUTE:'A',DAY:1,
       ...Object.fromEntries(Array.from({length:32},(_,col)=>['FIELD_'+col,`Sample ${index}-${col}`])) }));
     fx.objects.set('excel-files/Large.xlsx', fx.workbook(bigRows));
@@ -190,13 +323,87 @@ const server = http.createServer((req, res) => {
     assert.equal(await b.evaluate(()=>_currentRows.length),5364);
     assert.equal(sourceDownloads,beforeImportDownloads+1,'After first import, phone/desktop opens fetch database rows only');
     assert.equal(fx.state.uploads.length,0);
-    const uploadBytes=Buffer.from(fx.workbook(rows)).toString('base64');
-    await a.evaluate(async base64=>{
-      const file=new File([Uint8Array.from(atob(base64),c=>c.charCodeAt(0))],'New.xlsx');
-      await uploadFile(file);
-    },uploadBytes);
-    assert.equal(await a.evaluate(()=>profileState.workspace.name),'New.xlsx');
-    assert.equal(fx.state.uploads.length,1,'A new source workbook uploads once with a signed ticket');
+    const largeCopy = await a.evaluate(() => profileState.workspace);
+    await fx.call(accounts.get('team_a@profiles.cartdelivery.invalid'), 'save', {
+      fileId: largeFileId, copyRevision: largeCopy.copyRevision,
+      edits: Array.from({ length: 903 }, (_, index) => ({ index, values: { del_qty: 1, del_status: '' } }))
+    });
+    await a.evaluate(fileId => openProfileFile({ fileId }), largeFileId);
+    await review(a);
+    assert.deepEqual(await a.locator('#profileSyncImpact dd').allTextContents(), ['903', '903', '0', '0'], 'Summary includes every preview page');
+    assert.equal(await a.locator('#profileSyncChanges .profile-change').count(), 0, 'A 903-stop sync starts with totals, not hundreds of cards');
+    for (const width of [440, 1440]) {
+      await a.setViewportSize({ width, height: 956 });
+      await captureProfile(a, 'sync-summary-903', '#profileSyncDialog');
+    }
+    await a.setViewportSize({ width: 440, height: 956 });
+    await a.locator('#profileSyncDetails summary').click();
+    await a.locator('#profileSyncDetails .profile-change').first().waitFor();
+    assert.equal(await a.locator('#profileSyncDetails .profile-change').count(), 50, 'Optional details are paginated');
+    await a.locator('#profileSyncDetails').getByRole('button', { name: 'Show more stops' }).click();
+    assert.equal(await a.locator('#profileSyncDetails .profile-change').count(), 100);
+    await a.locator('#closeProfileSyncBtn').click();
+    await a.locator('#profileContinueBtn').click();
+    const uploadBytes = Buffer.from(fx.workbook(rows));
+    const chooseUpload = async (page, name, buffer = uploadBytes) => {
+      await page.locator('#fileInput').setInputFiles({ name, mimeType: 'application/octet-stream', buffer });
+      if (/\.(xlsx|xls|csv)$/i.test(name)) {
+        await page.waitForFunction(() => teamUploadState.inspection && !teamUploadState.inspecting);
+        await page.locator('#teamMappingConfirmed').check();
+      }
+    };
+    await a.evaluate(() => document.getElementById('openFileManagerBtn').click());
+    await a.locator('#uploadTeamExcelBtn').click();
+    await chooseUpload(a, 'Wrong.pdf', Buffer.from('not Excel'));
+    assert.match(await a.locator('#teamUploadStatus').textContent(), /Choose an Excel/);
+    assert.equal(await a.locator('#confirmTeamUploadBtn').isDisabled(), true);
+    await chooseUpload(a, 'New.xlsx');
+    assert.equal(fx.state.uploads.length, 0, 'Choosing a file sends no upload');
+    for (const width of [440, 1440]) {
+      await a.setViewportSize({ width, height: 956 });
+      await captureProfile(a, 'upload-ready', '#teamUploadDialog');
+    }
+    await a.setViewportSize({ width: 440, height: 956 });
+    await a.locator('#closeTeamUploadBtn').click();
+    assert.equal(fx.state.uploads.length, 0, 'Cancelling sends no upload');
+    await a.evaluate(() => openTeamUpload());
+    failShortcutWrite = true;
+    await a.locator('#confirmTeamUploadBtn').click();
+    await a.waitForFunction(() => !profileState.busy && teamUploadState.result);
+    assert.match(await a.locator('#teamUploadStatus').textContent(), /saved, but we could not confirm/);
+    assert.deepEqual(sharedNames, ['Trash.xlsx'], 'Failed list save preserves existing shortcuts');
+    assert.equal(fx.state.uploads.length, 1);
+    failShortcutWrite = false;
+    await a.locator('#confirmTeamUploadBtn').click();
+    await a.waitForFunction(() => !profileState.busy && teamUploadState.added);
+    assert.equal(fx.state.uploads.length, 1, 'Retry never uploads the source again');
+    assert.deepEqual(sharedNames, ['Trash.xlsx', 'New.xlsx']);
+    await captureProfile(a, 'upload-success', '#teamUploadDialog');
+    await a.locator('#viewUploadedFileBtn').click();
+    await a.locator('.saved-file-card').filter({ hasText: 'New.xlsx' }).waitFor();
+    assert.equal(await a.locator('#cartDeliveryFilesTab').getAttribute('aria-selected'), 'true');
+    await a.locator('.saved-file-card').filter({ hasText: 'New.xlsx' }).locator('.saved-file-btn').click();
+    await a.waitForFunction(() => !profileState.busy && profileState.workspace?.name === 'New.xlsx');
+    await guest.evaluate(() => document.getElementById('openFileManagerBtn').click());
+    await guest.locator('.saved-file-card').filter({ hasText: 'New.xlsx' }).waitFor();
+    await guest.locator('#uploadTeamExcelBtn').click();
+    await chooseUpload(guest, 'Another.xlsx');
+    await guest.locator('#confirmTeamUploadBtn').click();
+    assert.equal(await guest.locator('#profileDialog').isVisible(), true);
+    await guest.locator('#profileUsername').fill('team_a');
+    await guest.locator('#profilePassword').fill('test-password');
+    await guest.locator('#profileSignInBtn').click();
+    await guest.locator('#teamUploadDialog').waitFor();
+    assert.equal(await guest.locator('#teamUploadFileName').textContent(), 'Another.xlsx', 'Sign-in keeps the selected file');
+    assert.equal(fx.state.uploads.length, 1, 'Sign-in does not automatically upload');
+    await guest.locator('#closeTeamUploadBtn').click();
+    await a.evaluate(() => openTeamUpload());
+    await chooseUpload(a, 'New.xlsx');
+    await a.locator('#confirmTeamUploadBtn').click();
+    await a.waitForFunction(() => !profileState.busy);
+    assert.match(await a.locator('#teamUploadStatus').textContent(), /name already exists/);
+    assert.equal(fx.state.uploads.length, 1, 'Duplicate names never overwrite originals');
+    await a.locator('#closeTeamUploadBtn').click();
     assert.deepEqual(await a.evaluate(()=>_currentRows.map(row=>row.del_qty)),[0,0,0]);
     for (const bookType of ['xlsx','xls','csv']) {
       const workbook=fx.XLSX.utils.book_new();
@@ -224,7 +431,32 @@ const server = http.createServer((req, res) => {
     await a.evaluate(()=>openProfileFile({name:'Duplicate.xlsx',sourceKey:'Duplicate.xlsx'}));
     assert.match(dialogs.pop(),/duplicate column headings/);
     assert.equal((await fx.pg.query("select count(*)::int n from cd_data_files where name='Duplicate.xlsx' and ready")).rows[0].n,0);
+
+    const teamA = accounts.get('team_a@profiles.cartdelivery.invalid');
+    const teamB = accounts.get('team_b@profiles.cartdelivery.invalid');
+    const safetyFile = await fx.importRows(teamA, 'Safety.xlsx', rows);
+    const safetyCopy = await fx.call(teamA, 'open', { fileId: safetyFile.fileId });
+    await fx.call(teamA, 'save', { fileId: safetyFile.fileId, copyRevision: safetyCopy.copyRevision, edits: [{ index: 0, values: { del_qty: 1, del_status: '' } }] });
+    await a.evaluate(fileId => openProfileFile({ fileId }), safetyFile.fileId);
+    await review(a);
+    await a.locator('#confirmProfileSyncBtn').click();
+    const otherCopy = await fx.call(teamB, 'open', { fileId: safetyFile.fileId });
+    const otherSaved = await fx.call(teamB, 'save', { fileId: safetyFile.fileId, copyRevision: otherCopy.copyRevision, edits: [{ index: 1, values: { del_qty: 1, del_status: '' } }] });
+    await fx.call(teamB, 'sync', { fileId: safetyFile.fileId, copyRevision: otherSaved.copyRevision, masterRevision: otherCopy.masterRevision, resolutions: [] });
+    await a.locator('#profileShareAcknowledged').check();
+    await a.locator('#commitProfileShareBtn').click();
+    await a.waitForFunction(() => !profileState.busy);
+    assert.match(await a.locator('#profileShareStatus').textContent(), /changed on another device/);
+    assert.equal(await a.locator('#profileShareAcknowledged').isChecked(), false, 'Failed sharing requires a fresh acknowledgement');
+    assert.equal(await a.locator('#commitProfileShareBtn').isDisabled(), true);
+    assert.deepEqual((await fx.read(teamA, safetyFile.fileId, 'original')).map(row => row.del_qty), [0, 1, 0], 'Team changes after review block stale confirmation without overwriting anything');
+    assert.deepEqual(await a.evaluate(() => _currentRows.map(row => row.del_qty)), [1, 0, 0], 'Failed confirmation leaves the open copy unchanged');
+    await a.locator('#profileShareAcknowledged').check();
+    await a.evaluate(() => sb.auth.signOut());
+    await a.waitForFunction(() => !profileState.user);
+    assert.equal(await a.locator('#profileShareDialog').isVisible(), false, 'Account changes close the final check');
+    assert.equal(await a.evaluate(() => profileState.shareConfirmation), null);
     assert.deepEqual(errors, []);
-    console.log('PASS: two profiles end to end, username uniqueness/sign-in, delayed saves, explicit sync, overlap review, lost-response retry, history, original read-only, cross-device resume, phone/desktop themes. No live storage.');
+    console.log('PASS: profile flows, final acknowledgement, cancel/Escape, duplicate taps, conflicts, stale confirmation, account changes, lost-response retry, history, cross-device resume, phone/desktop themes. No live storage.');
   } finally { if (browser) await browser.close(); await fx.pg.close(); server.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

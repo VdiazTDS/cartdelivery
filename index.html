@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261010-profiles" />
+  <link rel="stylesheet" href="style.css?v=20261012-field-mapping" />
 
   <link rel="icon" href="favicon.ico" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -66,7 +66,10 @@
 
 
 
-  <button id="profileWorkspaceBtn" type="button" aria-haspopup="dialog">Sign in · Delivery profiles</button>
+  <button id="profileWorkspaceBtn" type="button" aria-haspopup="dialog">Sign in to your delivery account</button>
+  <div id="routeContext" class="route-context" role="status" hidden>
+    <strong></strong><span class="route-context-file"></span><span class="route-context-help"></span>
+  </div>
 
   <div class="mobile-header-buttons">
     <button id="hardRefreshBtn" data-action="refresh" class="delivery-action primary-btn" title="Reload app data and clear cached view">Refresh App</button>
@@ -83,10 +86,10 @@
 <button id="toggleSidebarBtn" class="sidebar-toggle" aria-label="Toggle left sidebar"></button>
   <aside class="sidebar">
 
-    <div id="dropZone" aria-label="Upload Excel file">
-      <div class="dropzone-title">Add Original Route File</div>
-      <div class="dropzone-subtitle">Drop .xlsx, .xls, or .csv here</div>
-      <div class="dropzone-browse">Click to choose file</div>
+    <div id="dropZone" role="button" tabindex="0" aria-label="Upload new team Excel" aria-haspopup="dialog">
+      <div class="dropzone-title">Upload new team Excel</div>
+      <div class="dropzone-subtitle">Add a main file to Cart Delivery</div>
+      <div class="dropzone-browse">Choose a file or drop it here</div>
     </div>
     <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" hidden>
     <div id="currentFileDisplay" class="current-file-display">
@@ -99,14 +102,14 @@
   <span class="file-manager-icon" aria-hidden="true"></span>
   <span class="file-manager-copy">
     <span class="file-manager-title">Open Saved Files</span>
-    <span class="file-manager-subtitle">Choose an original and open your own copy</span>
+    <span class="file-manager-subtitle">Continue your saved work or start a copy</span>
   </span>
 </button>
 </div>
     <div id="savedFilesGuide" class="saved-files-guide">
       <div class="saved-files-guide-title">Quick Start</div>
-      <div class="saved-files-guide-step"><span class="saved-files-guide-num">1</span><span>Sign in to your <strong>Delivery profile</strong></span></div>
-      <div class="saved-files-guide-step"><span class="saved-files-guide-num">2</span><span>Choose a file → <strong>Open my copy</strong></span></div>
+      <div class="saved-files-guide-step"><span class="saved-files-guide-num">1</span><span><strong>Sign in</strong> with your delivery account</span></div>
+      <div class="saved-files-guide-step"><span class="saved-files-guide-num">2</span><span>Choose a file to <strong>continue your work</strong></span></div>
     </div>
     <div class="map-view-group">
       <label for="baseMapSelect" class="map-view-label">Map View</label>
@@ -434,12 +437,13 @@
   <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="savedFilesTitle">
     <div class="saved-files-heading">
       <div>
-        <span class="saved-files-eyebrow">YOUR WORKBOOKS</span>
-        <h3 id="savedFilesTitle">Saved Excel files</h3>
+        <span class="saved-files-eyebrow" id="savedFilesAccount">DELIVERY FILES</span>
+        <h3 id="savedFilesTitle">Choose a file</h3>
       </div>
       <button id="closeFileManager" type="button" aria-label="Close saved files">&times;</button>
     </div>
-    <p class="saved-files-modal-help">Work in your own copy. The original changes only when you review and sync.</p>
+    <p class="saved-files-modal-help">Anyone can view the team Excel. Sign in to record deliveries in your own copy.</p>
+    <button id="uploadTeamExcelBtn" class="saved-files-upload" type="button" aria-haspopup="dialog">+ Upload new team Excel</button>
 
     <div class="saved-file-tabs" role="tablist" aria-label="Saved file categories">
       <button id="cartDeliveryFilesTab" class="saved-file-tab active" type="button" role="tab" aria-selected="true" aria-controls="savedFiles">Cart Delivery</button>
@@ -447,40 +451,101 @@
     </div>
     <div id="savedFiles" class="file-list" role="tabpanel" aria-labelledby="cartDeliveryFilesTab"></div>
 
-    <p class="saved-files-footer">Cart Delivery keeps your go-to files together.</p>
+    <p class="saved-files-footer">Cart Delivery is the team's shortcut list. Removing a shortcut does not delete a file or your work.</p>
   </div>
 </div>
+<dialog id="teamUploadDialog" class="profile-dialog" aria-labelledby="teamUploadTitle">
+  <div class="profile-heading"><div><span class="profile-eyebrow">CART DELIVERY</span><h2 id="teamUploadTitle">Upload new team Excel</h2></div><button id="closeTeamUploadBtn" type="button">Close</button></div>
+  <div id="teamUploadSetup">
+    <p>Add the main Excel your team will use for deliveries. It will appear in <strong>Open Saved Files → Cart Delivery</strong> for everyone.</p>
+    <button id="chooseTeamExcelBtn" type="button">Choose Excel file</button>
+    <p class="profile-help">Excel (.xlsx or .xls) or CSV · Up to 50 MB. Put your delivery stops on the first sheet.</p>
+    <div id="teamUploadSelection" class="profile-workspace-card" hidden><strong id="teamUploadFileName"></strong><p id="teamUploadFileSize"></p></div>
+    <section id="teamUploadMapping" hidden aria-labelledby="teamMappingTitle">
+      <h3 id="teamMappingTitle">Check your column matches</h3>
+      <p id="teamMappingSummary"></p>
+      <p>We suggested matches from your column names. Check the sample values and change any match below. Latitude and longitude are needed to show stops on the map.</p>
+      <div id="teamMappingFields"></div>
+      <p class="profile-help">Service day accepts 1–7 (Monday–Sunday) or weekday names. Delivery status uses “Delivered” for completed stops. Leave existing-delivery fields unused to start with all stops pending.</p>
+      <p id="teamMappingErrors" role="status" aria-live="polite"></p>
+      <label class="profile-share-check"><input id="teamMappingConfirmed" type="checkbox"><span>I checked the column matches and sample values.</span></label>
+    </section>
+    <p class="profile-help">This adds a new main file. Existing team Excel files and delivery work stay as they are.</p>
+  </div>
+  <p id="teamUploadStatus" role="status" aria-live="polite"></p>
+  <div class="profile-actions">
+    <button id="confirmTeamUploadBtn" class="profile-primary" type="button" disabled>Upload &amp; add to Cart Delivery</button>
+    <button id="viewUploadedFileBtn" class="profile-primary" type="button" hidden>View in Cart Delivery</button>
+    <button id="openUploadedCopyBtn" type="button" hidden>Open my copy</button>
+  </div>
+</dialog>
 <dialog id="profileDialog" class="profile-dialog" aria-labelledby="profileTitle">
-  <div class="profile-heading"><h2 id="profileTitle">Delivery profile</h2><button id="closeProfileBtn" type="button" aria-label="Close delivery profile">Close</button></div>
+  <div class="profile-heading"><div><span class="profile-eyebrow">YOUR DELIVERY WORK</span><h2 id="profileTitle">Welcome back</h2></div><button id="closeProfileBtn" type="button" aria-label="Close delivery profile">Close</button></div>
   <p id="profileStatus" role="status" aria-live="polite"></p>
   <form id="profileAuthForm">
-    <p>Each profile has its own workbooks. Sign in on any phone to continue your work.</p>
+    <p id="profileAuthIntro">Sign in with the same username on your phone or computer to open your saved copies.</p>
+    <div class="profile-auth-modes" role="group" aria-label="Account access">
+      <button id="profileSignInMode" type="button" aria-pressed="true">Sign in</button>
+      <button id="profileCreateMode" type="button" aria-pressed="false">Create account</button>
+    </div>
     <label>Username<input id="profileUsername" required minlength="3" maxlength="30" pattern="[A-Za-z0-9][A-Za-z0-9_-]{2,29}" autocomplete="username" autocapitalize="none" spellcheck="false" aria-describedby="profileUsernameHelp"></label>
-    <small id="profileUsernameHelp">3–30 letters, numbers, underscores or hyphens. Capitalization does not matter.</small>
-    <label>Password<input id="profilePassword" required minlength="8" type="password" autocomplete="current-password"></label>
-    <div class="profile-actions"><button type="submit" class="profile-primary">Sign in</button><button id="createProfileBtn" type="button">Create profile</button></div>
+    <small id="profileUsernameHelp">Use your username, not an email address. Capitalization does not matter.</small>
+    <label for="profilePassword">Password</label>
+    <div class="profile-password"><input id="profilePassword" required minlength="8" type="password" autocomplete="current-password" aria-describedby="profilePasswordHelp"><button id="profileShowPassword" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
+    <small id="profilePasswordHelp">Enter the password you used to create your account.</small>
+    <div class="profile-actions"><button id="profileSignInBtn" type="submit" class="profile-primary">Sign in</button><button id="createProfileBtn" type="submit" class="profile-primary" hidden>Create account</button></div>
+    <p class="profile-help">Your delivery saves stay in your own copy until you choose to sync them with the team.</p>
   </form>
   <section id="profileSignedIn" hidden>
-    <div class="profile-account"><strong id="profileAccountName"></strong><button id="signOutProfileBtn" type="button">Sign out</button></div>
-    <p id="profileFileSummary">Choose a saved file to create or reopen your copy.</p>
-    <div class="profile-actions">
-      <button id="profileChooseFileBtn" type="button">Choose file</button>
-      <button id="profileReloadCopyBtn" type="button">Reopen my copy</button>
-      <button id="profileReviewBtn" type="button" class="profile-primary">Review &amp; sync</button>
-      <button id="profileHistoryBtn" type="button">Original’s history</button>
+    <div class="profile-account"><div><span class="profile-eyebrow">SIGNED IN AS</span><strong id="profileAccountName"></strong></div><button id="signOutProfileBtn" type="button">Sign out</button></div>
+    <div class="profile-workspace-card">
+      <span id="profileWorkspaceLabel" class="profile-eyebrow">GET STARTED</span>
+      <h3 id="profileFileSummary">Open a file to start your day</h3>
+      <p id="profileSaveSummary">Your saved copies follow your account. Choose a file to continue where you left off.</p>
+      <div class="profile-actions">
+        <button id="profileChooseFileBtn" type="button" class="profile-primary">Choose a file</button>
+        <button id="profileContinueBtn" type="button" class="profile-primary" hidden>Back to map</button>
+        <button id="profileReviewBtn" type="button" hidden>Sync to team Excel</button>
+      </div>
+      <div id="profileFileTools" class="profile-file-tools" hidden>
+        <button id="profileReloadCopyBtn" type="button">Reload my saved copy</button>
+        <button id="profileHistoryBtn" type="button">Team Excel sync history</button>
+      </div>
     </div>
-    <p class="profile-help">Saving deliveries updates only your copy. Review &amp; sync applies your changes to the original and refreshes your copy with the latest shared work.</p>
+    <details class="profile-explainer"><summary>How do my copy and the team Excel work?</summary>
+      <ol><li><strong>Open your copy.</strong> Use the same account to reopen it on another device.</li><li><strong>Record deliveries.</strong> Each confirmed save stays in your copy.</li><li><strong>Sync when ready.</strong> Sync to team Excel sends your saved deliveries to the team Excel and brings the team's latest updates into your copy.</li></ol>
+      <p>The team Excel is the shared file you open in this app. Your teammates get your synced deliveries when they update their copies. To get an updated spreadsheet, open team Excel and download it after syncing.</p>
+    </details>
   </section>
 </dialog>
 <dialog id="profileSyncDialog" class="profile-dialog" aria-labelledby="profileSyncTitle">
-  <div class="profile-heading"><h2 id="profileSyncTitle">Review changes</h2><button id="closeProfileSyncBtn" type="button">Close</button></div>
+  <div class="profile-heading"><div><span class="profile-eyebrow">SYNC TO TEAM EXCEL</span><h2 id="profileSyncTitle">Sync summary</h2></div><button id="closeProfileSyncBtn" type="button">Back</button></div>
   <p id="profileSyncSummary"></p>
+  <p id="profileSyncHelp" class="profile-callout"></p>
   <p id="profileSyncStatus" role="status" aria-live="polite"></p>
+  <section id="profileSyncImpact" class="profile-sync-impact" aria-label="Sync summary" aria-live="polite"></section>
   <div id="profileSyncChanges" class="profile-scroll"></div>
-  <button id="confirmProfileSyncBtn" type="button" class="profile-primary">Sync to original</button>
+  <p class="profile-help">All unsynced stops in this file are included, even outside your map selection. Individual stop details are optional. Your copy will also receive the latest team Excel updates.</p>
+  <button id="confirmProfileSyncBtn" type="button" class="profile-primary">Next: confirm sync</button>
+</dialog>
+<dialog id="profileShareDialog" class="profile-dialog" aria-labelledby="profileShareTitle">
+  <div class="profile-heading"><div><span class="profile-eyebrow">FINAL CHECK</span><h2 id="profileShareTitle">Sync to team Excel?</h2></div></div>
+  <dl class="profile-share-summary">
+    <div><dt>Syncing as</dt><dd id="profileShareAccount"></dd></div>
+    <div><dt>Team Excel</dt><dd id="profileShareFile"></dd></div>
+    <div><dt>Sync result</dt><dd id="profileShareCount"></dd></div>
+  </dl>
+  <section id="profileShareImpact" class="profile-sync-impact" aria-label="Final sync summary"></section>
+  <p id="profileShareEffect" class="profile-callout"></p>
+  <label class="profile-share-check"><input id="profileShareAcknowledged" type="checkbox"><span id="profileShareAcknowledgement">I want to sync these totals and conflict choices to team Excel.</span></label>
+  <p id="profileShareStatus" role="status" aria-live="polite"></p>
+  <div class="profile-actions">
+    <button id="cancelProfileShareBtn" type="button" autofocus>Go back without syncing</button>
+    <button id="commitProfileShareBtn" type="button" class="profile-primary" disabled>Confirm sync to team Excel</button>
+  </div>
 </dialog>
 <dialog id="profileHistoryDialog" class="profile-dialog" aria-labelledby="profileHistoryTitle">
-  <div class="profile-heading"><h2 id="profileHistoryTitle">Original’s history</h2><button id="closeProfileHistoryBtn" type="button">Close</button></div>
+  <div class="profile-heading"><div><span class="profile-eyebrow">SYNC HISTORY</span><h2 id="profileHistoryTitle">Team Excel sync history</h2></div><button id="closeProfileHistoryBtn" type="button">Back</button></div>
   <p id="profileHistoryStatus" role="status" aria-live="polite"></p>
   <div id="profileHistoryEntries" class="profile-scroll"></div>
   <button id="moreProfileHistoryBtn" type="button">Load more</button>
@@ -569,7 +634,8 @@
   </div>
 </dialog>
 
-<script src="app.js?v=20261009-database-deliveries" defer></script>
+<script src="profile-field-mapping.js?v=20261012-field-mapping" defer></script>
+<script src="app.js?v=20261012-field-mapping" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">

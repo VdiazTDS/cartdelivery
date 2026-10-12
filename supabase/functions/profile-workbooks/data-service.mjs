@@ -1,10 +1,18 @@
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const unwrap = ({ data, error }) => { if (error) throw new Error(error.message); return data; };
 const actions = new Set(['list', 'import-start', 'import-batch', 'import-finish', 'open', 'original', 'rows', 'save', 'preview', 'sync', 'history', 'history-changes', 'export-source']);
+export const publicActions = new Set(['public-list', 'public-original', 'public-rows', 'public-export-source']);
 
 export function createDataService(db) {
   const signed = async (bucket, path) => unwrap(await db.storage.from(bucket).createSignedUrl(path, 600)).signedUrl;
   return async (body, actor) => {
+    if (publicActions.has(body?.action)) {
+      if (body.action !== 'public-list' && !uuid(body.fileId)) throw new Error('INVALID_FILE');
+      if (body.action === 'public-rows' && (body.mode !== 'original' || !Number.isSafeInteger(body.offset) || body.offset < 0 || !Number.isSafeInteger(body.masterRevision))) throw new Error('INVALID_PUBLIC_VIEW');
+      const result = unwrap(await db.rpc('cd_data_public_read', { p: body }));
+      if (result.sourceBucket) return { url: await signed(result.sourceBucket, result.sourcePath) };
+      return result;
+    }
     if (!actor?.id || !/^[a-z0-9][a-z0-9_-]{2,29}@profiles\.cartdelivery\.invalid$/.test(actor.email || '')) throw new Error('SIGN_IN_REQUIRED');
     if (!body || !actions.has(body.action)) throw new Error('CLIENT_UPDATE_REQUIRED');
     const mutating = ['import-start', 'import-batch', 'import-finish', 'open', 'save', 'sync'].includes(body.action);
@@ -29,7 +37,8 @@ export function createDataService(db) {
       if (!file || file.owner_id !== actor.id) throw new Error('INVALID_IMPORT');
       await signed(file.source_bucket, file.source_path);
     }
-    const result = unwrap(await db.rpc('cd_data_call', {
+    const rpc = body.action === 'import-start' && body.fieldMapping !== undefined ? 'cd_data_import_mapped' : 'cd_data_call';
+    const result = unwrap(await db.rpc(rpc, {
       p_actor: actor.id, p_username: actor.email.split('@')[0], p_request: mutating ? body.requestId : null, p_hash: hash, p: input
     }));
     if (result.sourceBucket) {

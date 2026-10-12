@@ -12,21 +12,28 @@ The database replacement migration and updated function were deployed on October
 
 ## Deploy
 
-For the existing project, apply only [202610100002_database_deliveries.sql](migrations/202610100002_database_deliveries.sql) once in the SQL Editor while other clients are not saving. Then deploy:
+**Backend deployed October 12, 2026:** [202610120001_public_team_views.sql](migrations/202610120001_public_team_views.sql) and the updated `profile-workbooks` function are installed. All three migrations are now installed; do not reapply them. Read-only production checks confirmed guest listing, shared record reads and the existing Cart Delivery shortlist work, while private listing still rejects missing/invalid authentication. The existing one ready original and two profile copies were preserved. No source files were uploaded or deleted.
+
+The earlier sign-in error on the guest file picker came from the old deployed function rejecting `public-list` before the file list could load. Team files use the same uploaded originals and `_cart-delivery-tab.json` shortlist; there is no separate collection to populate. An outdated guest API now displays a server-update message, and guests never seed a missing shared shortlist.
+
+Frontend changes remain in this workspace for publication through the normal site release. Publish the updated `index.html`, `app.js` and `style.css` together. For future function deployments:
 
 ```powershell
 supabase functions deploy profile-workbooks --project-ref lffazhbwvorwxineklsy --no-verify-jwt --use-api
 ```
 
-This migration preserves existing originals, profile baselines, pending changes, revisions and history. It retains old tables and every storage object. Do not revert to the old function after database saves: old tables no longer represent current work.
+This new migration adds a read-only function; it does not change records, copies, storage objects or table permissions. Do not revert to the old workbook-based function after database saves: old tables no longer represent current work.
 
-For a fresh project, apply both migrations in order. Enable Email/password signup, disable email confirmation for username aliases, and require eight-character passwords. Review project-wide Auth changes if other apps share the project. Aliases use `<username>@profiles.cartdelivery.invalid` and must not receive mail.
+For a fresh project, apply all three migrations in order. Enable Email/password signup, disable email confirmation for username aliases, and require eight-character passwords. Review project-wide Auth changes if other apps share the project. Aliases use `<username>@profiles.cartdelivery.invalid` and must not receive mail.
 
-`verify_jwt = false` is intentional: every non-OPTIONS request is explicitly verified with `auth.getUser(token)`. The service key stays in Supabase's function environment, never in source or frontend code. Browser roles cannot access managed tables or the transaction function. [Deployment reference](https://supabase.com/docs/guides/functions/deploy).
+`verify_jwt = false` is intentional: only `public-list`, `public-original`, `public-rows` and `public-export-source` bypass authentication. These expose ready shared originals, never profile drafts or copy metadata. Public rows require an original-mode request and matching shared revision. Every other action requires `auth.getUser(token)`. The service key stays in Supabase's function environment, never in source or frontend code. Browser roles cannot access managed tables or either RPC directly. [Deployment reference](https://supabase.com/docs/guides/functions/deploy).
 
 ## Workflow and storage
 
+The profile UI calls the shared original **team Excel**. **Start my own copy** creates a copy; **Continue my work** reopens it. **Sync to team Excel** shows an aggregate summary of changes relative to the current shared values: stops updated, carts added/removed, completed/reopened stops, notes and affected routes/days. Individual stop details are optional and load 50 at a time. Conflicts still require decisions; unresolved conflicts are excluded from totals until resolved. The final confirmation uses the same request and choices as its summary. **Check for team updates** offers a copy refresh when there are no pending edits. These frontend changes do not require a backend deployment or migration. “Team Excel” refers to the app's shared dataset; the imported source remains immutable, and downloading the team view creates an updated spreadsheet.
+
 - First open imports records in batches. Later opens read database pages without downloading Excel.
+- Signed-out team viewing never imports or creates a copy: it reads confirmed shared records, or the existing public Excel source when not yet imported. All team views remain read-only. Signed-in users edit their own copies and sync through the final acknowledgement screen. The persistent team/copy banner is repeated inside dialogs.
 - **Create my copy & open** creates an isolated profile view sharing immutable records. Only that profile's delivery changes are stored separately; no physical Excel duplicate is needed.
 - Delivery saves validate and commit the whole request before markers change. Stale copy revisions are rejected.
 - **Review & sync** compares baseline/profile/original. Conflicts require keeping original values, using profile changes, or entering a final total. Equal reported quantities can still conflict.
@@ -45,6 +52,8 @@ Legacy `excel-files` objects remain frozen sources under existing restrictive po
 
 ## Import and export
 
+**Upload new team Excel** in Saved Files (or the sidebar) lets the user choose a source and confirm **Upload & add to Cart Delivery**. The frontend imports it, reloads the shared shortlist, and adds the new name only after import succeeds. A failed shortlist write preserves the completed import and offers a retry without a second upload. The current map remains open until the user chooses a file or opens their copy. No backend changes are needed for this flow.
+
 `profile-import-worker.js` parses the first sheet in a browser worker, rejects macros/duplicate headings, and supplies batches of up to 250 records. The server validates row shapes. Partial imports stay hidden until finalization; retries resume confirmed batches. Existing datasets cannot be replaced. The importing profile supplies the initial record interpretation; the server does not independently re-parse Excel.
 
 Limits: 50 MB per source and 100,000 nonempty records. Free Supabase projects allow uploads up to 50 MB, subject to lower project/bucket settings. [Storage limits](https://supabase.com/docs/guides/storage/uploads/file-limits). Import large files once from a computer if the phone cannot parse them. Ordinary phone opens/saves avoid Excel parsing, but map performance still depends on stop count.
@@ -61,6 +70,8 @@ node --check app.js
 node --check profile-import-worker.js
 git diff --check
 node tests/profile-data.backend.cjs
+node tests/profile-public.backend.cjs
+node tests/profile-sync-summary.cjs
 node tests/profile-data.migration.cjs
 node tests/profile-workbooks.browser.cjs
 node tests/cart-counts.browser.cjs

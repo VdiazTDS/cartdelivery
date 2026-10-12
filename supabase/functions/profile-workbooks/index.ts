@@ -1,5 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { createDataService } from './data-service.mjs';
+import { createDataService, publicActions } from './data-service.mjs';
 
 const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, {
   auth: { persistSession: false, autoRefreshToken: false }
@@ -11,10 +11,6 @@ Deno.serve(async req => {
   if (req.method === 'OPTIONS') return new Response(null, { headers });
   if (req.method !== 'POST') return new Response(JSON.stringify({ error: 'METHOD_NOT_ALLOWED' }), { status: 405, headers });
   try {
-    const token = req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
-    if (!token) throw new Error('SIGN_IN_REQUIRED');
-    const { data, error } = await db.auth.getUser(token);
-    if (error || !data.user) throw new Error('SIGN_IN_REQUIRED');
     if (Number(req.headers.get('Content-Length')) > 16_000_000) throw new Error('INVALID_REQUEST_SIZE');
     const reader = req.body?.getReader();
     const chunks: Uint8Array[] = [];
@@ -29,7 +25,16 @@ Deno.serve(async req => {
     const bytes = new Uint8Array(size);
     let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-    return new Response(JSON.stringify(await handle(JSON.parse(new TextDecoder().decode(bytes)), data.user)), { headers });
+    const body = JSON.parse(new TextDecoder().decode(bytes));
+    let actor = null;
+    if (!publicActions.has(body?.action)) {
+      const token = req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
+      if (!token) throw new Error('SIGN_IN_REQUIRED');
+      const { data, error } = await db.auth.getUser(token);
+      if (error || !data.user) throw new Error('SIGN_IN_REQUIRED');
+      actor = data.user;
+    }
+    return new Response(JSON.stringify(await handle(body, actor)), { headers });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'REQUEST_FAILED';
     const known = message.match(/\b(SIGN_IN_REQUIRED|CLIENT_UPDATE_REQUIRED|STALE_VERSION|NAME_EXISTS|REQUEST_REUSED|UNRESOLVED_CONFLICT|INVALID_[A-Z_]+|FILE_NOT_FOUND|COPY_NOT_FOUND|FILE_TOO_LARGE|DUPLICATE_HEADERS|ROW_STRUCTURE_CHANGED)\b/)?.[0];
