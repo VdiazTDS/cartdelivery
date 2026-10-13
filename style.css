@@ -5151,8 +5151,19 @@ body.sun-mode header .header-workspace > #routeContext strong { color: #815000; 
 body.sun-mode header .header-workspace > #routeContext[data-mode="copy"] strong { color: #176b91; }
 body.sun-mode header .header-workspace > #routeContext .route-context-help { color: #506477; }
 .delivery-stop-card { display: grid; gap: 8px; min-width: 0; font-size: 14px; line-height: 1.4; color: #183348; overflow-wrap: anywhere; }
-.delivery-stop-address { padding-right: 22px; font-size: 18px; }
-.leaflet-popup:has(.delivery-stop-card) .leaflet-popup-close-button { width: 44px; height: 44px; line-height: 44px; font-size: 22px; }
+.delivery-stop-address { display: flex; align-items: center; box-sizing: border-box; min-height: 44px; padding-right: 30px; font-size: 18px; font-weight: 700; overflow-wrap: anywhere; }
+a.delivery-stop-address { color: #175a9c; text-decoration: underline; text-underline-offset: 3px; }
+a.delivery-stop-address:focus-visible { outline: 3px solid #3688dc; outline-offset: 2px; }
+#stopDirectionsDialog { max-width: 480px; }
+#stopDirectionsChoices { display: grid; gap: 12px; }
+.stop-directions-choice { display: grid; gap: 7px; padding: 16px; min-height: 44px; box-sizing: border-box; border: 1px solid var(--profile-border); border-radius: 12px; background: var(--profile-card); color: var(--profile-text); text-decoration: none; overflow-wrap: anywhere; }
+.stop-directions-choice strong { font-size: 17px; text-decoration: underline; text-underline-offset: 3px; }
+.stop-directions-choice span { font-size: 15px; }
+.stop-directions-choice[aria-disabled="true"] { opacity: .65; }
+.stop-directions-choice[aria-disabled="true"] strong { text-decoration: none; }
+#stopDirectionsFallbacks { display: grid; gap: 8px; }
+#stopDirectionsFallbacks a { display: flex; align-items: center; min-height: 44px; color: var(--profile-text); }
+.leaflet-popup:has(.delivery-stop-address) .leaflet-popup-close-button { width: 44px; height: 44px; line-height: 44px; font-size: 22px; }
 .delivery-stop-bin { font-weight: 600; }
 .delivery-stop-remaining { font-size: 21px; color: #176946; }
 .delivery-stop-card .stop-delivery-action { width: 100%; min-height: 48px; margin: 4px 0; border: 0; border-radius: 10px; padding: 10px 14px; background: #176946; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }

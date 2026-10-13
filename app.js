@@ -758,7 +758,7 @@ function renderRouteContext() {
 }
 function setupRouteContext() {
   const template = profileElement("routeContext");
-  document.querySelectorAll("dialog:not(#pocketLock):not(#teamUploadDialog):not(#cartCountsDialog):not(#workAreasDialog):not(#adminDialog):not(#helpDialog), .modal-content").forEach(container => {
+  document.querySelectorAll("dialog:not(#pocketLock):not(#teamUploadDialog):not(#cartCountsDialog):not(#workAreasDialog):not(#adminDialog):not(#helpDialog):not(#stopDirectionsDialog), .modal-content").forEach(container => {
     const banner = template.cloneNode(true);
     banner.removeAttribute("id"); banner.removeAttribute("role");
     container.prepend(banner);
@@ -4009,12 +4009,82 @@ resequenceElement("saveSequenceBtn").addEventListener("click", () => {
 // Required columns: LATITUDE, LONGITUDE, ROUTE, DAY. Optional: CSADR#, CSSDIR, CSSTRT, CSSFUX
 // (address), SIZE, QTY, BINNO (popup), SEQNO (sequence), del_status ("Delivered" marks completed stops).
 // Rebuilds sequenceGroups, resets map/selection, then fills routeDayGroups by day or Delivered.
+function stopDirectionsDestination(row) {
+  const text = value => typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
+  const street = [row['CSADR#'], row.CSSDIR, row.CSSTRT, row.CSSFUX].map(text).filter(Boolean).join(' ').replace(/\s+/g, ' ');
+  const city = text(row.CITY) || text(row.CSCITY), state = text(row.STATE) || text(row.CSSTATE), zip = text(row.ZIP) || text(row.CSZIP);
+  const locality = [city, state, zip].filter(Boolean).join(' ');
+  const validCoordinate = (value, limit) => text(value) !== '' && Number.isFinite(Number(value)) && Math.abs(Number(value)) <= limit;
+  const coordinates = validCoordinate(row.LATITUDE, 90) && validCoordinate(row.LONGITUDE, 180)
+    ? `${Number(row.LATITUDE)},${Number(row.LONGITUDE)}` : '';
+  return { street, address: text(row.CSSTRT) ? [street, locality].filter(Boolean).join(', ') : '', coordinates, hasLocality: Boolean(city || state || zip) };
+}
+function stopDirectionsLinks(destination, userAgent = navigator.userAgent, platform = navigator.platform, touchPoints = navigator.maxTouchPoints) {
+  const encoded = encodeURIComponent(destination);
+  const apple = /iPhone|iPad|iPod/.test(userAgent) || (platform === 'MacIntel' && touchPoints > 1);
+  const web = apple ? `https://maps.apple.com/?daddr=${encoded}&dirflg=d`
+    : `https://www.google.com/maps/dir/?api=1&destination=${encoded}&travelmode=driving`;
+  if (apple) {
+    const version = userAgent.match(/(?:OS |Version\/)(\d+)[_.](\d+)/);
+    const supportsDefault = version && (Number(version[1]) > 18 || (Number(version[1]) === 18 && Number(version[2]) >= 4));
+    return { primary: supportsDefault ? `geo-navigation:///directions?destination=${encoded}` : web, web };
+  }
+  if (/Android/i.test(userAgent)) {
+    // No package: let Android use the chosen geo handler, with a browser fallback.
+    return { primary: `intent:0,0?q=${encoded}#Intent;scheme=geo;action=android.intent.action.VIEW;S.browser_fallback_url=${encodeURIComponent(web)};end`, web };
+  }
+  return { primary: web, web };
+}
+function showStopDirections(row, trigger) {
+  const destination = stopDirectionsDestination(row), dialog = document.getElementById('stopDirectionsDialog');
+  dialog._returnFocus = trigger;
+  document.getElementById('stopDirectionsRecord').textContent = `${destination.street || 'Address not available'} · Bin ${String(row.BINNO ?? '').trim() || 'Not provided'}`;
+  const list = document.getElementById('stopDirectionsChoices'); list.replaceChildren();
+  const fallbacks = document.getElementById('stopDirectionsFallbacks'); fallbacks.replaceChildren();
+  for (const [kind, title, value, description] of [
+    ['address', 'Street address', destination.address, destination.address ? (destination.hasLocality ? 'Use the address written in this record.' : 'No city or ZIP supplied. Check the map result, or use GPS coordinates.') : 'Street address missing from this record.'],
+    ['coordinates', 'GPS coordinates', destination.coordinates, destination.coordinates ? 'Use the exact map point saved in this record.' : 'Valid latitude and longitude are missing.']
+  ]) {
+    const choice = document.createElement(value ? 'a' : 'div'); choice.className = 'stop-directions-choice'; choice.dataset.destination = kind;
+    const heading = document.createElement('strong'); heading.textContent = title;
+    const detail = document.createElement('span'); detail.textContent = value || 'Not available';
+    const help = document.createElement('small'); help.textContent = description;
+    choice.append(heading, detail, help);
+    if (value) {
+      const links = stopDirectionsLinks(value);
+      choice.href = links.primary; choice.target = '_blank'; choice.rel = 'noopener noreferrer';
+      const fallback = document.createElement('a'); fallback.href = links.web; fallback.target = '_blank'; fallback.rel = 'noopener noreferrer';
+      fallback.textContent = `${title} → browser directions`; fallbacks.append(fallback);
+    } else choice.setAttribute('aria-disabled', 'true');
+    list.append(choice);
+  }
+  document.getElementById('stopDirectionsFallback').open = false;
+  document.getElementById('stopDirectionsFallback').hidden = !fallbacks.children.length;
+  dialog.showModal();
+}
+function setupStopDirections() {
+  const dialog = document.getElementById('stopDirectionsDialog');
+  document.getElementById('closeStopDirectionsBtn').onclick = () => dialog.close();
+  dialog.addEventListener('close', () => {
+    if (dialog._returnFocus?.isConnected) dialog._returnFocus.focus({ preventScroll: true });
+    dialog._returnFocus = null;
+  });
+}
+function stopDirectionsAddressLink(row) {
+  const destination = stopDirectionsDestination(row), address = document.createElement('a');
+  address.className = 'delivery-stop-address';
+  address.textContent = destination.street || (destination.coordinates ? 'Address not available · GPS directions' : 'Address not available');
+  address.href = '#stopDirectionsDialog'; address.setAttribute('aria-haspopup', 'dialog'); address.setAttribute('aria-controls', 'stopDirectionsDialog');
+  address.setAttribute('aria-label', `Get directions: ${destination.street || 'this record'}`);
+  address.onclick = event => { event.preventDefault(); event.stopPropagation(); showStopDirections(row, address); };
+  return address;
+}
 function deliveryStopCard(row, marker = null) {
   const card = document.createElement('div'); card.className = 'delivery-stop-card';
   const line = (tag, text, className = '') => {
     const node = document.createElement(tag); node.textContent = text; node.className = className; card.append(node); return node;
   };
-  line('strong', [row['CSADR#'], row.CSSDIR, row.CSSTRT, row.CSSFUX].filter(value => value != null && String(value).trim()).join(' ') || 'Address not available', 'delivery-stop-address');
+  card.append(stopDirectionsAddressLink(row));
   line('div', `Bin #: ${String(row.BINNO ?? '').trim() || 'Not provided'}`, 'delivery-stop-bin');
   const total = cartTotal(row), delivered = deliveredCartCount(row);
   const remaining = total === null ? null : Math.max(0, total - delivered);
@@ -5305,6 +5375,7 @@ function initApp() { //begining of initApp======================================
 
 setupProfileAdmin();
 setupHelp();
+setupStopDirections();
 setupPocketLock();
 const openCartCounts = setupCartCounts();
 recordSingleStop = marker => {
@@ -5932,9 +6003,7 @@ resetAddressSearch = () => {
 
 function searchStopPopup(row) {
   const popup = document.createElement("div");
-  const address = document.createElement("strong");
-  address.textContent = formatStopAddress(row);
-  popup.append(address);
+  popup.append(stopDirectionsAddressLink(row));
   const delivered = isDeliveredRow(row);
   const details = [`Route ${rowRoute(row)} · ${dayName(Number(rowDay(row))) || `Day ${rowDay(row)}`}`,
     delivered ? "Delivered" : "Pending", cartProgressText(row), `Quantity: ${row.QTY ?? "—"}`, `Container size: ${row.SIZE ?? "—"}`];
