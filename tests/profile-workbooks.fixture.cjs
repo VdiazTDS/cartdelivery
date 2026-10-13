@@ -7,7 +7,10 @@ const { randomUUID } = require('node:crypto');
 async function fixture() {
   const pg = new PGlite();
   await pg.exec(`create role anon; create role authenticated; create role service_role bypassrls;
-    create schema auth; create table auth.users(id uuid primary key, email text);
+    create schema auth; create table auth.users(id uuid primary key, email text,
+      raw_app_meta_data jsonb default '{}', raw_user_meta_data jsonb default '{}',
+      encrypted_password text, deleted_at timestamptz, banned_until timestamptz,
+      created_at timestamptz default now(), last_sign_in_at timestamptz);
     create schema storage; create table storage.buckets(id text primary key, name text, public boolean);
     create table storage.objects(id uuid default gen_random_uuid(), bucket_id text, name text);
     alter table storage.objects enable row level security;

@@ -5268,6 +5268,21 @@ body .profile-dialog .profile-share-check input { flex: 0 0 24px; width: 24px; m
 #fileManagerModal .saved-file-secondary-actions { grid-template-columns: 1fr; }
 #fileManagerModal #savedFiles .saved-file-secondary-actions button:last-child { border-color: transparent !important; color: var(--files-muted) !important; }
 /* Shared work areas stay separate from stop-selection shapes. */
+header #openAdminBtn { min-height: 44px; max-width: 100%; padding: 0; margin: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: inherit; cursor: pointer; box-shadow: none; }
+header #openAdminBtn:focus-visible { outline: 3px solid #489fff; outline-offset: 3px; border-radius: 4px; }
+#adminDialog [hidden] { display: none !important; }
+#adminDialog .profile-heading { position: sticky; top: -1px; z-index: 2; background: var(--profile-bg); padding-bottom: 12px; }
+.admin-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.admin-toolbar button { flex: 1 1 130px; }
+.admin-profile-card { border: 1px solid var(--profile-border); background: var(--profile-card); border-radius: 12px; padding: 14px; margin: 12px 0; overflow-wrap: anywhere; }
+.admin-profile-card > span { display: block; color: var(--profile-muted); font-size: 12px; margin-top: 4px; }
+.admin-profile-card > small { display: block; margin-bottom: 10px; }
+.admin-profile-card > button { width: 100%; }
+.admin-activity summary, .admin-remove summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-weight: 600; }
+.admin-activity li { margin: 10px 0; overflow-wrap: anywhere; font-size: 13px; }
+#adminAccessControls { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--profile-border); }
+body #adminRemoveBtn { border-color: #b74b4b !important; }
+#adminLoginForm > button { width: 100%; margin-top: 16px; }
 #workAreasSection > summary::after { content: '+'; font-size: 20px; }
 #workAreasSection[open] > summary::after { content: '−'; }
 body .sidebar #workAreasSection :is(p, span, strong, label) { color: var(--tool-ink) !important; }

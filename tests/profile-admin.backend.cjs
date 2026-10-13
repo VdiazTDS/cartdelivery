@@ -1,0 +1,62 @@
+const assert=require('node:assert/strict');
+const {randomUUID}=require('node:crypto');
+const {fixture}=require('./profile-admin.fixture.cjs');
+(async()=>{
+  const fx=await fixture();
+  try {
+    const created=await fx.db.auth.admin.createUser({email:'admin@profiles.cartdelivery.invalid',password:'test-admin-password',app_metadata:{cartdelivery_admin:true}});
+    if(created.error) throw created.error;
+    const admin=created.data.user, ordinary=await fx.actor('driver_one');
+    await fx.pg.query("update auth.users set raw_user_meta_data=$2 where id=$1",[ordinary.id,{cartdelivery_admin:true}]);
+    for(const action of ['admin-list','admin-save','admin-status','admin-remove']) {
+      await assert.rejects(()=>fx.dispatch({action},ordinary),/ADMIN_REQUIRED/);
+      await assert.rejects(()=>fx.dispatch({action},null),/SIGN_IN_REQUIRED/);
+    }
+    const call=(action,body={})=>fx.dispatch({action,...body},admin);
+    const result=await call('admin-save',{username:'New_Driver',password:'123456'});
+    const target=await fx.user(result.userId);
+    assert.equal(target.email,'new_driver@profiles.cartdelivery.invalid');
+    for(const password of ['', '12345']) await assert.rejects(()=>call('admin-save',{username:'shortpass',password}),/INVALID_PASSWORD/);
+    await assert.rejects(()=>call('admin-save',{username:'admin',password:'123456'}),/ADMIN_PROTECTED/);
+    await assert.rejects(()=>call('admin-save',{username:'new_driver',password:'123456'}),/duplicate/);
+    const {fileId}=await fx.importRows(target,'Admin sample.xlsx',[{QTY:2,LATITUDE:30,LONGITUDE:-98}]);
+    await fx.call(target,'open',{fileId});
+    const shape={id:randomUUID(),profileId:target.id,name:'North',color:'#2563eb',geometry:{type:'Polygon',coordinates:[[[-98,30],[-97,30],[-97,31],[-98,30]]]}};
+    await fx.call(target,'work-areas-save',{fileId,mode:'original',revision:0,areas:[shape]});
+    await call('admin-save',{userId:target.id,username:'renamed_driver',password:''});
+    const areas=await fx.call(await fx.user(target.id),'work-areas',{fileId});
+    assert.equal(areas.areas[0].profileName,'renamed_driver');assert.equal(areas.revision,2);
+    const directory=await call('admin-list');
+    const entry=directory.profiles.find(item=>item.id===target.id);
+    assert.equal(entry.copies,1);assert.equal(entry.areas,1);
+    assert(!JSON.stringify(directory).includes('encrypted_password'));
+    await assert.rejects(()=>call('admin-remove',{userId:target.id,confirmUsername:'renamed_driver'}),/PROFILE_HAS_AREAS/);
+    await call('admin-status',{userId:target.id,disabled:true});
+    await assert.rejects(()=>fx.dispatch({action:'list'},target),/PROFILE_DISABLED/);
+    await call('admin-status',{userId:target.id,disabled:false});
+    await fx.dispatch({action:'list'},target);
+    await call('admin-save',{userId:target.id,username:'renamed_driver',password:'654321'});
+    assert.equal((await fx.pg.query('select encrypted_password from auth.users where id=$1',[target.id])).rows[0].encrypted_password,fx.hash('654321'));
+    for(const action of ['admin-status','admin-remove']) await assert.rejects(()=>call(action,{userId:admin.id,disabled:true,confirmUsername:'admin'}),/ADMIN_PROTECTED/);
+    await assert.rejects(()=>call('admin-save',{userId:admin.id,username:'otheradmin',password:''}),/ADMIN_PROTECTED/);
+    fx.state.failAdminUpdate=true;
+    await assert.rejects(()=>call('admin-save',{userId:target.id,username:'failed',password:''}),/Simulated/);
+    fx.state.failAdminUpdate=false;
+    assert.equal((await fx.user(target.id)).email,'renamed_driver@profiles.cartdelivery.invalid');
+    await fx.call(await fx.user(target.id),'work-areas-save',{fileId,mode:'original',revision:2,areas:[{...shape,profileId:ordinary.id}]});
+    fx.state.failAdminDelete=true;
+    await assert.rejects(()=>call('admin-remove',{userId:target.id,confirmUsername:'renamed_driver'}),/REMOVE_INCOMPLETE/);
+    assert((await fx.user(target.id)).app_metadata.cartdelivery_disabled);
+    fx.state.failAdminDelete=false;
+    await call('admin-remove',{userId:target.id,confirmUsername:'renamed_driver'});
+    await assert.rejects(()=>fx.dispatch({action:'list'},target),/SIGN_IN_REQUIRED/);
+    assert.equal((await call('admin-list')).profiles.some(item=>item.id===target.id),false);
+    assert.equal((await fx.pg.query('select count(*)::int n from cd_data_records')).rows[0].n,1);
+    assert.equal((await fx.pg.query('select count(*)::int n from cd_data_copies')).rows[0].n,1);
+    await call('admin-save',{username:'renamed_driver',password:'123456'});
+    assert((await call('admin-list')).events.some(event=>event.action==='removed'));
+    const permissions=(await fx.pg.query("select has_function_privilege('authenticated','public.cd_admin_directory(uuid)','EXECUTE') directory, has_table_privilege('anon','public.cd_admin_events','SELECT') audit")).rows[0];
+    assert.deepEqual(permissions,{directory:false,audit:false});
+    console.log('PASS: admin roles, spoofed claims, listing, creation, six-character passwords, rename propagation, reset, disable/enable, removal restrictions, data preservation, audit and failed operations.');
+  } finally {await fx.pg.close();}
+})().catch(error=>{console.error(error);process.exitCode=1;});

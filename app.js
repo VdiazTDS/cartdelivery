@@ -649,6 +649,7 @@ function profileMessage(error) {
   if (code.includes("STALE_VERSION")) return "Your copy or the team Excel changed on another device. Reload your saved copy, then review again. Nothing from this attempt was applied.";
   if (code.includes("NAME_EXISTS")) return "A team Excel with this name already exists. Choose it from Saved Files, or rename the new file.";
   if (code.includes("SIGN_IN_REQUIRED")) return "Sign in to your delivery profile first.";
+  if (code.includes('PROFILE_DISABLED') || /banned/i.test(code)) return 'This profile’s sign-in is disabled. Ask the administrator to enable it.';
   if (code.includes("UNRESOLVED_CONFLICT")) return "Choose which values to keep for every highlighted stop before syncing.";
   if (code.includes("DUPLICATE_HEADERS")) return "This workbook has duplicate column headings. Give each column a unique heading before importing.";
   if (code.includes("INVALID_MACRO_WORKBOOK")) return "Macro-enabled workbooks are not supported. Export an XLSX copy without macros first.";
@@ -753,7 +754,7 @@ function renderRouteContext() {
 }
 function setupRouteContext() {
   const template = profileElement("routeContext");
-  document.querySelectorAll("dialog:not(#pocketLock):not(#teamUploadDialog):not(#cartCountsDialog):not(#workAreasDialog), .modal-content").forEach(container => {
+  document.querySelectorAll("dialog:not(#pocketLock):not(#teamUploadDialog):not(#cartCountsDialog):not(#workAreasDialog):not(#adminDialog), .modal-content").forEach(container => {
     const banner = template.cloneNode(true);
     banner.removeAttribute("id"); banner.removeAttribute("role");
     container.prepend(banner);
@@ -771,7 +772,7 @@ function setProfileAuthMode(mode) {
   profileElement("profilePassword").autocomplete = create ? "new-password" : "current-password";
   profileElement("profileAuthIntro").textContent = create ? "One account keeps your saved delivery copies available on your phone and computer." : "Sign in with the same username on your phone or computer to open your saved copies.";
   profileElement("profileUsernameHelp").textContent = create ? "Choose 3–30 letters, numbers, underscores or hyphens. Start with a letter or number." : "Use your username, not an email address. Capitalization does not matter.";
-  profileElement("profilePasswordHelp").textContent = create ? "Choose a password with at least 8 characters." : "Enter the password you used to create your account.";
+  profileElement("profilePasswordHelp").textContent = create ? "At least 6 characters. No other password rules." : "Enter the password you used to create your account.";
   profileElement("profileStatus").textContent = "";
   renderProfileState();
 }
@@ -1263,6 +1264,122 @@ async function showProfileHistory(more = false) {
   } catch (error) { profileElement("profileHistoryStatus").textContent = profileMessage(error); }
   finally { button.disabled = false; profileState.busy = false; renderProfileState(); }
 }
+function setupProfileAdmin() {
+  const el = id => document.getElementById(id), dialog = el('adminDialog');
+  let client = null, user = null, busy = false, screen = 'prompt', directory = null, editing = null;
+  const text = (tag, value) => { const node = document.createElement(tag); node.textContent = value; return node; };
+  const status = value => { el('adminStatus').textContent = value; };
+  const errorMessage = error => {
+    const message = error.message || '';
+    if (/ADMIN_REQUIRED/.test(message)) return 'This account is not an administrator.';
+    if (/SIGN_IN_REQUIRED|PROFILE_DISABLED/.test(message)) return 'Admin sign-in has expired or this account is disabled. Sign out of admin and sign in again.';
+    if (/ADMIN_PROTECTED/.test(message)) return 'The administrator account cannot be renamed, disabled or removed here.';
+    if (/PROFILE_HAS_AREAS/.test(message)) return 'Reassign this profile’s work areas on the team Excel before removing the profile.';
+    if (/REMOVE_INCOMPLETE/.test(message)) return 'Sign-in is disabled, but removal was not confirmed. Refresh the list before trying again.';
+    if (/INVALID_PASSWORD|weak_password/.test(message)) return 'Use at least 6 characters for the new password.';
+    if (/NAME_EXISTS|already.*registered/i.test(message)) return 'That username is already in use. Choose another.';
+    if (/INVALID_REMOVE_CONFIRMATION/.test(message)) return 'Type the exact username to confirm removal.';
+    if (/Invalid login credentials/i.test(message)) return 'The admin username or password is incorrect.';
+    if (/INVALID_USERNAME/.test(message)) return 'Use 3–30 letters, numbers, underscores or hyphens for the username.';
+    return 'Could not confirm the change. Refresh the profiles to check what was saved before trying again.';
+  };
+  function render() {
+    el('adminPrompt').hidden = screen !== 'prompt'; el('adminLoginForm').hidden = screen !== 'login';
+    el('adminDashboard').hidden = screen !== 'list'; el('adminEditForm').hidden = screen !== 'edit';
+    dialog.querySelectorAll('button,input').forEach(input => { input.disabled = busy; });
+    el('adminEditUsername').disabled = busy || Boolean(editing?.isAdmin);
+    el('adminRemoveBtn').disabled = busy || !editing || editing.isAdmin || el('adminRemoveConfirm').value !== editing.username || editing.areas > 0;
+    dialog.setAttribute('aria-busy',String(busy));
+    if (screen !== 'list') return;
+    const profiles = directory?.profiles || [], query = el('adminSearch').value.trim().toLowerCase();
+    const list = el('adminProfiles'); list.replaceChildren();
+    const shown = profiles.filter(profile => profile.username.includes(query));
+    el('adminCount').textContent = `${shown.length} of ${profiles.length} profiles · ${profiles.filter(profile => profile.disabled).length} disabled`;
+    if (!shown.length) list.append(text('p','No profiles match this search.'));
+    for (const profile of shown) {
+      const card = document.createElement('article'); card.className = 'admin-profile-card';
+      card.append(text('strong',profile.username),text('span',profile.isAdmin ? 'Administrator' : profile.disabled ? 'Sign-in disabled' : 'Active'));
+      card.append(text('p',`${profile.copies} saved copies · ${profile.pending} unsynced stops · ${profile.areas} work areas`));
+      card.append(text('small',`Created ${profile.createdAt ? new Date(profile.createdAt).toLocaleDateString() : 'date unavailable'} · Last sign-in: ${profile.lastSignInAt ? new Date(profile.lastSignInAt).toLocaleString() : 'Never'}`));
+      const button = text('button',profile.isAdmin ? 'Change admin password' : 'Manage profile'); button.type = 'button'; button.disabled = busy;
+      button.onclick = () => edit(profile); card.append(button); list.append(card);
+    }
+    const events = el('adminEvents'); events.replaceChildren();
+    for (const event of directory?.events || []) events.append(text('li',`${event.details.username} · ${event.action}${event.details.passwordChanged ? ' · password set' : ''} · ${new Date(event.created_at).toLocaleString()}`));
+    if (!events.children.length) events.append(text('li','No admin changes yet.'));
+  }
+  async function api(body) {
+    const { data: session, error } = await client.auth.getSession();
+    if (error || !session.session) throw new Error('SIGN_IN_REQUIRED');
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/profile-workbooks`, {
+      method: 'POST', headers: { 'Content-Type':'application/json', apikey:SUPABASE_KEY, Authorization:`Bearer ${session.session.access_token}` }, body:JSON.stringify(body)
+    });
+    const result = await response.json(); if (!response.ok || result.error) throw new Error(result.error || 'REQUEST_FAILED');
+    return result;
+  }
+  async function reload() { directory = await api({action:'admin-list'}); }
+  async function task(action) {
+    if (busy) return;
+    busy = true; status('Working…'); render();
+    try { await action(); }
+    catch (error) { status(errorMessage(error)); }
+    finally { busy = false; render(); }
+  }
+  async function refreshAfterChange(message) {
+    editing = null; screen = 'list'; el('adminEditPassword').value = ''; el('adminRemoveConfirm').value = '';
+    try { await reload(); status(message); }
+    catch { directory = null; status(`${message} Refresh profiles to load the latest list.`); }
+    workAreas?.refresh();
+  }
+  function edit(profile = null) {
+    editing = profile; screen = 'edit'; status('');
+    el('adminEditContext').textContent = profile ? `Manage ${profile.username}. Changes apply to this profile on every device.` : 'Create a delivery profile. Share its username and password with the person who will use it.';
+    el('adminEditUsername').value = profile?.username || ''; el('adminEditPassword').value = ''; el('adminEditPassword').required = !profile;
+    el('adminPasswordHelp').textContent = profile ? 'Leave blank to keep the password, or enter at least 6 characters to reset it. Existing passwords cannot be viewed.' : 'At least 6 characters. No other password rules.';
+    el('adminAccessControls').hidden = !profile || profile.isAdmin;
+    el('adminAccessHelp').textContent = profile ? `${profile.disabled ? 'Sign-in is disabled.' : 'Sign-in is enabled.'} Disabling access preserves their saved work.${profile.areas ? ` Reassign ${profile.areas} work areas before removing this account.` : ''}` : '';
+    el('adminToggleAccessBtn').textContent = profile?.disabled ? 'Enable sign-in' : 'Disable sign-in';
+    el('adminRemoveConfirm').value = ''; dialog.querySelector('.admin-remove').open = false;
+    render(); dialog.scrollTop = 0; el(profile?.isAdmin ? 'adminEditPassword' : 'adminEditUsername').focus();
+  }
+  function close() { if (!busy) { el('adminPassword').value = ''; el('adminEditPassword').value = ''; editing = null; dialog.close(); } }
+  el('openAdminBtn').onclick = () => { if (workAreas?.mapActive || deliverySaveInProgress || profileState.busy) return; screen = user ? 'list' : 'prompt'; status(''); render(); dialog.showModal(); if (user) task(async()=>{await reload();status('');}); };
+  el('closeAdminBtn').onclick = el('adminDismissBtn').onclick = close;
+  dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
+  el('adminProceedBtn').onclick = () => {screen='login';render();el('adminPassword').focus();};
+  el('adminLoginForm').onsubmit = event => {
+    event.preventDefault(); if (!el('adminLoginForm').reportValidity()) return;
+    task(async()=>{
+      client ||= supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:false,autoRefreshToken:true,detectSessionInUrl:false,storageKey:'cartdelivery-admin-session'}});
+      const {data,error} = await client.auth.signInWithPassword({email:`${el('adminUsername').value.trim().toLowerCase()}@profiles.cartdelivery.invalid`,password:el('adminPassword').value});
+      el('adminPassword').value = '';
+      if (error) throw error;
+      try { await reload(); }
+      catch (failure) { await client.auth.signOut({scope:'local'}); throw failure; }
+      user = data.user; screen='list';status('Signed in as administrator. Your delivery profile is unchanged.');
+    });
+  };
+  el('adminSignOutBtn').onclick = () => task(async()=>{const {error}=await client.auth.signOut({scope:'local'});if(error) throw error;user=null;directory=null;editing=null;screen='prompt';status('Signed out of admin.');});
+  el('adminRefreshBtn').onclick = () => task(async()=>{await reload();status('Profiles refreshed.');});
+  el('adminNewBtn').onclick = () => edit();
+  el('adminSearch').oninput = render;
+  el('adminCancelEditBtn').onclick = () => {editing=null;el('adminEditPassword').value='';screen='list';status('');render();};
+  el('adminRemoveConfirm').oninput = render;
+  el('adminEditForm').onsubmit = event => {
+    event.preventDefault(); if (!el('adminEditForm').reportValidity()) return;
+    const body = {action:'admin-save',userId:editing?.id,username:el('adminEditUsername').value,password:el('adminEditPassword').value};
+    task(async()=>{await api(body);await refreshAfterChange('Profile saved.');});
+  };
+  el('adminToggleAccessBtn').onclick = () => {
+    if (!editing || editing.isAdmin || !confirm(`${editing.disabled ? 'Enable' : 'Disable'} sign-in for ${editing.username}?`)) return;
+    task(async()=>{await api({action:'admin-status',userId:editing.id,disabled:!editing.disabled});await refreshAfterChange('Account access updated.');});
+  };
+  el('adminRemoveBtn').onclick = () => {
+    if (!editing || editing.isAdmin || editing.areas || el('adminRemoveConfirm').value !== editing.username) return;
+    task(async()=>{await api({action:'admin-remove',userId:editing.id,confirmUsername:el('adminRemoveConfirm').value});await refreshAfterChange('Profile login removed. Delivery records and history were kept.');});
+  };
+}
+
 function setupDeliveryProfiles() {
   setupRouteContext();
   profileElement("profileWorkspaceBtn").onclick = () => { renderProfileState(); profileElement("profileDialog").showModal(); };
@@ -5033,6 +5150,7 @@ function setupWorkAreas() {
 
 function initApp() { //begining of initApp=================================================================
 
+setupProfileAdmin();
 setupPocketLock();
 const openCartCounts = setupCartCounts();
 recordSingleStop = marker => {

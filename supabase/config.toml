@@ -1,6 +1,7 @@
 [auth]
 enable_signup = true
-minimum_password_length = 8
+minimum_password_length = 6
+password_requirements = ""
 
 [auth.email]
 enable_signup = true

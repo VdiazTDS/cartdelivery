@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261013-work-areas-ease" />
+  <link rel="stylesheet" href="style.css?v=20261013-profile-admin" />
 
   <link rel="icon" href="favicon.ico" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -40,7 +40,7 @@
   </button>
 
   <div class="title-with-tools">
-    <h1><span class="header-brand">TDS-PAK</span> <span class="header-product">Cart Delivery</span></h1>
+    <h1><button id="openAdminBtn" type="button" aria-label="TDS-PAK Cart Delivery — open admin sign-in"><span class="header-brand">TDS-PAK</span> <span class="header-product">Cart Delivery</span></button></h1>
     <div class="header-tools header-tools-desktop">
       <button id="toolsMenuBtn" class="tools-menu-btn" aria-expanded="false" aria-haspopup="true">
         Other Apps
@@ -494,7 +494,7 @@
     <label>Username<input id="profileUsername" required minlength="3" maxlength="30" pattern="[A-Za-z0-9][A-Za-z0-9_-]{2,29}" autocomplete="username" autocapitalize="none" spellcheck="false" aria-describedby="profileUsernameHelp"></label>
     <small id="profileUsernameHelp">Use your username, not an email address. Capitalization does not matter.</small>
     <label for="profilePassword">Password</label>
-    <div class="profile-password"><input id="profilePassword" required minlength="8" type="password" autocomplete="current-password" aria-describedby="profilePasswordHelp"><button id="profileShowPassword" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
+    <div class="profile-password"><input id="profilePassword" required minlength="6" type="password" autocomplete="current-password" aria-describedby="profilePasswordHelp"><button id="profileShowPassword" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
     <small id="profilePasswordHelp">Enter the password you used to create your account.</small>
     <div class="profile-actions"><button id="profileSignInBtn" type="submit" class="profile-primary">Sign in</button><button id="createProfileBtn" type="submit" class="profile-primary" hidden>Create account</button></div>
     <p class="profile-help">Your delivery saves stay in your own copy until you choose to sync them with the team.</p>
@@ -606,6 +606,34 @@
   <div class="optimo-picker-actions"><button id="cancelOptimoLocation" type="button">Cancel</button><button id="useOptimoLocation" type="button" disabled>Confirm location</button></div>
 </section>
 
+<dialog id="adminDialog" class="profile-dialog" aria-labelledby="adminTitle">
+  <div class="profile-heading"><h2 id="adminTitle">Profile administration</h2><button id="closeAdminBtn" type="button">Close</button></div>
+  <div id="adminPrompt"><p>Do you want to sign in as an administrator?</p><p>Your delivery profile will stay signed in.</p><div class="profile-actions"><button id="adminProceedBtn" class="profile-primary" type="button">Sign in as admin</button><button id="adminDismissBtn" type="button">Not now</button></div></div>
+  <form id="adminLoginForm" hidden>
+    <label for="adminUsername">Admin username</label><input id="adminUsername" autocomplete="username" autocapitalize="none" spellcheck="false" value="Admin" required>
+    <label for="adminPassword">Password</label><input id="adminPassword" type="password" autocomplete="current-password" required minlength="6">
+    <button class="profile-primary" type="submit">Sign in</button>
+  </form>
+  <div id="adminDashboard" hidden>
+    <div class="admin-toolbar"><button id="adminNewBtn" class="profile-primary" type="button">Create profile</button><button id="adminRefreshBtn" type="button">Refresh</button><button id="adminSignOutBtn" type="button">Sign out of admin</button></div>
+    <label for="adminSearch">Find a profile</label><input id="adminSearch" type="search" placeholder="Search usernames" autocomplete="off">
+    <p id="adminCount"></p><div id="adminProfiles"></div>
+    <details class="admin-activity"><summary>Recent admin activity</summary><ol id="adminEvents"></ol></details>
+  </div>
+  <form id="adminEditForm" hidden>
+    <p id="adminEditContext"></p>
+    <label for="adminEditUsername">Username</label><input id="adminEditUsername" required minlength="3" maxlength="30" pattern="[A-Za-z0-9][A-Za-z0-9_-]{2,29}" autocapitalize="none" spellcheck="false" autocomplete="off">
+    <small>3–30 letters, numbers, underscores or hyphens. Capitalization does not matter.</small>
+    <label for="adminEditPassword">New password</label><input id="adminEditPassword" type="password" minlength="6" autocomplete="new-password">
+    <small id="adminPasswordHelp">At least 6 characters. No other password rules. Existing passwords cannot be viewed.</small>
+    <div class="profile-actions"><button id="adminSaveBtn" class="profile-primary" type="submit">Save profile</button><button id="adminCancelEditBtn" type="button">Back to profiles</button></div>
+    <section id="adminAccessControls" hidden><h3>Account access</h3><p id="adminAccessHelp"></p><button id="adminToggleAccessBtn" type="button">Disable sign-in</button>
+      <details class="admin-remove"><summary>Remove this profile</summary><p>Removes the login permanently. Delivery records and history are kept. Reassign this profile’s work areas before removing it.</p><label for="adminRemoveConfirm">Type the username to confirm</label><input id="adminRemoveConfirm" autocomplete="off"><button id="adminRemoveBtn" type="button">Remove profile permanently</button></details>
+    </section>
+  </form>
+  <p id="adminStatus" role="status" aria-live="polite"></p>
+</dialog>
+
 <dialog id="workAreasDialog" class="profile-dialog" aria-labelledby="workAreasTitle">
   <div class="profile-heading"><h2 id="workAreasTitle">Profile work areas</h2><button id="closeWorkAreasBtn" type="button">Close</button></div>
   <p id="workAreasHelp"></p>
@@ -685,7 +713,7 @@
 </dialog>
 
 <script src="profile-field-mapping.js?v=20261012-delivery-ease" defer></script>
-<script src="app.js?v=20261013-work-areas-ease" defer></script>
+<script src="app.js?v=20261013-profile-admin" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">

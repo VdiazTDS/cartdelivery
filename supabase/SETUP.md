@@ -4,7 +4,9 @@ The app uses Supabase Auth, PostgreSQL and Storage. Excel is an immutable import
 
 ## Current deployment
 
-Project: `lffazhbwvorwxineklsy` (`VdiazTDS's Project`). The first migration `202610100001_profile_workbooks.sql` is installed; **do not run it again**. Email/password signup is enabled, email confirmation is disabled for username aliases, and passwords require eight characters.
+Project: `lffazhbwvorwxineklsy` (`VdiazTDS's Project`). All seven migrations are installed; **do not run them again**. Email/password signup is enabled, email confirmation is disabled for username aliases, and passwords require six characters with no additional composition rules.
+
+**Admin setup completed October 13, 2026:** `202610130001_profile_admin.sql` is installed and `profile-workbooks` is ACTIVE at version 6, bundling `index.ts`, `data-service.mjs` and `admin-service.mjs`. The requested Admin account was created and granted the server-controlled `cartdelivery_admin` role. A live password sign-in and admin-directory read succeeded. The one shared file, two copies, 5,364 delivery records and 45 storage objects were preserved. Public team reads still pass. Account mutations were tested with local fake Auth/database fixtures; production provisioning created only the requested administrator.
 
 The database replacement migration and updated function were deployed on October 9, 2026, after the initial memory optimization failed in production. The active function bundles only `index.ts` and `data-service.mjs`, with no Excel parser. Tests passed locally; the user's first production import still needs confirmation. Pre-deployment read-only checks found zero registered originals/copies/syncs, zero managed workbook objects, and all 37 legacy storage objects present. Tests have not changed production workbooks. Both migrations are now installed; do not reapply them.
 
@@ -30,7 +32,11 @@ supabase functions deploy profile-workbooks --project-ref lffazhbwvorwxineklsy -
 
 The public-team-views migration adds a read-only function; it does not change records, copies, storage objects or table permissions. Do not revert to the old workbook-based function after database saves: old tables no longer represent current work.
 
-For a fresh project, apply all six migrations in filename order. Enable Email/password signup, disable email confirmation for username aliases, and require eight-character passwords. Review project-wide Auth changes if other apps share the project. Aliases use `<username>@profiles.cartdelivery.invalid` and must not receive mail.
+For a fresh project, apply all seven migrations in filename order. Enable Email/password signup, disable email confirmation for username aliases, and require six-character passwords with no additional composition rules. Review project-wide Auth changes if other apps share the project. Aliases use `<username>@profiles.cartdelivery.invalid` and must not receive mail.
+
+Bootstrap the first administrator through trusted Supabase administration: create the requested alias account, then set `app_metadata.cartdelivery_admin` to boolean `true` for its verified user ID. Merely choosing the username `admin` does not grant privileges. Never put its password or a service key in frontend code, migrations, documentation or test fixtures. Later password resets use the admin UI. The separate browser admin session is memory-only and does not replace the driver's login; use **Sign out of admin** to end it.
+
+Profile renames update shared area labels and revisions. Disable blocks authenticated Edge actions, including existing sessions. Removal uses Auth soft deletion so delivery attribution and saved copies remain; assigned areas must be reassigned first. Audit events record the actor, target, action and whether a password changed, never the password itself. All admin tables/RPCs deny direct browser access.
 
 `verify_jwt = false` is intentional: only `public-list`, `public-original`, `public-rows` and `public-export-source` bypass authentication. These expose ready shared originals, never profile drafts or copy metadata. Public rows require an original-mode request and matching shared revision. Every other action requires `auth.getUser(token)`. The service key stays in Supabase's function environment, never in source or frontend code. Browser roles cannot access managed tables or the RPCs directly. [Deployment reference](https://supabase.com/docs/guides/functions/deploy).
 
@@ -82,10 +88,12 @@ node tests/profile-data.migration.cjs
 node tests/profile-workbooks.browser.cjs
 node tests/work-areas.backend.cjs
 node tests/work-areas.browser.cjs
+node tests/profile-admin.backend.cjs
+node tests/profile-admin.browser.cjs
 node tests/cart-counts.browser.cjs
 node tests/resequence.browser.cjs
 ```
 
 Tests use generated data, local PostgreSQL, fake Auth and intercepted Storage. They cover 5,364-row/36-column imports, whole-route saves/syncs, import retries, stale revisions, ownership, conflicts, migration, pagination, signed uploads, Excel exports and phone/desktop layouts. Never test saves against production storage. The old workbook backend suites support migration fixtures; the active suite is `profile-data.backend.cjs`.
 
-Usernames are lowercase, 3–30 letters/numbers/underscores/hyphens, starting with a letter or number. Supabase stores password hashes; passwords never enter source or application localStorage. Sessions persist in the browser. Administrators reset forgotten passwords through Supabase Auth; do not change alias emails.
+Usernames are lowercase, 3–30 letters/numbers/underscores/hyphens, starting with a letter or number. Supabase stores password hashes; passwords never enter source or application localStorage. Delivery sessions persist in the browser; admin sessions do not. Use the app's admin UI to rename profiles or reset forgotten passwords so role protection and audit information are retained.
