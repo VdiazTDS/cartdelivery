@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261013-phone-maps" />
+  <link rel="stylesheet" href="style.css?v=20261013-compact-header" />
 
   <link rel="icon" href="favicon.ico" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -99,34 +99,120 @@
       <div class="saved-files-guide-step"><span class="saved-files-guide-num">1</span><span><strong>Sign in</strong> with your delivery account</span></div>
       <div class="saved-files-guide-step"><span class="saved-files-guide-num">2</span><span>Choose a file to <strong>continue your work</strong></span></div>
     </div>
-    <div class="map-view-group">
-      <label for="baseMapSelect" class="map-view-label">Map View</label>
-      <select id="baseMapSelect" aria-label="Map View">
-        <option value="streets">Streets (Detailed)</option>
-        <option value="satellite">Satellite (Imagery)</option>
-        <option value="clarity">Satellite (Clarity)</option>
-        <option value="light">Streets (Minimal Light)</option>
-        <option value="dark">Streets (Minimal Dark)</option>
-        <option value="austin">Austin Aerials (Local)</option>
-      </select>
-      <p id="baseMapStatus" role="status" aria-live="polite"></p>
-    </div>
 
+    <section class="sidebar-search" aria-labelledby="sidebarSearchTitle">
+      <h2 id="sidebarSearchTitle" class="sidebar-section-label">Find stops</h2>
+<div class="map-search-container">
+  <input 
+    type="search"
+    id="mapSearchInput" 
+    placeholder="Address or bin number"
+    aria-label="Search stops by address, house number, or bin number"
+    aria-describedby="mapSearchHelp"
+    autocomplete="off" spellcheck="false" enterkeyhint="search"
+  />
+  <button id="mapSearchBtn" type="button">Search</button>
+</div>
+      <details id="searchFiltersSection" class="sidebar-disclosure search-filter-disclosure">
+        <summary>Search filters <span id="searchFiltersHint" class="sidebar-summary-hint">All stops</span></summary>
+        <div class="sidebar-section-body">
+<p id="mapSearchHelp">Try 1234, Oak, or a bin number. Filters also work without typing.</p>
+<div id="searchQuickFilters" class="search-quick-filters" role="group" aria-label="Filter search results">
+  <button type="button" data-search-status="all" aria-pressed="true">All</button>
+  <button type="button" data-search-status="pending" aria-pressed="false">Pending</button>
+  <button type="button" data-search-status="delivered" aria-pressed="false">Delivered</button>
+  <button id="searchMultipleCarts" type="button" aria-pressed="false">Multiple carts</button>
+</div>
+<details id="searchScope" class="search-scope">
+  <summary>Route / day <span id="searchScopeHint">All</span></summary>
+  <div class="search-scope-fields">
+    <label for="searchRouteFilter">Route<select id="searchRouteFilter"><option value="">All routes</option></select></label>
+    <label for="searchDayFilter">Day<select id="searchDayFilter"><option value="">All days</option></select></label>
+  </div>
+</details>
+        </div>
+      </details>
+<div id="searchResultsPanel" class="search-results hidden">
+  <div class="search-results-header">
+    <strong>Search results</strong>
+    <button id="clearSearchResults" type="button">Clear</button>
+  </div>
+  <p id="searchResultsStatus" role="status" aria-live="polite"></p>
+  <p id="searchCartTotals" aria-live="polite"></p>
+  <div id="searchResultsList"></div>
+  <button id="moreSearchResults" type="button" hidden>Show more</button>
+</div>
+    </section>
 
-    
-    
-<details id="workAreasSection" class="filter-group map-overlays">
-  <summary class="filter-header"><strong>Profile work areas</strong></summary>
-  <label class="work-areas-toggle"><input id="workAreasVisible" type="checkbox" checked>Show work areas on map</label>
-  <label class="work-area-filter-label" for="workAreasFilter">Whose areas?</label>
-  <select id="workAreasFilter" disabled><option value="all">All profiles</option></select>
-  <p id="workAreasStatus" role="status" aria-live="polite">Sign in and open a team file or your copy to see work areas.</p>
-  <div id="workAreasLegend" aria-label="Assigned profiles"></div>
-  <button id="manageWorkAreasBtn" type="button" disabled>Manage work areas</button>
-  <button id="prepareWorkAreasBtn" type="button" hidden>Enable work areas for this file</button>
-  <button id="refreshWorkAreasBtn" type="button" disabled>Refresh areas</button>
+    <h2 class="sidebar-section-label">Map &amp; delivery</h2>
+    <details id="mapFiltersSection" class="sidebar-disclosure">
+      <summary>Map filters</summary>
+      <div class="sidebar-section-body">
+<details id="deliveredSection" class="filter-group map-overlays">
+  <summary class="filter-header collapsible-header"><span class="routes-title"><span class="arrow" aria-hidden="true">&#9654;</span><strong>Delivered</strong></span></summary>
+  <div id="deliveredControls"></div>
 </details>
 
+<div class="filter-group">
+  <div class="filter-header collapsible-header" id="routeDayToggle">
+    <div class="routes-title">
+      <span class="arrow">▶</span>
+      <strong>Route + Day Layers</strong>
+    </div>
+    <div class="routes-buttons">
+      <button class="mini-btn" id="routeDayAll">All</button>
+      <button class="mini-btn" id="routeDayNone">None</button>
+    </div>
+  </div>
+
+  <div id="routeDayContent" class="collapsible-content collapsed">
+    <div id="routeDayLayers"></div>
+  </div>
+</div>
+<div class="filter-group">
+
+  <div class="filter-header collapsible-header" id="routesToggle">
+    <div class="routes-title">
+      <span class="arrow">▶</span>
+      <strong>Routes</strong>
+    </div>
+
+    <div class="routes-buttons">
+      <button class="mini-btn" id="routesAll">All</button>
+      <button class="mini-btn" id="routesNone">None</button>
+    </div>
+  </div>
+
+  <div id="routesContent" class="collapsible-content collapsed">
+    <div id="routeCheckboxes"></div>
+  </div>
+
+</div>
+
+
+
+    
+    <div class="filter-group">
+      
+       <div class="filter-header collapsible-header" id="daysToggle">
+    <div class="days-title">
+      <span class="arrow">▶</span>
+      <strong>Days</strong>
+    </div>
+
+    <div class="days-buttons">
+      <button class="mini-btn" id="daysAll">All</button>
+      <button class="mini-btn" id="daysNone">None</button>
+    </div>
+  </div>
+
+  <div id="daysContent" class="collapsible-content collapsed">
+    <div id="dayCheckboxes"></div>
+  </div>
+      
+    </div>
+      </div>
+    </details>
 <div id="deliveryOverlaysSection" class="filter-group map-overlays">
   <div class="delivery-overlay-buttons" role="group" aria-label="Delivery overlays">
     <button id="deliverySequenceDisclosure" type="button" aria-expanded="false" aria-controls="deliveryOverlaysContent"><span class="delivery-disclosure-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2"/><circle cx="18" cy="19" r="2"/><path d="M10 5h6a4 4 0 0 1 0 8H8a3 3 0 0 0 0 6h6"/></svg></span><span>Delivery<br>sequence</span></button>
@@ -185,118 +271,32 @@
 </div>
   </div>
 </div>
-
-<details id="deliveredSection" class="filter-group map-overlays">
-  <summary class="filter-header collapsible-header"><span class="routes-title"><span class="arrow" aria-hidden="true">&#9654;</span><strong>Delivered</strong></span></summary>
-  <div id="deliveredControls"></div>
+<details id="workAreasSection" class="filter-group map-overlays">
+  <summary class="filter-header"><strong>Profile work areas</strong></summary>
+  <label class="work-areas-toggle"><input id="workAreasVisible" type="checkbox" checked>Show work areas on map</label>
+  <label class="work-area-filter-label" for="workAreasFilter">Whose areas?</label>
+  <select id="workAreasFilter" disabled><option value="all">All profiles</option></select>
+  <p id="workAreasStatus" role="status" aria-live="polite">Sign in and open a team file or your copy to see work areas.</p>
+  <div id="workAreasLegend" aria-label="Assigned profiles"></div>
+  <button id="manageWorkAreasBtn" type="button" disabled>Manage work areas</button>
+  <button id="prepareWorkAreasBtn" type="button" hidden>Enable work areas for this file</button>
+  <button id="refreshWorkAreasBtn" type="button" disabled>Refresh areas</button>
 </details>
-
-<div class="filter-group">
-  <div class="filter-header collapsible-header" id="routeDayToggle">
-    <div class="routes-title">
-      <span class="arrow">▶</span>
-      <strong>Route + Day Layers</strong>
+    <details id="mapAppearanceSection" class="sidebar-disclosure">
+      <summary>Map appearance</summary>
+      <div class="sidebar-section-body">
+<div class="map-view-group">
+      <label for="baseMapSelect" class="map-view-label">Map View</label>
+      <select id="baseMapSelect" aria-label="Map View">
+        <option value="streets">Streets (Detailed)</option>
+        <option value="satellite">Satellite (Imagery)</option>
+        <option value="clarity">Satellite (Clarity)</option>
+        <option value="light">Streets (Minimal Light)</option>
+        <option value="dark">Streets (Minimal Dark)</option>
+        <option value="austin">Austin Aerials (Local)</option>
+      </select>
+      <p id="baseMapStatus" role="status" aria-live="polite"></p>
     </div>
-    <div class="routes-buttons">
-      <button class="mini-btn" id="routeDayAll">All</button>
-      <button class="mini-btn" id="routeDayNone">None</button>
-    </div>
-  </div>
-
-  <div id="routeDayContent" class="collapsible-content collapsed">
-    <div id="routeDayLayers"></div>
-  </div>
-</div>
-
-    
-<div class="map-search-container">
-  <input 
-    type="search"
-    id="mapSearchInput" 
-    placeholder="Address or bin number"
-    aria-label="Search stops by address, house number, or bin number"
-    aria-describedby="mapSearchHelp"
-    autocomplete="off" spellcheck="false" enterkeyhint="search"
-  />
-  <button id="mapSearchBtn" type="button">Search</button>
-</div>
-<p id="mapSearchHelp">Try 1234, Oak, or a bin number. Filters also work without typing.</p>
-<div id="searchQuickFilters" class="search-quick-filters" role="group" aria-label="Filter search results">
-  <button type="button" data-search-status="all" aria-pressed="true">All</button>
-  <button type="button" data-search-status="pending" aria-pressed="false">Pending</button>
-  <button type="button" data-search-status="delivered" aria-pressed="false">Delivered</button>
-  <button id="searchMultipleCarts" type="button" aria-pressed="false">Multiple carts</button>
-</div>
-<details id="searchScope" class="search-scope">
-  <summary>Route / day <span id="searchScopeHint">All</span></summary>
-  <div class="search-scope-fields">
-    <label for="searchRouteFilter">Route<select id="searchRouteFilter"><option value="">All routes</option></select></label>
-    <label for="searchDayFilter">Day<select id="searchDayFilter"><option value="">All days</option></select></label>
-  </div>
-</details>
-<div id="searchResultsPanel" class="search-results hidden">
-  <div class="search-results-header">
-    <strong>Search results</strong>
-    <button id="clearSearchResults" type="button">Clear</button>
-  </div>
-  <p id="searchResultsStatus" role="status" aria-live="polite"></p>
-  <p id="searchCartTotals" aria-live="polite"></p>
-  <div id="searchResultsList"></div>
-  <button id="moreSearchResults" type="button" hidden>Show more</button>
-</div>
-    
-  <div class="filter-group">
-
-  <div class="filter-header collapsible-header" id="routesToggle">
-    <div class="routes-title">
-      <span class="arrow">▶</span>
-      <strong>Routes</strong>
-    </div>
-
-    <div class="routes-buttons">
-      <button class="mini-btn" id="routesAll">All</button>
-      <button class="mini-btn" id="routesNone">None</button>
-    </div>
-  </div>
-
-  <div id="routesContent" class="collapsible-content collapsed">
-    <div id="routeCheckboxes"></div>
-  </div>
-
-</div>
-
-
-
-    
-    <div class="filter-group">
-      
-       <div class="filter-header collapsible-header" id="daysToggle">
-    <div class="days-title">
-      <span class="arrow">▶</span>
-      <strong>Days</strong>
-    </div>
-
-    <div class="days-buttons">
-      <button class="mini-btn" id="daysAll">All</button>
-      <button class="mini-btn" id="daysNone">None</button>
-    </div>
-  </div>
-
-  <div id="daysContent" class="collapsible-content collapsed">
-    <div id="dayCheckboxes"></div>
-  </div>
-      
-    </div>
-
-
-    
-
-
-
-
-
-
-    
 <details id="mapOverlaysSection" class="filter-group map-overlays">
   <summary class="filter-header collapsible-header"><span class="routes-title"><span class="arrow" aria-hidden="true">&#9654;</span><strong>Map overlays</strong></span></summary>
   <div id="mapOverlaysContent" class="map-overlay-content">
@@ -322,8 +322,9 @@
 </div>
   </div>
 </details>
-
-    <div class="filter-group">
+      </div>
+    </details>
+<div class="filter-group">
       <div class="filter-header collapsible-header" id="statsToggle">
         <div class="routes-title">
           <span class="arrow">▶</span>
@@ -334,8 +335,6 @@
         <ul id="statsList"></ul>
       </div>
     </div>
-   
-
 
     <button id="resetMapBtn" class="primary-btn" aria-label="Reset map and clear selections">
       <span class="reset-map-icon" aria-hidden="true"></span>
@@ -353,8 +352,6 @@
         <div id="toolsMenuListMobile" class="tools-menu-list"></div>
       </div>
     </div>
-    <div class="sidebar-scroll-spacer" aria-hidden="true"></div>
-    <div class="sidebar-scroll-spacer" aria-hidden="true"></div>
 
 
 
@@ -409,20 +406,25 @@
 </div> <!-- end app-container -->
 <!-- Phone controls stay below the map. Shared actions move to the sidebar on desktop. -->
 <section id="deliveryControls" class="delivery-controls" aria-label="Delivery controls">
-  <div class="delivery-controls-main">
-    <button id="mobileSelectionBtn" data-action="select" class="delivery-action primary-btn" type="button" aria-pressed="false">Select Stops</button>
+  <div class="delivery-controls-main" hidden>
     <button id="completeStopsBtnMobile" data-action="deliver" class="delivery-action primary-btn" type="button" disabled>Deliver 1 cart per stop</button>
   </div>
   <div id="deliverySaveStatus" class="delivery-save-status" role="status" aria-live="polite" aria-atomic="true"></div>
   <div id="deliveryQuickActions" class="delivery-quick-actions">
     <button id="mobileMenuBtn" data-action="menu" class="delivery-action primary-btn" type="button" aria-expanded="false">Menu</button>
     <button id="locateMeBtn" data-action="locate" class="delivery-action primary-btn" type="button" aria-label="Locate me and follow my position" aria-pressed="false">Locate</button>
+    <button id="mobileSelectionBtn" data-action="select" class="delivery-action primary-btn" type="button" aria-pressed="false">Select Stops</button>
     <button id="copyLocationBtn" data-action="copy" class="delivery-action primary-btn" type="button" aria-haspopup="dialog">Copy Location</button>
     <button id="deliveryMoreBtn" data-action="more" class="delivery-action primary-btn" type="button" aria-expanded="false" aria-controls="deliveryMoreActions">More</button>
   </div>
   <div id="deliveryMoreActions" class="delivery-more-actions" hidden></div>
   <button id="recordCartsBtn" data-action="carts" class="delivery-action primary-btn" type="button" aria-haspopup="dialog" disabled>Record carts</button>
   <button id="loadLogBtn" data-action="loads" class="delivery-action primary-btn" type="button" aria-haspopup="dialog">Truck / Trailer Loads</button>
+</section>
+
+<section id="mobileStopDetails" role="dialog" aria-modal="false" aria-labelledby="mobileStopDetailsTitle" hidden>
+  <div class="mobile-stop-heading"><h2 id="mobileStopDetailsTitle">Stop details</h2><button id="closeMobileStopDetails" type="button" aria-label="Close stop details">Close</button></div>
+  <div class="mobile-stop-content"></div>
 </section>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -787,7 +789,7 @@
 </dialog>
 
 <script src="profile-field-mapping.js?v=20261012-delivery-ease" defer></script>
-<script src="app.js?v=20261013-phone-maps" defer></script>
+<script src="app.js?v=20261013-phone-flow" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">

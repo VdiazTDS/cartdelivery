@@ -208,7 +208,7 @@ const server = http.createServer((req, res) => {
     while (!releaseSave) await new Promise(resolve => setTimeout(resolve, 10));
     delaySave = false; releaseSave();
     await a.waitForFunction(() => !deliverySaveInProgress && _currentRows[0].del_qty === 1);
-    assert.match(await a.locator('#routeContext').textContent(), /2 stops waiting to sync/);
+    assert.match(await a.locator('#routeContext').textContent(), /2 stops awaiting sync/);
     await deliver(b, [1, 2]); await b.waitForFunction(() => !deliverySaveInProgress && _currentRows[1].del_qty === 1);
     await deliver(b, [2]); await b.waitForFunction(() => !deliverySaveInProgress && _currentRows[2].del_qty === 2);
     await a.locator('#profileWorkspaceBtn').click();
@@ -247,7 +247,7 @@ const server = http.createServer((req, res) => {
     await a.evaluate(() => { document.getElementById('commitProfileShareBtn').click(); document.getElementById('commitProfileShareBtn').click(); });
     await a.waitForFunction(() => !profileState.busy && profileState.workspace.pending === 0);
     assert.match(await a.locator('#profileLastSync').textContent(), /Last sync:/);
-    assert.match(await a.locator('#routeContext').textContent(), /Nothing waiting to sync/);
+    assert.match(await a.locator('#routeContext').textContent(), /Nothing awaiting sync/);
     assert.equal(syncRequests, 2, 'Only the initial request and its lost-response retry are sent');
     assert.equal((await fx.pg.query('select count(*)::int n from cd_data_history')).rows[0].n, 1, 'Lost response retry syncs once');
     await review(b);
@@ -537,15 +537,17 @@ const server = http.createServer((req, res) => {
     for (const width of [440, 1440]) {
       await a.setViewportSize({ width, height: 956 });
       await a.evaluate(() => Object.values(routeDayGroups).flatMap(group => group.layers).find(marker => marker._rowRef.ID === 0).openPopup());
-      await a.locator('.delivery-stop-card').waitFor();
-      await a.waitForFunction(() => Number(getComputedStyle(document.querySelector('.leaflet-popup')).opacity) === 1);
-      assert.match(await a.locator('.delivery-stop-card').textContent(), /Bin #: 000/);
-      assert.match(await a.locator('.delivery-stop-remaining').textContent(), /3 carts remaining/);
+      const stopCard = a.locator(width <= 900 ? '#mobileStopDetails .delivery-stop-card' : '.leaflet-popup .delivery-stop-card');
+      await stopCard.waitFor();
+      if (width <= 900) await a.waitForFunction(() => !document.querySelector('.leaflet-popup'));
+      if (width > 900) await a.waitForFunction(() => Number(getComputedStyle(document.querySelector('.leaflet-popup')).opacity) === 1);
+      assert.match(await stopCard.textContent(), /Bin #: 000/);
+      assert.match(await stopCard.locator('.delivery-stop-remaining').textContent(), /3 carts remaining/);
       for (const light of [false, true]) {
         await a.evaluate(light => document.body.classList.toggle('sun-mode', light), light);
         await a.screenshot({ path: path.join(root, `local-artifacts/delivery-stop-${width}-${light ? 'light' : 'dark'}.png`) });
         assert(await a.locator('.stop-delivery-action').evaluate(el => el.getBoundingClientRect().height >= 44));
-        assert(await a.locator('.leaflet-popup-close-button').evaluate(el => el.getBoundingClientRect().height >= 44));
+        assert(await a.locator(width <= 900 ? '#closeMobileStopDetails' : '.leaflet-popup-close-button').evaluate(el => el.getBoundingClientRect().height >= 44));
         assert(await a.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       }
     }
@@ -560,7 +562,7 @@ const server = http.createServer((req, res) => {
     fx.state.failCommit = false;
     await a.locator('#saveCartCountsBtn').click();
     await a.waitForFunction(() => !deliverySaveInProgress && _currentRows[0].del_qty === 1);
-    assert.match(await a.locator('#routeContext').textContent(), /1 stop waiting to sync/);
+    assert.match(await a.locator('#routeContext').textContent(), /1 stop awaiting sync/);
     await a.setViewportSize({ width: 440, height: 956 });
     await a.waitForFunction(() => document.getElementById('recordCartsBtn').parentElement.id === 'deliveryMoreActions');
     assert.equal(await a.locator('#recordCartsBtn').evaluate(el => el.parentElement.id), 'deliveryMoreActions');

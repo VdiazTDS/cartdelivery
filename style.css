@@ -5487,3 +5487,225 @@ body #helpDialog .help-scenarios button { flex: 1; min-width: 0; padding: 10px 5
   .help-visual-flow .help-tile .help-icon { grid-row: 1 / span 2; }
   .help-flow-link { transform: none; }
 }
+
+/* Sidebar groups keep everyday search ahead of optional map settings. */
+body .sidebar {
+  --sidebar-ink: #e1e9f2;
+  --sidebar-muted: #9fb1c5;
+  --sidebar-edge: #354354;
+  gap: 0;
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+}
+body.sun-mode .sidebar {
+  --sidebar-ink: #233b54;
+  --sidebar-muted: #5b6e82;
+  --sidebar-edge: #dce3eb;
+  background: #f8fafc !important;
+}
+.sidebar > * { flex-shrink: 0; }
+body .sidebar .sidebar-section-label {
+  margin: 20px 8px 10px;
+  color: var(--sidebar-muted) !important;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.sidebar-search { min-width: 0; }
+.sidebar .sidebar-disclosure { border-bottom: 1px solid var(--sidebar-edge); }
+.sidebar .sidebar-disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  box-sizing: border-box;
+  padding: 10px 8px;
+  list-style: none;
+  color: var(--sidebar-ink) !important;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sidebar .sidebar-disclosure > summary::-webkit-details-marker { display: none; }
+.sidebar .sidebar-disclosure > summary::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  margin-left: auto;
+  border-right: 1.5px solid var(--sidebar-muted);
+  border-bottom: 1.5px solid var(--sidebar-muted);
+  transform: rotate(45deg);
+}
+.sidebar .sidebar-disclosure[open] > summary::after { transform: rotate(225deg); }
+.sidebar .sidebar-disclosure > summary:focus-visible { outline: 3px solid #e6ad22; outline-offset: -3px; border-radius: 6px; }
+body .sidebar .sidebar-summary-hint {
+  min-width: 0;
+  flex: 1;
+  color: var(--sidebar-muted) !important;
+  font-size: 12px;
+  font-weight: 400;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.sidebar .search-filter-disclosure > summary { min-height: 44px; font-size: 12px; }
+.sidebar .sidebar-section-body { display: grid; gap: 8px; padding: 4px 8px 12px; }
+body .sidebar .filter-group {
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0;
+  box-shadow: none;
+}
+body .sidebar > .filter-group { border-bottom: 1px solid var(--sidebar-edge) !important; padding: 4px 8px; }
+body .sidebar .filter-header strong { color: var(--sidebar-ink) !important; font-weight: 600; }
+.sidebar .sidebar-section-body .filter-header { min-height: 44px; margin: 0; }
+body .sidebar #deliveryOverlaysSection { padding: 4px 0; border-radius: 0; }
+.sidebar .delivery-overlay-buttons { background: transparent; padding: 0; gap: 0; }
+body .sidebar .delivery-overlay-buttons .delivery-disclosure-icon { background: transparent; }
+body .sidebar .delivery-overlay-buttons button { min-height: 52px; padding: 6px 8px; }
+body .sidebar #openFileManagerBtn { background: var(--tool-bg) !important; box-shadow: none; }
+body .sidebar #openFileManagerBtn .file-manager-title { color: var(--sidebar-ink) !important; }
+body .sidebar #resetMapBtn {
+  margin-top: 16px;
+  min-height: 48px;
+  background: transparent !important;
+  border: 0;
+  box-shadow: none;
+  color: var(--sidebar-ink) !important;
+}
+body .sidebar #resetMapBtn .reset-map-title { color: var(--sidebar-ink) !important; font-weight: 500; }
+body .sidebar #resetMapBtn .reset-map-subtitle { display: none; }
+body .sidebar #resetMapBtn .reset-map-icon { background: transparent; color: var(--sidebar-muted) !important; }
+body .sidebar #openHelpBtn,
+body .sidebar #toolsMenuBtnMobile {
+  justify-content: flex-start;
+  min-height: 48px;
+  padding: 8px 12px;
+  margin: 0;
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--sidebar-ink) !important;
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 400;
+  text-align: left;
+}
+body .sidebar #openHelpBtn > span { color: var(--sidebar-muted) !important; }
+
+/* Phone delivery flow: thumb controls, a stop sheet, and fixed dialog actions. */
+#mobileStopDetails[hidden], #deliveryControls .delivery-controls-main[hidden] { display: none !important; }
+#mobileStopDetails { display: none; }
+.phone-dialog-body, .phone-dialog-footer { display: contents; }
+body header #reviewSaveStatusBtn {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px;
+  padding: 5px 0; margin: 0; border: 0; border-radius: 4px; background: transparent;
+  color: inherit; font: inherit; font-size: 12px; line-height: 1.4; text-align: left; cursor: pointer;
+}
+body header #reviewSaveStatusBtn:not(:disabled)::after { content: '›'; margin-left: auto; font-size: 22px; }
+body header #reviewSaveStatusBtn:disabled { cursor: default; opacity: 1; }
+body header #reviewSaveStatusBtn:focus-visible { outline: 3px solid #e6ad22; outline-offset: 2px; }
+@media (max-width: 900px) {
+  body #deliveryControls {
+    --tool-bg: #27394b; --tool-ink: #f4f8fc; --tool-edge: #70869a;
+    max-height: calc(var(--phone-viewport-height, 100dvh) - var(--mobile-header-height, 100px));
+    overflow-y: auto;
+  }
+  body.sun-mode #deliveryControls { --tool-bg: #f1f5f9; --tool-ink: #18334c; --tool-edge: #a5b7c8; }
+  body #deliveryControls .delivery-action:not([data-action="select"]):not([data-action="deliver"]):not([data-action="carts"]) {
+    --action-bg: var(--tool-bg); --action-ink: var(--tool-ink); --action-edge: var(--tool-edge);
+  }
+  body #deliveryControls .delivery-action[data-action="select"] {
+    --action-bg: #1e4da0; --action-ink: #fff; --action-edge: #81aff5;
+  }
+  body.sun-mode #deliveryControls .delivery-action[data-action="select"] {
+    --action-bg: #e5efff; --action-ink: #163f84; --action-edge: #6992cb;
+  }
+  body #deliveryControls .delivery-action[data-action="select"][aria-pressed="true"] {
+    --action-bg: #1d4ed8; --action-ink: #fff; --action-edge: #81aff5;
+  }
+  body #deliveryControls .delivery-action:is([data-action="deliver"], [data-action="carts"]):not(:disabled) {
+    --action-bg: #176946; --action-ink: #fff; --action-edge: #479b70;
+  }
+  body #deliveryControls #locateMeBtn[aria-pressed="true"] { box-shadow: inset 0 -3px 0 currentColor !important; }
+  body #deliveryControls .delivery-controls-main { grid-template-columns: 1fr; margin-bottom: 8px; }
+  body #deliveryControls .delivery-quick-actions { grid-template-columns: 1fr 1fr 1.3fr 1fr; margin-top: 0; gap: 6px; }
+  body #deliveryQuickActions > .delivery-action,
+  body .delivery-controls-main #completeStopsBtnMobile { min-height: 52px; font-size: 13px; }
+  body #deliveryQuickActions > .delivery-action { padding: 4px 6px; }
+  body #deliveryControls #deliverySaveStatus[data-state="saved"] { display: none; }
+  body #deliveryControls #deliverySaveStatus:not(:empty) { padding: 8px 2px; font-size: 13px; }
+  body #mobileStopDetails {
+    display: flex; flex-direction: column; position: fixed; z-index: 2400;
+    left: max(8px, env(safe-area-inset-left)); right: max(8px, env(safe-area-inset-right));
+    bottom: calc(var(--mobile-controls-height, 80px) + 8px);
+    max-height: min(55dvh, calc(var(--phone-viewport-height, 100dvh) - var(--mobile-header-height, 100px) - var(--mobile-controls-height, 80px) - 16px));
+    border: 1px solid #60798e; border-radius: 20px; background: #172736; color: #edf5ff;
+    box-shadow: 0 -5px 24px #0003; overflow: hidden;
+  }
+  body.sun-mode #mobileStopDetails { background: #fff; color: #172b43; border-color: #b9cbd9; }
+  .mobile-stop-heading { display: flex; justify-content: space-between; align-items: center; padding: 4px 12px 0 18px; flex-shrink: 0; }
+  .mobile-stop-heading h2 { margin: 0; font-size: 12px; font-weight: 600; }
+  body #closeMobileStopDetails { min-width: 48px; min-height: 48px; padding: 8px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 14px; }
+  .mobile-stop-content { padding: 0 18px 12px; overflow-y: auto; overscroll-behavior: contain; }
+  #mobileStopDetails .delivery-stop-card { color: inherit; gap: 6px; font-size: 15px; }
+  #mobileStopDetails .delivery-stop-address { padding: 0; font-size: 20px; color: #8ec7ff; }
+  body.sun-mode #mobileStopDetails .delivery-stop-address { color: #174e89; }
+  #mobileStopDetails .delivery-stop-remaining { color: #8be2b2; }
+  body.sun-mode #mobileStopDetails .delivery-stop-remaining { color: #176946; }
+  #mobileStopDetails .stop-delivery-action { order: 1; min-height: 52px; position: sticky; bottom: 0; margin-bottom: 0; flex-shrink: 0; }
+  #mobileStopDetails summary { min-height: 48px; font-size: 13px; }
+  #mobileStopDetails :focus-visible { outline: 3px solid #e6ad22; outline-offset: -3px; }
+  body .phone-dialog-frame[open], body #fileManagerModal .phone-dialog-frame {
+    display: flex; flex-direction: column; box-sizing: border-box; overflow: hidden;
+    padding: 0; max-height: calc(var(--phone-viewport-height, 100dvh) - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    width: calc(100% - 16px - env(safe-area-inset-left) - env(safe-area-inset-right));
+    border-radius: 18px;
+  }
+  body dialog.phone-dialog-frame[open] {
+    position: fixed; top: calc(var(--phone-viewport-top, 0px) + 8px + env(safe-area-inset-top)); bottom: auto; margin: 0 auto;
+  }
+  body .phone-dialog-frame > :is(.profile-heading, .load-log-heading, .saved-files-heading) {
+    position: static; flex: 0 0 auto; padding: 12px 16px; margin: 0; border-bottom: 1px solid var(--profile-border, #70869a);
+  }
+  body .phone-dialog-frame > .phone-dialog-body { display: block; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px; }
+  body .phone-dialog-frame > .phone-dialog-footer { display: block; flex: 0 0 auto; padding: 12px 16px max(12px, env(safe-area-inset-bottom)); border-top: 1px solid var(--profile-border, #70869a); }
+  body .phone-dialog-frame .phone-dialog-footer > :is(.profile-actions, .cart-count-footer) { position: static; margin: 0; padding: 0; border: 0; background: transparent; }
+  body .phone-dialog-frame .phone-dialog-footer > button { width: 100%; }
+  body .phone-dialog-frame .phone-dialog-footer button,
+  body .phone-dialog-frame > :is(.profile-heading, .load-log-heading) button { min-height: 48px; }
+  .phone-dialog-frame .phone-dialog-body > .route-context { position: static; margin: 0 0 12px; box-shadow: none; }
+  body .phone-dialog-frame .profile-scroll,
+  body .phone-dialog-frame :is(#cartCountEntries, #cartCountPreview) { max-height: none; overflow: visible; }
+  body #fileManagerModal { top: var(--phone-viewport-top, 0px); bottom: auto; height: var(--phone-viewport-height, 100dvh); box-sizing: border-box; padding: 8px 0; }
+  body #fileManagerModal #savedFiles { max-height: none; overflow: visible; flex-shrink: 0; }
+}
+
+/* The filename and sync status share one 44px tap area on phones. */
+@media (max-width: 900px) {
+  body > header { padding-bottom: 4px !important; }
+  header .header-workspace > #routeContext {
+    position: relative;
+    grid-template-rows: 18px auto;
+    gap: 0 8px;
+    margin-top: 4px;
+    padding: 2px 2px 0;
+  }
+  header .header-workspace > #routeContext :is(.route-context-file, strong) {
+    position: relative;
+    z-index: 1;
+    align-self: start;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  body header .header-workspace > #routeContext #reviewSaveStatusBtn {
+    grid-row: 1 / 3;
+    grid-column: 1 / -1;
+    box-sizing: border-box;
+    min-height: 44px;
+    padding: 20px 0 3px;
+    font-size: 11px;
+  }
+  body header #reviewSaveStatusBtn:not(:disabled)::after { line-height: 16px; }
+}

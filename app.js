@@ -40,6 +40,7 @@ let resequenceBusy = false;
 let optimoLocationPicker = null;
 let workAreas = null;
 let selectedPendingStopCount = 0;
+let mobileStopMarker = null;
 let resetAddressSearch = () => {};
 let refreshAddressSearch = () => {};
 let refreshStreetLabels = () => {};
@@ -55,7 +56,9 @@ function updateDeliveryButtons() {
   ["completeStopsBtn", "completeStopsBtnMobile"].forEach(id => {
     const button = document.getElementById(id);
     if (!button) return;
-    button.textContent = label;
+    button.textContent = id === 'completeStopsBtnMobile' && !deliverySaveInProgress
+      ? `${perRecord ? 'Enter carts delivered' : 'Deliver 1 cart each'} · ${count} ${count === 1 ? 'stop' : 'stops'}` : label;
+    if (id === 'completeStopsBtnMobile') button.parentElement.hidden = count === 0 && !deliverySaveInProgress;
     button.disabled = readOnly || deliverySaveInProgress || resequenceBusy || count === 0;
     button.setAttribute("aria-busy", String(deliverySaveInProgress));
     button.title = !count ? "Select undelivered stops on the map first" : perRecord
@@ -632,7 +635,7 @@ function copySaveSummary() {
   if (deliverySaveInProgress) return 'Saving to my copy…';
   if (profileElement('deliverySaveStatus')?.dataset.state === 'error') return 'Save not confirmed · Retry or reload my copy';
   const count = profileState.workspace?.pending || 0;
-  return `Saved · ${count ? `${count} ${count === 1 ? 'stop' : 'stops'} waiting to sync` : 'Nothing waiting to sync'}`;
+  return `Saved to your copy · ${count ? `${count} ${count === 1 ? 'stop' : 'stops'} awaiting sync` : 'Nothing awaiting sync'}`;
 }
 function lastSyncSummary() {
   const workspace = profileState.workspace;
@@ -698,6 +701,8 @@ function renderProfileState() {
   profileElement("profileTitle").textContent = user ? "My delivery work" : profileState.authMode === "create" ? "Create your account" : "Welcome back";
   profileElement("profileAuthForm").hidden = Boolean(user);
   profileElement("profileSignedIn").hidden = !user;
+  if (profileElement('profileAuthActions')) profileElement('profileAuthActions').hidden = Boolean(user);
+  if (profileElement('profileWorkActions')) profileElement('profileWorkActions').hidden = !user;
   profileElement("profileAccountName").textContent = username;
   profileElement("profileFileSummary").textContent = workspace?.name || "Open a file to start your day";
   profileElement("profileWorkspaceLabel").textContent = !workspace ? "GET STARTED" : workspace.mode === "original" ? user ? "TEAM EXCEL" : "TEAM EXCEL · VIEW ONLY" : "YOUR SAVED COPY";
@@ -753,6 +758,11 @@ function renderRouteContext() {
         ? user ? "Deliveries view only · Shared work areas editable" : "View only · Sign in to manage work areas"
         : copySaveSummary();
       banner.querySelector('.route-context-help').title = main ? '' : lastSyncSummary();
+      const status = banner.querySelector('.route-context-help');
+      if (status.tagName === 'BUTTON') {
+        status.disabled = main || !workspace || !user || profileState.busy || deliverySaveInProgress;
+        status.setAttribute('aria-label', `${status.textContent}${main ? '' : '. Open sync review'}`);
+      }
     }
   });
 }
@@ -762,6 +772,17 @@ function setupRouteContext() {
     const banner = template.cloneNode(true);
     banner.removeAttribute("id"); banner.removeAttribute("role");
     container.prepend(banner);
+  });
+  const status = template.querySelector('.route-context-help');
+  const review = document.createElement('button');
+  review.type = 'button'; review.className = status.className;
+  review.id = 'reviewSaveStatusBtn'; review.setAttribute('aria-haspopup', 'dialog');
+  status.replaceWith(review);
+  review.addEventListener('click', async () => {
+    if (profileState.busy || deliverySaveInProgress || profileState.workspace?.mode !== 'copy') return;
+    closeMobileMenu(); closeMobileStopDetails();
+    renderProfileState(); profileElement('profileDialog').showModal();
+    await reviewProfileSync();
   });
   renderRouteContext();
 }
@@ -2459,6 +2480,7 @@ map.on("click", event => {
   if (workAreas?.mapActive) return;
   if (optimoLocationPicker) { setOptimoPickPoint(event.latlng); return; }
   if (event.layer) return;
+  closeMobileStopDetails();
   if (mobileStopSelectionMode && window.innerWidth <= 900) {
     handleMobileStopTap(event.latlng);
   }
@@ -2470,6 +2492,10 @@ map.on("popupopen", event => {
     requestAnimationFrame(() => {
       if (mobileStopSelectionMode && window.innerWidth <= 900) map.closePopup();
     });
+  } else if (window.innerWidth <= 900 && event.popup._source?._rowRef) {
+    const marker = event.popup._source._stopMarker || event.popup._source;
+    map.closePopup(event.popup);
+    openMobileStopDetails(marker);
   }
 });
 
@@ -2914,6 +2940,7 @@ function applyFilters() {
   updateUndoButtonState();
   updateStats();
   refreshAddressSearch();
+  refreshMobileStopDetails();
   scheduleSequenceRender();
   rememberDeliveryView();
 }
@@ -4091,6 +4118,31 @@ function stopDirectionsAddressLink(row) {
   address.onclick = event => { event.preventDefault(); event.stopPropagation(); showStopDirections(row, address); };
   return address;
 }
+function closeMobileStopDetails(restoreFocus = false) {
+  const sheet = document.getElementById('mobileStopDetails');
+  if (!sheet) return;
+  sheet.hidden = true;
+  mobileStopMarker = null;
+  sheet.querySelector('.mobile-stop-content').replaceChildren();
+  if (restoreFocus) document.getElementById('map').focus({ preventScroll: true });
+}
+
+function refreshMobileStopDetails() {
+  if (!mobileStopMarker) return;
+  const content = document.querySelector('#mobileStopDetails .mobile-stop-content');
+  const expanded = content.querySelector('details')?.open;
+  content.replaceChildren(deliveryStopCard(mobileStopMarker._rowRef, mobileStopMarker));
+  content.querySelector('details').open = Boolean(expanded);
+}
+
+function openMobileStopDetails(marker) {
+  if (window.innerWidth > 900 || !window._currentRows?.includes(marker._rowRef)) return;
+  mobileStopMarker = marker;
+  refreshMobileStopDetails();
+  document.getElementById('mobileStopDetails').hidden = false;
+  document.getElementById('closeMobileStopDetails').focus({ preventScroll: true });
+}
+
 function deliveryStopCard(row, marker = null) {
   const card = document.createElement('div'); card.className = 'delivery-stop-card';
   const line = (tag, text, className = '') => {
@@ -4105,8 +4157,9 @@ function deliveryStopCard(row, marker = null) {
   if (marker && profileState.workspace?.mode === 'copy') {
     const button = line('button', remaining === 0 ? 'Delivery complete' : 'Record delivery', 'stop-delivery-action');
     button.type = 'button';
-    button.dataset.unavailable = String(remaining === 0 || remaining === null);
-    button.disabled = !profileState.user || profileState.busy || deliverySaveInProgress || resequenceBusy || remaining === 0 || remaining === null;
+    button.dataset.unavailable = String(remaining === 0 || remaining === null || !map.hasLayer(marker));
+    button.disabled = !profileState.user || profileState.busy || deliverySaveInProgress || resequenceBusy || button.dataset.unavailable === 'true';
+    if (!map.hasLayer(marker)) line('small', 'Show this stop in Map filters to record a delivery.');
     button.onclick = () => recordSingleStop(marker);
   } else if (profileState.workspace?.mode === 'original') line('small', 'Team Excel · View only');
   const details = document.createElement('details');
@@ -4118,6 +4171,7 @@ function deliveryStopCard(row, marker = null) {
 }
 
 function processExcelBuffer(buffer, parsedWorkbook = null, confirmedRows = null) {
+  closeMobileStopDetails();
   const wb = parsedWorkbook || XLSX.read(new Uint8Array(buffer), { type: "array", cellStyles: true, bookVBA: true });
   const ws = wb.Sheets[wb.SheetNames[0]];
 
@@ -4168,7 +4222,7 @@ if (status === "delivered") {
     if (!routeDayGroups[key]) routeDayGroups[key] = { layers: [] };
 
 const marker = createMarker(lat, lon, symbol)
-  .bindPopup(() => deliveryStopCard(row, marker), { maxWidth: 300, minWidth: 220 })
+  .bindPopup(() => deliveryStopCard(row, marker), { maxWidth: 300, minWidth: 220, autoPan: window.innerWidth > 900 })
   .addTo(map);
 // ===== STREET LABEL (ZOOM-BASED) =====
 const streetNumber = row["CSADR#"] ? String(row["CSADR#"]).trim() : "";
@@ -4915,19 +4969,31 @@ function placeDeliveryControls() {
   const loadLogBtn = document.getElementById("loadLogBtn");
   const recordCartsBtn = document.getElementById("recordCartsBtn");
   const profileButton = document.getElementById('profileWorkspaceBtn');
+  const selectBtn = document.getElementById('mobileSelectionBtn');
 
   if (window.innerWidth <= 900) {
     document.querySelector('.header-top').append(profileButton);
     quickActions.insertBefore(locateBtn, moreBtn);
-    quickActions.insertBefore(copyLocationBtn, moreBtn);
+    quickActions.insertBefore(selectBtn, moreBtn);
     moreActions.append(clearBtn, undoBtn, streetLabel, refreshBtn);
-    moreActions.prepend(recordCartsBtn, loadLogBtn);
+    moreActions.prepend(copyLocationBtn, recordCartsBtn, loadLogBtn);
     dock.insertBefore(saveStatus, quickActions);
   } else {
+    closeMobileStopDetails();
     document.querySelector('.header-workspace').append(profileButton);
     selectionBox.insertBefore(clearBtn, desktopContainer);
     desktopContainer.append(locateBtn, copyLocationBtn, recordCartsBtn, completeBtn, saveStatus, undoBtn, streetLabel, loadLogBtn);
     headerContainer.appendChild(refreshBtn);
+    quickActions.insertBefore(selectBtn, moreBtn);
+  }
+  Object.values(routeDayGroups).forEach(group => group.layers.forEach(marker => {
+    if (marker.getPopup()) marker.getPopup().options.autoPan = window.innerWidth > 900;
+  }));
+  const openPopup = map._popup;
+  if (window.innerWidth <= 900 && openPopup?.isOpen() && openPopup._source?._rowRef) {
+    const marker = openPopup._source._stopMarker || openPopup._source;
+    map.closePopup();
+    if (!mobileStopSelectionMode && !workAreas?.mapActive && !optimoLocationPicker) openMobileStopDetails(marker);
   }
   updateDeliveryButtons();
 }
@@ -5383,6 +5449,63 @@ function setupWorkAreas() {
     acceptCreated(polygon) { stopBoundary(true, true, polygon.toGeoJSON().geometry); } };
 }
 
+function setupPhoneDialogLayout() {
+  const configs = [
+    ['profileDialog', '.profile-heading', null],
+    ['profileSyncDialog', '.profile-heading', '#confirmProfileSyncBtn'],
+    ['profileShareDialog', '.profile-heading', '.profile-actions'],
+    ['profileHistoryDialog', '.profile-heading', '#moreProfileHistoryBtn'],
+    ['teamUploadDialog', '.profile-heading', '.profile-actions'],
+    ['stopDirectionsDialog', '.profile-heading', null],
+    ['cartCountsDialog', '.load-log-heading', '.cart-count-footer']
+  ];
+  configs.forEach(([id, headingSelector, footerSelector]) => {
+    const dialog = document.getElementById(id);
+    const heading = dialog.querySelector(headingSelector);
+    const footer = footerSelector ? dialog.querySelector(footerSelector) : null;
+    if (!heading) return;
+    const body = document.createElement('div'); body.className = 'phone-dialog-body';
+    const actions = document.createElement('div'); actions.className = 'phone-dialog-footer';
+    if (footer) {
+      footer.querySelectorAll('button').forEach(button => {
+        if (button.form) button.setAttribute('form', button.form.id);
+      });
+      actions.append(footer);
+    }
+    if (id === 'profileDialog') {
+      const authActions = dialog.querySelector('#profileAuthForm .profile-actions');
+      authActions.id = 'profileAuthActions';
+      authActions.querySelectorAll('button').forEach(button => button.setAttribute('form', 'profileAuthForm'));
+      const workActions = dialog.querySelector('.profile-workspace-card .profile-actions');
+      workActions.id = 'profileWorkActions';
+      actions.append(authActions, workActions);
+    }
+    [...dialog.children].forEach(child => { if (child !== heading) body.append(child); });
+    dialog.append(body);
+    if (actions.children.length) dialog.append(actions);
+    dialog.classList.add('phone-dialog-frame');
+  });
+  const files = document.querySelector('#fileManagerModal .modal-content');
+  const fileBody = document.createElement('div'); fileBody.className = 'phone-dialog-body';
+  [...files.children].forEach(child => { if (!child.classList.contains('saved-files-heading')) fileBody.append(child); });
+  files.append(fileBody); files.classList.add('phone-dialog-frame');
+  const shareBack = document.getElementById('cancelProfileShareBtn');
+  document.querySelector('#profileShareDialog .profile-heading').append(shareBack);
+  shareBack.textContent = 'Back';
+  shareBack.setAttribute('aria-label', 'Go back without syncing');
+  renderProfileState();
+  const syncViewport = () => {
+    const viewport = window.visualViewport;
+    const root = document.documentElement;
+    root.style.setProperty('--phone-viewport-height', `${viewport?.height || window.innerHeight}px`);
+    root.style.setProperty('--phone-viewport-top', `${viewport?.offsetTop || 0}px`);
+  };
+  window.visualViewport?.addEventListener('resize', syncViewport);
+  window.visualViewport?.addEventListener('scroll', syncViewport);
+  window.addEventListener('resize', syncViewport);
+  syncViewport();
+}
+
 function initApp() { //begining of initApp=================================================================
 
 setupProfileAdmin();
@@ -5401,6 +5524,11 @@ setupLocationCopy();
 setupLoadLog();
 workAreas = setupWorkAreas();
 setupDeliveryProfiles();
+setupPhoneDialogLayout();
+document.getElementById('closeMobileStopDetails').onclick = () => closeMobileStopDetails(true);
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && mobileStopMarker && !document.querySelector('dialog[open]')) closeMobileStopDetails(true);
+});
 
 // ===== RIGHT SIDEBAR TOGGLE =====
 
@@ -5559,6 +5687,7 @@ moreBtn.addEventListener("click", () => {
   moreActions.hidden = !expanded;
   moreBtn.textContent = expanded ? "Less" : "More";
   moreBtn.setAttribute("aria-expanded", String(expanded));
+  closeMobileStopDetails();
 });
 
 function syncMobileSelectionLayout() {
@@ -5589,6 +5718,7 @@ if (mobileMenuBtn && sidebar && overlay) {
     mobileMenuBtn.setAttribute("aria-expanded", String(open));
     overlay.classList.toggle("show", open);
     if (open) {
+      closeMobileStopDetails();
       sidebar.scrollTop = 0;
       requestAnimationFrame(() => {
         sidebar.scrollTop = 0;
@@ -5612,7 +5742,7 @@ if (mobileSelBtn && selectionBox) {
     document.body.classList.toggle("mobile-stop-selection-mode", isActive);
     mobileSelBtn.classList.toggle("selection-mode", isActive);
     document.getElementById("mobileStopPicker").hidden = true;
-    if (isActive) map.closePopup();
+    if (isActive) { map.closePopup(); closeMobileStopDetails(); }
     selectionBox.classList.remove("show");
     updateSelectionCount();
   }
@@ -5657,6 +5787,7 @@ const resetBtn = document.getElementById("resetMapBtn");
 
 if (resetBtn) {
   resetBtn.addEventListener("click", () => {
+    closeMobileStopDetails();
 
     // 1. Reset map view
     map.setView([39.5, -98.35], 4, { animate: false });
@@ -5966,6 +6097,11 @@ function updateSearchFilterControls() {
       (searchDeliveryFilter !== "all" || !searchMultipleCarts)));
   });
   multipleCartsBtn.setAttribute("aria-pressed", String(searchMultipleCarts));
+  const filterLabels = [searchDeliveryFilter !== "all" ? searchDeliveryFilter : "",
+    searchMultipleCarts ? "multiple carts" : "",
+    searchRouteFilter.value ? `Route ${searchRouteFilter.value}` : "",
+    searchDayFilter.value ? dayName(Number(searchDayFilter.value)) || `Day ${searchDayFilter.value}` : ""].filter(Boolean);
+  document.getElementById("searchFiltersHint").textContent = filterLabels.join(" · ") || "All stops";
   searchScopeHint.textContent = [searchRouteFilter.value ? `Route ${searchRouteFilter.value}` : "",
     searchDayFilter.value ? dayName(Number(searchDayFilter.value)) || `Day ${searchDayFilter.value}` : ""].filter(Boolean).join(" · ") || "All";
 }
@@ -6033,7 +6169,9 @@ function showSearchStop(marker) {
   // A separate preview finds hidden stops without revealing/selecting their real markers.
   searchPreview = L.circleMarker(latlng, {
     renderer: canvasRenderer, radius: 14, color: "#2563eb", weight: 3, fill: false, interactive: false
-  }).bindPopup(searchStopPopup(marker._rowRef)).addTo(map);
+  }).bindPopup(searchStopPopup(marker._rowRef), { autoPan: window.innerWidth > 900 }).addTo(map);
+  searchPreview._rowRef = marker._rowRef;
+  searchPreview._stopMarker = marker;
   searchInput.blur();
   if (window.innerWidth <= 900) closeMobileMenu();
   map.setView(latlng, 18, { animate: false });
@@ -6461,6 +6599,7 @@ async function persistDeliveryChanges(selected, changes, action) {
 
   const fileNote = routeIsCurrent ? "" : ` in ${filePath}`;
   setDeliverySaveStatus("saved", `Saved to your copy — ${count} ${stopLabel} ${action}${fileNote}. Sync to team Excel when ready.`);
+  refreshMobileStopDetails();
   return true;
 }
 

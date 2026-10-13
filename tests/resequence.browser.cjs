@@ -238,8 +238,8 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
     assert.deepEqual(new Set(await drawnSequenceNumbers()), new Set(['#1', '#3']));
     await page.screenshot({ path: path.join(root, 'local-artifacts/sequence-numbers-map.png') });
     await page.evaluate(() => Object.values(routeDayGroups)[0].layers[0].openPopup());
-    await page.locator('.leaflet-popup-content summary').click();
-    assert.match(await page.locator('.leaflet-popup-content').innerText(), /Stop 3/);
+    await page.locator('#mobileStopDetails summary').click();
+    assert.match(await page.locator('#mobileStopDetails').innerText(), /Stop 3/);
     // Reload restores only this file's local order, including after a delivery save.
     await page.reload({ waitUntil: 'networkidle' });
     const delivered = sample.map(row => ({ ...row })); delivered[0].del_status = 'Delivered';
@@ -515,8 +515,8 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
       return { count: lines.length, touchesOmitted: lines.flat().some(point => omitted.some(missing => missing.equals(point))) };
     });
     assert.deepEqual(partialGeometry, { count: 2, touchesOmitted: false });
-    await page.locator('.leaflet-popup-content summary').click();
-    assert.doesNotMatch(await page.locator('.leaflet-popup-content').innerText(), /Stop \d/);
+    await page.locator('#mobileStopDetails summary').click();
+    assert.doesNotMatch(await page.locator('#mobileStopDetails').innerText(), /Stop \d/);
     await page.reload({ waitUntil: 'networkidle' }); await load(sample, 'partial-scheduled.xlsx');
     assert.equal(await page.evaluate(() => rowSequence(window._currentRows[0])), null);
     assert.equal(await page.evaluate(() => rowSequence(window._currentRows[1])), 2);
