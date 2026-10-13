@@ -56,6 +56,8 @@ const sample = [1, 2, '3', 0, '', 'bad', -1, 1.5, 3, 5, 2, 3].map((qty, i) => ({
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Stops');
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ note: 'Preserve me' }]), 'Notes');
       processExcelBuffer(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }));
+      document.getElementById('streetLabelToggle').checked=true;
+      document.getElementById('streetLabelToggle').dispatchEvent(new Event('change'));
     }, { rows, file });
     const select = ids => page.evaluate(ids => {
       drawnLayer.clearLayers();

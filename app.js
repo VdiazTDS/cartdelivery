@@ -42,6 +42,7 @@ let workAreas = null;
 let selectedPendingStopCount = 0;
 let resetAddressSearch = () => {};
 let refreshAddressSearch = () => {};
+let refreshStreetLabels = () => {};
 
 function updateDeliveryButtons() {
   const count = selectedPendingStopCount;
@@ -3272,6 +3273,7 @@ function beginOptimoLocationPick(kind) {
   map.closePopup();
   resequenceElement("mobileStopPicker").hidden = true;
   optimoLocationPicker = { kind, center, zoom };
+  refreshStreetLabels();
   map.stop();
   document.body.classList.add("picking-optimo-location");
   resequenceElement("optimoLocationPicker").hidden = false;
@@ -3309,6 +3311,7 @@ function finishOptimoLocationPick(useLocation, reopen = true) {
   }
   if (picker.marker) map.removeLayer(picker.marker);
   optimoLocationPicker = null;
+  refreshStreetLabels();
   document.body.classList.remove("picking-optimo-location");
   resequenceElement("optimoLocationPicker").hidden = true;
   map.invalidateSize({ pan: false });
@@ -3957,17 +3960,8 @@ const streetName = row["CSSTRT"] ? String(row["CSSTRT"]).trim() : "";
 
 const labelText = `${streetNumber} ${streetName}`.trim();
 
-if (labelText) {
-  const streetLabelText = document.createElement('span'); streetLabelText.textContent = labelText;
-  marker.bindTooltip(streetLabelText, {
-    permanent: false,
-    direction: "top",
-    offset: [0, -8],
-    className: "street-label"
-  });
-
-  marker._hasStreetLabel = true;
-}
+marker._streetLabelText = labelText;
+marker.on('add remove', () => refreshStreetLabels());
 
 
     // 🔥 CRITICAL: link marker to Excel row
@@ -5395,6 +5389,7 @@ const mobileSelBtn = document.getElementById("mobileSelectionBtn");
 if (mobileSelBtn && selectionBox) {
   function setMobileStopSelectionMode(isActive) {
     mobileStopSelectionMode = isActive;
+    refreshStreetLabels();
     scheduleAddressNumberRefresh();
     document.body.classList.toggle("mobile-stop-selection-mode", isActive);
     mobileSelBtn.classList.toggle("selection-mode", isActive);
@@ -5601,26 +5596,42 @@ if (downloadBtn && modal && confirmBtn && cancelBtn) {
 
 
 
-// Street labels: when the "Street Labels" checkbox is on and zoom >= STREET_LABEL_MIN_ZOOM,
-// open a tooltip for up to 150 visible stops. Runs on zoomend, moveend and checkbox change.
+// Separate labels have no marker hover handlers and never participate in selection.
 const STREET_LABEL_MIN_ZOOM = 16;
+const streetLabels = new Map();
+let streetLabelFrame = 0, streetLabelDrawing = false;
+refreshStreetLabels = () => {
+  if (!streetLabelFrame) streetLabelFrame = requestAnimationFrame(updateStreetLabels);
+};
 function updateStreetLabels() {
+  if (streetLabelFrame) cancelAnimationFrame(streetLabelFrame);
+  streetLabelFrame = 0;
   const bounds = map.getBounds();
-  const show = window.streetLabelsEnabled && map.getZoom() >= STREET_LABEL_MIN_ZOOM;
+  const show = window.streetLabelsEnabled && map.getZoom() >= STREET_LABEL_MIN_ZOOM
+    && !(mobileStopSelectionMode && window.innerWidth <= 900) && !streetLabelDrawing && !optimoLocationPicker && !workAreas?.mapActive;
+  const keep = new Set();
   let count = 0;
   Object.values(routeDayGroups).forEach(group => {
     group.layers.forEach(layer => {
-      if (!layer._hasStreetLabel) return;
+      if (!layer._streetLabelText) return;
       if (show && count < 150 && map.hasLayer(layer) && bounds.contains(layer.getLatLng())) {
-        layer.openTooltip();
+        keep.add(layer);
+        if (!streetLabels.has(layer)) {
+          const content = document.createElement('span'); content.textContent = layer._streetLabelText;
+          const label = L.tooltip({ permanent: true, interactive: false, direction: 'top', offset: [0, -18], className: 'street-label' })
+            .setLatLng(layer.getLatLng()).setContent(content).addTo(map);
+          streetLabels.set(layer,label);
+        }
         count++;
-      } else {
-        layer.closeTooltip();
       }
     });
   });
+  for (const [marker,label] of streetLabels) if (!keep.has(marker)) { map.removeLayer(label); streetLabels.delete(marker); }
 }
-map.on("moveend", updateStreetLabels);
+map.on('moveend zoomend resize', refreshStreetLabels);
+map.on('draw:drawstart draw:editstart draw:deletestart', () => { streetLabelDrawing = true; refreshStreetLabels(); });
+map.on('draw:drawstop draw:editstop draw:deletestop', () => { streetLabelDrawing = false; refreshStreetLabels(); });
+window.addEventListener('resize', refreshStreetLabels);
 // ===== AUTO-RESIZE MARKERS ON ZOOM =====
 map.on("zoomend", () => {
   window._labelCount = 0;
@@ -5687,14 +5698,14 @@ if (streetToggle) {
 
   // Force labels to respect initial state
   map.whenReady(() => {
-    map.fire("zoomend");
+    refreshStreetLabels();
   });
 
   streetToggle.addEventListener("change", (e) => {
     window.streetLabelsEnabled = e.target.checked;
 
     // Immediately refresh labels
-    map.fire("zoomend");
+    refreshStreetLabels();
   });
 }
   

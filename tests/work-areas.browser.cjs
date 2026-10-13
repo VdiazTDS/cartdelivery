@@ -56,6 +56,7 @@ const server = http.createServer((req, res) => {
       const page = await context.newPage();
       page.on('pageerror',e=>errors.push(e.message)); page.on('dialog',d=>d.accept());
       await page.goto(`http://127.0.0.1:${server.address().port}`,{waitUntil:'networkidle'});
+      await page.evaluate(()=>{const toggle=document.getElementById('streetLabelToggle');toggle.checked=true;toggle.dispatchEvent(new Event('change'));});
       await page.evaluate(({user,fileId,mode})=>{
         sb.auth.getSession=async()=>({data:{session:{access_token:user.id,user}}});
         profileState.user=user; renderProfileState();

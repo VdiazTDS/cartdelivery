@@ -121,6 +121,8 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Stops');
         processExcelBuffer(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }));
+        document.getElementById('streetLabelToggle').checked=true;
+        document.getElementById('streetLabelToggle').dispatchEvent(new Event('change'));
       }, { rows, name });
       await page.waitForFunction(() => phoneSequenceKey !== null);
     };
@@ -236,7 +238,8 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
     assert.deepEqual(new Set(await drawnSequenceNumbers()), new Set(['#1', '#3']));
     await page.screenshot({ path: path.join(root, 'local-artifacts/sequence-numbers-map.png') });
     await page.evaluate(() => Object.values(routeDayGroups)[0].layers[0].openPopup());
-    assert.match(await page.locator('.leaflet-popup-content').innerText(), /Sequence: 3/);
+    await page.locator('.leaflet-popup-content summary').click();
+    assert.match(await page.locator('.leaflet-popup-content').innerText(), /Stop 3/);
     // Reload restores only this file's local order, including after a delivery save.
     await page.reload({ waitUntil: 'networkidle' });
     const delivered = sample.map(row => ({ ...row })); delivered[0].del_status = 'Delivered';
@@ -512,7 +515,8 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
       return { count: lines.length, touchesOmitted: lines.flat().some(point => omitted.some(missing => missing.equals(point))) };
     });
     assert.deepEqual(partialGeometry, { count: 2, touchesOmitted: false });
-    assert.doesNotMatch(await page.locator('.leaflet-popup-content').innerText(), /Sequence:/);
+    await page.locator('.leaflet-popup-content summary').click();
+    assert.doesNotMatch(await page.locator('.leaflet-popup-content').innerText(), /Stop \d/);
     await page.reload({ waitUntil: 'networkidle' }); await load(sample, 'partial-scheduled.xlsx');
     assert.equal(await page.evaluate(() => rowSequence(window._currentRows[0])), null);
     assert.equal(await page.evaluate(() => rowSequence(window._currentRows[1])), 2);
@@ -584,7 +588,7 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
     const expectedStart = await page.evaluate(() => map.containerPointToLatLng([190, 210]).wrap());
     await page.locator('#map').click({ position: { x: 190, y: 210 } });
     const pickedStart = await page.evaluate(() => { const p = optimoLocationPicker.marker.getLatLng().wrap(); return { type: 'custom', latitude: p.lat, longitude: p.lng }; });
-    assert(Math.abs(pickedStart.latitude - expectedStart.lat) < .000001 && Math.abs(pickedStart.longitude - expectedStart.lng) < .000001);
+    assert(await page.evaluate(({pickedStart,expectedStart})=>map.latLngToContainerPoint([pickedStart.latitude,pickedStart.longitude]).distanceTo(map.latLngToContainerPoint(expectedStart))<=1,{pickedStart,expectedStart}), 'Tap placement is within one screen pixel despite fractional header height');
     assert.equal(await page.locator('#useOptimoLocation').isDisabled(), false);
     assert.equal(await page.evaluate(() => getComputedStyle(sequenceNumberPane).visibility), 'hidden');
     assert.equal(await page.evaluate(() => getComputedStyle(sequencePane).visibility), 'hidden');

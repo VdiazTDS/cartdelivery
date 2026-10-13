@@ -44,6 +44,13 @@ header p {
   height: calc(100vh - 70px);
 }
 
+@media (min-width: 901px) {
+  html, body { height: 100%; overflow: hidden; }
+  body { display: flex; flex-direction: column; height: 100dvh; }
+  body > header { flex: 0 0 auto; }
+  .app-container { flex: 1 1 auto; min-height: 0; height: auto; }
+}
+
 
 /* ================= SIDEBAR ================= */
 .sidebar {

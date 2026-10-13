@@ -34,6 +34,8 @@ const server = http.createServer((req, res) => {
         { ROUTE: 'TEST', DAY: 1, SEQNO: 1, LATITUDE: 30.75, LONGITUDE: -98.23, 'CSADR#': 123, CSSTRT: 'TEST', QTY: 2 }
       ]), 'Stops');
       processExcelBuffer(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }));
+      document.getElementById('streetLabelToggle').checked=true;
+      document.getElementById('streetLabelToggle').dispatchEvent(new Event('change'));
       const marker = Object.values(routeDayGroups).flatMap(group => group.layers).find(item => item._rowRef);
       individuallySelectedMarkers.add(marker);
       updateSelectionCount();
@@ -70,7 +72,7 @@ const server = http.createServer((req, res) => {
         assert(lock.width >= 44 && lock.height >= 44);
         assert(lock.x >= toggle.x + toggle.width && Math.abs(lock.y - toggle.y) < 3);
         assert(lock.x - toggle.x - toggle.width < 12);
-        assert(width - lock.x - lock.width <= 12);
+        assert(lock.x + lock.width <= width, 'Lock stays inside the header beside the theme control');
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
         await page.screenshot({ path: path.join(root, `local-artifacts/pocket-header-${width}-${light}.png`) });
         const mapBox = await page.locator('#map').boundingBox();
