@@ -3291,11 +3291,13 @@ header p {
     box-shadow: 0 0 0 3px rgba(0, 200, 83, 0.28), 0 4px 12px rgba(0, 0, 0, 0.4);
   }
 
+}
+
   .mobile-stop-picker {
     position: fixed;
     z-index: 3100;
-    left: 10px;
-    right: 10px;
+    left: max(10px, env(safe-area-inset-left));
+    right: max(10px, env(safe-area-inset-right));
     bottom: calc(148px + env(safe-area-inset-bottom));
     max-height: min(38dvh, 340px);
     display: flex;
@@ -3332,9 +3334,9 @@ header p {
   }
 
   #mobileStopPickerClose {
-    flex: 0 0 40px;
-    width: 40px;
-    height: 40px;
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
     border: 1px solid #49647d;
     border-radius: 10px;
     background: #26394b;
@@ -3441,7 +3443,14 @@ header p {
   body.sun-mode .mobile-stop-choice.selected .mobile-stop-choice-state {
     color: #8a6500;
   }
+
+@media (min-width: 901px) {
+  .mobile-stop-picker { left: 50%; right: auto; bottom: 24px; transform: translateX(-50%); width: 380px; max-height: min(65dvh, 580px); }
 }
+.mobile-stop-choice { box-sizing: border-box; overflow-wrap: anywhere; }
+:is(.mobile-stop-choice, #mobileStopPickerClose):focus-visible { outline: 3px solid #e6ad22; outline-offset: -3px; }
+body .choose-overlapping-stop, body .select-overlapping-stop { min-height: 44px; padding: 8px 10px; border: 1px solid #873bdb; border-radius: 8px; background: #f4eaff; color: #59218e; font: 600 13px/1.4 system-ui, sans-serif; cursor: pointer; }
+body.sun-mode .mobile-stop-choice-state { color: #205c99; }
 
 /* Delivery actions share the same count and cloud-save feedback on all screens. */
 #completeStopsBtn,
@@ -5593,6 +5602,10 @@ body .sidebar #toolsMenuBtnMobile {
 body .sidebar #openHelpBtn > span { color: var(--sidebar-muted) !important; }
 
 /* Phone delivery flow: thumb controls, a stop sheet, and fixed dialog actions. */
+.viewed-stop-ring { pointer-events: none !important; }
+.viewed-stop-ring > span { display: block; box-sizing: border-box; width: 100%; height: 100%; border: 4px solid #873bdb; border-radius: 50%; box-shadow: 0 0 0 3px #fff, inset 0 0 0 2px #fff, 0 2px 10px #0006; }
+#mobileStopDetailsTitle::before { content: ''; display: inline-block; width: 10px; height: 10px; margin-right: 7px; border: 3px solid #873bdb; border-radius: 50%; background: #fff; vertical-align: -3px; }
+.picking-optimo-location .viewed-stop-ring, .editing-work-area .viewed-stop-ring { visibility: hidden; }
 #mobileStopDetails[hidden], #deliveryControls .delivery-controls-main[hidden] { display: none !important; }
 #mobileStopDetails { display: none; }
 .phone-dialog-body, .phone-dialog-footer { display: contents; }

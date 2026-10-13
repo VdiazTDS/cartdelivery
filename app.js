@@ -41,6 +41,8 @@ let optimoLocationPicker = null;
 let workAreas = null;
 let selectedPendingStopCount = 0;
 let mobileStopMarker = null;
+let viewedStopMarker = null;
+let viewedStopIndicator = null;
 const deliveryFeedback = new Map();
 let resetAddressSearch = () => {};
 let refreshAddressSearch = () => {};
@@ -1719,6 +1721,9 @@ const canvasRenderer = L.canvas({ padding: 0.5 });
 const quantityPane = map.createPane("quantityPane");
 quantityPane.style.zIndex = "450";
 quantityPane.style.pointerEvents = "none";
+const viewedStopPane = map.createPane('viewedStopPane');
+viewedStopPane.style.zIndex = '440';
+viewedStopPane.style.pointerEvents = 'none';
 const quantityBadgesToggle = document.getElementById("quantityBadgesToggle");
 const deliveryOverlayButtons = [...document.querySelectorAll(".delivery-overlay-buttons button")];
 deliveryOverlayButtons.forEach(button => button.addEventListener("click", () => {
@@ -2424,14 +2429,23 @@ function addressSearchScore(data, queryTokens) {
   return score;
 }
 
-function showNearbyStopPicker(stops) {
+function overlappingStops(marker) {
+  return getNearbyVisibleStops(getLayerLatLng(marker)).filter(stop => stop.distance <= 12);
+}
+
+function showNearbyStopPicker(stops, mode = 'select') {
+  const viewing = mode === 'view';
+  map.closePopup();
+  closeMobileStopDetails();
   const picker = document.getElementById("mobileStopPicker");
   const list = document.getElementById("mobileStopPickerList");
   const message = document.getElementById("mobileStopPickerMessage");
   list.replaceChildren();
-  message.textContent = `${stops.length} nearby stops. Choose the exact address:`;
+  picker.dataset.mode = mode;
+  message.textContent = viewing ? `${stops.length} overlapping map records. Choose a record to view; this does not select it for delivery.`
+    : `${stops.length} nearby stops. Choose the exact address:`;
 
-  stops.forEach(({ marker, key, distance }) => {
+  stops.forEach(({ marker }, index) => {
     const row = marker._rowRef || {};
     const button = document.createElement("button");
     button.className = "mobile-stop-choice";
@@ -2443,12 +2457,10 @@ function showNearbyStopPicker(stops) {
 
     const detail = document.createElement("span");
     detail.className = "mobile-stop-choice-detail";
-    const status = isDeliveredRow(row)
-      ? "Delivered"
-      : (dayName(Number(rowDay(row))) || `Day ${rowDay(row) || key.split("|")[1]}`);
+    const status = `${dayName(Number(rowDay(row))) || 'Day not provided'}${isDeliveredRow(row) ? ' · Delivered' : ''}`;
     const sequence = rowSequence(row);
     const quantity = multiCartQuantity(row);
-    detail.textContent = `Route ${rowRoute(row) || key.split("|")[0]} · ${status}${quantity !== null ? ` · ${quantity} carts` : ""}${sequence !== null ? ` · Seq ${sequence}` : ""} · ${Math.round(distance)} px away`;
+    detail.textContent = `Route ${rowRoute(row) ?? 'Not provided'} · ${status}${quantity !== null ? ` · ${quantity} carts` : ""}${sequence !== null ? ` · Seq ${sequence}` : ""}`;
 
     const binNumber = document.createElement("span");
     binNumber.className = "mobile-stop-choice-bin";
@@ -2458,16 +2470,23 @@ function showNearbyStopPicker(stops) {
     const selectionState = document.createElement("span");
     selectionState.className = "mobile-stop-choice-state";
     const selected = isStopSelected(marker);
-    button.classList.toggle("selected", selected);
-    selectionState.textContent = selected ? "Selected · tap to deselect" : "Tap to select";
+    button.classList.toggle("selected", !viewing && selected);
+    selectionState.textContent = viewing ? `View record ${index + 1}`
+      : selected ? "Selected · tap to deselect" : "Tap to select";
 
     const progress = document.createElement("span");
     progress.className = "mobile-stop-choice-detail";
     progress.textContent = cartProgressText(row);
     button.append(address, binNumber, detail, progress, selectionState);
     button.addEventListener("click", () => {
-      toggleIndividualStopSelection(marker);
       picker.hidden = true;
+      if (!window._currentRows?.includes(row) || !map.hasLayer(marker)) return;
+      if (viewing) {
+        if (window.innerWidth <= 900) openMobileStopDetails(marker);
+        else marker.openPopup();
+        return;
+      }
+      toggleIndividualStopSelection(marker);
       updateSelectionCount();
       updateUndoButtonState();
     });
@@ -2475,6 +2494,7 @@ function showNearbyStopPicker(stops) {
   });
 
   picker.hidden = false;
+  list.querySelector('button')?.focus({ preventScroll: true });
 }
 
 // Selects the nearest stop directly, or opens the chooser (#mobileStopPicker) when the two
@@ -2518,7 +2538,13 @@ map.on("popupopen", event => {
     const marker = event.popup._source._stopMarker || event.popup._source;
     map.closePopup(event.popup);
     openMobileStopDetails(marker);
+  } else if (event.popup._source?._rowRef) {
+    showViewedStop(event.popup._source._stopMarker || event.popup._source);
   }
+});
+map.on('popupclose', event => {
+  const source = event.popup._source;
+  if (!mobileStopMarker && viewedStopMarker === (source?._stopMarker || source)) clearViewedStop();
 });
 
 map.on("tooltipopen", event => {
@@ -2937,6 +2963,7 @@ function updateMapScopeChip() {
 }
 
 function applyFilters() {
+  document.getElementById('mobileStopPicker').hidden = true;
 
   const routeCheckboxes = [...document.querySelectorAll("#routeCheckboxes input")];
   const dayCheckboxes   = [...document.querySelectorAll("#dayCheckboxes input")];
@@ -4166,10 +4193,29 @@ function stopDirectionsAddressLink(row) {
   address.onclick = event => { event.preventDefault(); event.stopPropagation(); showStopDirections(row, address); };
   return address;
 }
+function clearViewedStop() {
+  if (viewedStopIndicator) map.removeLayer(viewedStopIndicator);
+  viewedStopIndicator = null;
+  viewedStopMarker = null;
+}
+
+function showViewedStop(marker) {
+  const latlng = getLayerLatLng(marker);
+  if (!latlng) return;
+  viewedStopMarker = marker;
+  if (viewedStopIndicator) viewedStopIndicator.setLatLng(latlng);
+  else viewedStopIndicator = L.marker(latlng, {
+    pane: 'viewedStopPane', interactive: false, keyboard: false,
+    icon: L.divIcon({ className: 'viewed-stop-ring', html: '<span aria-hidden="true"></span>', iconSize: [40, 40], iconAnchor: [20, 20] })
+  }).addTo(map);
+}
+
 function closeMobileStopDetails(restoreFocus = false) {
   const sheet = document.getElementById('mobileStopDetails');
   if (!sheet) return;
   sheet.hidden = true;
+  document.getElementById('mobileStopPicker').hidden = true;
+  if (mobileStopMarker) clearViewedStop();
   mobileStopMarker = null;
   sheet.querySelector('.mobile-stop-content').replaceChildren();
   if (restoreFocus) document.getElementById('map').focus({ preventScroll: true });
@@ -4223,6 +4269,7 @@ function refreshMobileStopDetails() {
 function openMobileStopDetails(marker) {
   if (window.innerWidth > 900 || !window._currentRows?.includes(marker._rowRef)) return;
   mobileStopMarker = marker;
+  showViewedStop(marker);
   refreshMobileStopDetails();
   document.getElementById('mobileStopDetails').hidden = false;
   document.getElementById('closeMobileStopDetails').focus({ preventScroll: true });
@@ -4239,6 +4286,22 @@ function deliveryStopCard(row, marker = null) {
   const remaining = total === null ? null : Math.max(0, total - delivered);
   line('strong', remaining === null ? 'Cart quantity needs checking' : remaining ? `${remaining} ${remaining === 1 ? 'cart' : 'carts'} remaining` : 'All carts delivered', 'delivery-stop-remaining');
   if (total !== null) line('div', `${delivered} of ${total} carts delivered`);
+  const overlaps = marker ? overlappingStops(marker) : [];
+  if (overlaps.length > 1) {
+    const other = line('button', `${overlaps.length} records here · Choose another`, 'choose-overlapping-stop');
+    other.type = 'button';
+    other.onclick = () => showNearbyStopPicker(overlappingStops(marker), 'view');
+    if (window.innerWidth > 900) {
+      const select = line('button', '', 'select-overlapping-stop');
+      select.type = 'button';
+      const label = () => { select.textContent = isStopSelected(marker) ? 'Remove this stop from selection' : 'Select this stop for delivery'; };
+      label();
+      select.onclick = () => {
+        toggleIndividualStopSelection(marker);
+        updateSelectionCount(); updateUndoButtonState(); label();
+      };
+    }
+  }
   if (marker && profileState.workspace?.mode === 'copy') {
     const button = line('button', remaining === 0 ? 'Delivery complete' : 'Record delivery', 'stop-delivery-action');
     button.type = 'button';
@@ -4260,6 +4323,7 @@ function deliveryStopCard(row, marker = null) {
 
 function processExcelBuffer(buffer, parsedWorkbook = null, confirmedRows = null) {
   closeMobileStopDetails();
+  clearViewedStop();
   deliveryFeedback.clear();
   const wb = parsedWorkbook || XLSX.read(new Uint8Array(buffer), { type: "array", cellStyles: true, bookVBA: true });
   const ws = wb.Sheets[wb.SheetNames[0]];
@@ -4337,6 +4401,12 @@ marker.on('add remove', () => refreshStreetLabels());
       }
 
       // Phone: with Select Stops off, a tap only opens the customer details popup.
+      const overlaps = overlappingStops(marker);
+      if (overlaps.length > 1) {
+        L.DomEvent.stop(event.originalEvent || event);
+        showNearbyStopPicker(overlaps, 'view');
+        return;
+      }
       if (window.innerWidth <= 900) return;
 
       toggleIndividualStopSelection(marker);
@@ -5869,6 +5939,10 @@ if (mobileSelBtn && selectionBox) {
 
   document.getElementById("mobileStopPickerClose").addEventListener("click", () => {
     document.getElementById("mobileStopPicker").hidden = true;
+    document.getElementById('map').focus({ preventScroll: true });
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') document.getElementById('mobileStopPicker').hidden = true;
   });
 
   // keep count synced
@@ -5904,6 +5978,7 @@ const resetBtn = document.getElementById("resetMapBtn");
 if (resetBtn) {
   resetBtn.addEventListener("click", () => {
     closeMobileStopDetails();
+    clearViewedStop();
 
     // 1. Reset map view
     map.setView([39.5, -98.35], 4, { animate: false });

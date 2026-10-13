@@ -58,6 +58,18 @@ const server = http.createServer((req, res) => {
       const viewport = await page.evaluate(() => ({ top: visualViewport.offsetTop, bottom: visualViewport.offsetTop + visualViewport.height }));
       assert(box && box.y >= viewport.top - 1 && box.y + box.height <= viewport.bottom + 1, `${selector} within visual viewport`);
     };
+    const checkViewedStop = async id => {
+      assert.equal(await page.locator('.viewed-stop-ring').count(), 1);
+      const state = await page.evaluate(() => {
+        const target = getLayerLatLng(viewedStopMarker);
+        const point = map.latLngToContainerPoint(target), box = map.getContainer().getBoundingClientRect();
+        const ring = viewedStopIndicator.getElement().getBoundingClientRect();
+        return { id: viewedStopMarker._rowRef.ID, sameLocation: viewedStopIndicator.getLatLng().equals(target),
+          offset: Math.hypot(ring.x + ring.width / 2 - box.x - point.x, ring.y + ring.height / 2 - box.y - point.y),
+          interactive: viewedStopIndicator.options.interactive };
+      });
+      assert.equal(state.id, id); assert(state.sameLocation); assert(state.offset < 2); assert.equal(state.interactive, false);
+    };
     assert.equal(await page.locator('#completeStopsBtnMobile').isVisible(), false);
     assert.deepEqual(await page.locator('#deliveryQuickActions > button').evaluateAll(buttons => buttons.map(b => b.id)), ['mobileMenuBtn', 'locateMeBtn', 'mobileSelectionBtn', 'deliveryMoreBtn']);
     assert.equal(await page.locator('#copyLocationBtn').isVisible(), false);
@@ -91,6 +103,18 @@ const server = http.createServer((req, res) => {
       await page.evaluate(light => document.body.classList.toggle('sun-mode', light), light);
       await tapStop();
       await page.waitForFunction(() => !document.querySelector('.leaflet-popup'));
+      await checkViewedStop(0);
+      const originalColor = await page.evaluate(() => testMarker().options.color);
+      await page.evaluate(() => {
+        map.panBy([20, 15], { animate: false }); map.setZoom(17, { animate: false });
+      });
+      await checkViewedStop(0);
+      await page.evaluate(() => Object.values(routeDayGroups).flatMap(g => g.layers).find(m => m._rowRef.ID === 1).openPopup());
+      await checkViewedStop(1);
+      assert.match(await page.locator('#mobileStopDetails').textContent(), /Bin #: 001/);
+      await page.evaluate(() => testMarker().openPopup());
+      await checkViewedStop(0);
+      assert.equal(await page.evaluate(() => testMarker().options.color), originalColor, 'Viewing leaves marker style unchanged');
       assert.equal(await page.locator('#selectionCount').textContent(), '0');
       assert.match(await page.locator('#mobileStopDetails').textContent(), /Bin #: 000/);
       const sheet = await page.locator('#mobileStopDetails').boundingBox();
@@ -98,9 +122,18 @@ const server = http.createServer((req, res) => {
       assert(sheet.y > 350 && sheet.y + sheet.height <= dock.y);
       await inViewport('#mobileStopDetails .stop-delivery-action');
       assert((await page.locator('#mobileStopDetails .stop-delivery-action').boundingBox()).height >= 48);
+      await page.waitForTimeout(250);
       await page.screenshot({ path: path.join(root, `local-artifacts/phone-flow-stop-${light}.png`) });
       await page.locator('#closeMobileStopDetails').click();
+      assert.equal(await page.locator('.viewed-stop-ring').count(), 0);
     }
+    await tapStop();
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('.viewed-stop-ring').count(), 0);
+    await tapStop();
+    await page.locator('#mobileMenuBtn').click();
+    assert.equal(await page.locator('.viewed-stop-ring').count(), 0);
+    await page.locator('#mobileMenuBtn').click();
     await tapStop();
     await page.locator('#mobileStopDetails .stop-delivery-action').click();
     assert.equal(await page.locator('#cartCountEntries input').count(), 1);
@@ -117,6 +150,7 @@ const server = http.createServer((req, res) => {
     assert(await page.locator('#reloadCartCountCopyBtn').isVisible());
     assert.match(await page.locator('#mobileStopDetails .delivery-feedback').textContent(), /Save not confirmed/);
     assert.match(await page.locator('#mobileStopDetails').textContent(), /3 carts remaining/);
+    await checkViewedStop(0);
     await page.locator('#closeCartCountsBtn').click();
     assert(await page.locator('#mobileStopDetails .delivery-feedback button').isVisible());
     await page.locator('#mobileStopDetails .stop-delivery-action').click();
@@ -127,11 +161,13 @@ const server = http.createServer((req, res) => {
     await page.waitForFunction(() => !deliverySaveInProgress);
     assert.equal(await page.evaluate(() => _currentRows[0].del_qty), 1);
     assert.match(await page.locator('#mobileStopDetails').textContent(), /2 carts remaining/);
+    await checkViewedStop(0);
     assert.match(await page.locator('#reviewSaveStatusBtn').textContent(), /Saved to your copy · 1 stop awaiting sync/);
     assert.equal(await page.locator('#reviewSaveStatusBtn').getAttribute('data-save-state'), 'copy');
     assert.match(await page.locator('#mobileStopDetails .delivery-feedback').textContent(), /Saved to your copy/);
     await page.locator('#mobileSelectionBtn').click();
     assert.equal(await page.locator('#mobileStopDetails').isVisible(), false);
+    assert.equal(await page.locator('.viewed-stop-ring').count(), 0);
     await page.evaluate(() => { individuallySelectedMarkers.add(testMarker()); updateSelectionCount(); updateUndoButtonState(); });
     assert.equal(await page.locator('#selectionTotals').textContent(), '1 stop · 2 carts remaining');
     assert.equal(await page.locator('#completeStopsBtnMobile').isVisible(), false);
@@ -189,12 +225,18 @@ const server = http.createServer((req, res) => {
     await page.setViewportSize({ width: 1440, height: 956 });
     await page.evaluate(() => testMarker().openPopup());
     assert(await page.locator('.leaflet-popup .delivery-stop-card').isVisible());
+    await checkViewedStop(0);
+    await page.evaluate(() => map.closePopup());
+    assert.equal(await page.locator('.viewed-stop-ring').count(), 0);
+    await page.evaluate(() => testMarker().openPopup());
     assert.equal(await page.locator('#mobileStopDetails').isVisible(), false);
     assert.equal(await page.locator('#copyLocationBtn').evaluate(el => el.parentElement.id), 'desktopLocateContainer');
     assert.equal(await page.locator('#selectionSummary').evaluate(el => el.parentElement.id), 'selectionBox');
+    await page.waitForTimeout(250);
     await page.screenshot({ path: path.join(root, 'local-artifacts/phone-flow-desktop.png') });
     await page.setViewportSize({ width: 440, height: 956 });
     await page.locator('#mobileStopDetails').waitFor();
+    await checkViewedStop(0);
     assert.equal(await page.locator('#copyLocationBtn').evaluate(el => el.parentElement.id), 'deliveryMoreActions');
     assert.equal(await page.locator('#selectionSummary').evaluate(el => el.parentElement.id), 'deliveryControls');
     await page.evaluate(() => {
@@ -230,6 +272,10 @@ const server = http.createServer((req, res) => {
       processExcelBuffer(null, wb, rows);
     });
     assert.match(await page.locator('#mapScopeChip').textContent(), /2 routes · 2 days/);
+    assert.equal(await page.locator('.viewed-stop-ring').count(), 0, 'Changing files clears the viewed record');
+    await page.evaluate(() => Object.values(routeDayGroups).flatMap(g => g.layers).find(m => m._rowRef.ID === 1).openPopup());
+    await checkViewedStop(1);
+    await page.locator('#closeMobileStopDetails').click();
     await page.evaluate(() => {
       document.querySelector('#routeCheckboxes input[value="B"]').checked = false; applyFilters();
       document.getElementById('multipleCartsOnly').checked = true; applyFilters();
@@ -255,6 +301,92 @@ const server = http.createServer((req, res) => {
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.evaluate(() => document.getElementById('resetMapBtn').click());
     assert.equal(await page.locator('#mapScopeChip').isVisible(), false);
+    assert.equal(await page.locator('.viewed-stop-ring').count(), 0);
+    await page.evaluate(() => {
+      const rows = [0, 1, 2, 3].map(ID => ({ ID, ROUTE: ID === 2 ? 'B' : 'A', DAY: ID === 2 ? 2 : 1,
+        NEWROUTE: 'IGNORED', NEWDAY: 7, QTY: 3, del_qty: ID === 3 ? 3 : 0, BINNO: ['001', '002', 0, 'HIDDEN'][ID],
+        'CSADR#': 100, CSSTRT: 'Oak', LATITUDE: 30.75, LONGITUDE: -98.23 }));
+      layerVisibilityState = {}; document.getElementById('multipleCartsOnly').checked = false;
+      profileState.workspace.mode = 'copy';
+      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Stops');
+      processExcelBuffer(null, wb, rows); renderProfileState();
+      map.setView([30.75, -98.23], 18, { animate: false });
+    });
+    const tapOverlap = async () => {
+      const point = await page.evaluate(() => {
+        map.setView([30.75, -98.23], 18, { animate: false });
+        const p = map.latLngToContainerPoint([30.75, -98.23]), box = map.getContainer().getBoundingClientRect();
+        return { x: box.x + p.x, y: box.y + p.y };
+      });
+      if (page.viewportSize().width <= 900) await page.touchscreen.tap(point.x, point.y);
+      else await page.mouse.click(point.x, point.y);
+      await page.locator('#mobileStopPicker').waitFor();
+    };
+    for (const width of [440, 1440]) {
+      await page.setViewportSize({ width, height: 956 });
+      for (const light of [false, true]) {
+        await page.evaluate(light => { document.body.classList.toggle('sun-mode', light); map.closePopup(); closeMobileStopDetails(); }, light);
+        await page.waitForTimeout(250);
+        await tapOverlap();
+        assert.equal(await page.locator('.mobile-stop-choice').count(), 3, 'Hidden delivered record is excluded');
+        assert.equal(await page.locator('#selectionCount').textContent(), '0', 'Opening a stack never selects its top record');
+        assert.equal(await page.locator('.viewed-stop-ring').count(), 0);
+        assert((await page.locator('.mobile-stop-choice-bin').allTextContents()).includes('Bin #: 0'));
+        assert.match(await page.locator('#mobileStopPicker').textContent(), /Route B · Tuesday/);
+        assert(!/IGNORED|HIDDEN/.test(await page.locator('#mobileStopPicker').textContent()));
+        await inViewport('#mobileStopPickerClose');
+        assert((await page.locator('#mobileStopPickerClose').boundingBox()).height >= 44);
+        await page.screenshot({ path: path.join(root, `local-artifacts/overlap-picker-${width}-${light}.png`) });
+        await page.locator('.mobile-stop-choice').filter({ hasText: 'Bin #: 002' }).click();
+        if (width > 900) await page.waitForFunction(() => document.querySelectorAll('.leaflet-popup').length === 1);
+        await checkViewedStop(1);
+        assert.equal(await page.locator('#selectionCount').textContent(), '0');
+        const card = page.locator(width <= 900 ? '#mobileStopDetails' : '.leaflet-popup');
+        assert.match(await card.textContent(), /Bin #: 002/);
+        await card.locator('.choose-overlapping-stop').click();
+        await page.locator('.mobile-stop-choice').filter({ has: page.getByText('Bin #: 0', { exact: true }) }).click();
+        if (width > 900) await page.waitForFunction(() => document.querySelectorAll('.leaflet-popup').length === 1);
+        await checkViewedStop(2);
+        assert.match(await card.textContent(), /Route B · Tuesday/);
+        if (width > 900) {
+          await card.locator('.select-overlapping-stop').click();
+          assert.equal(await page.locator('#selectionCount').textContent(), '1');
+          assert.equal(await page.evaluate(() => [...individuallySelectedMarkers][0]._rowRef.ID), 2);
+          await card.locator('.select-overlapping-stop').click();
+          assert.equal(await page.locator('#selectionCount').textContent(), '0');
+        }
+        await card.locator('.choose-overlapping-stop').click();
+        await page.locator('#mobileStopPickerClose').click();
+        assert.equal(await page.locator('#selectionCount').textContent(), '0');
+        assert.equal(await page.locator('.viewed-stop-ring').count(), 0);
+      }
+    }
+    await page.setViewportSize({ width: 440, height: 956 });
+    await page.waitForTimeout(250);
+    await page.locator('#mobileSelectionBtn').click();
+    await tapOverlap();
+    assert.equal(await page.locator('#mobileStopPicker').getAttribute('data-mode'), 'select');
+    await page.locator('.mobile-stop-choice').filter({ hasText: 'Bin #: 002' }).click();
+    assert.equal(await page.locator('#selectionCount').textContent(), '1');
+    assert.equal(await page.evaluate(() => [...individuallySelectedMarkers][0]._rowRef.ID), 1);
+    await page.locator('#cancelSelectionBtn').click();
+    await tapOverlap();
+    await page.locator('.mobile-stop-choice').filter({ hasText: 'Bin #: 002' }).click();
+    await page.locator('#mobileStopDetails .stop-delivery-action').click();
+    await page.locator('#cartCountEntries input').fill('1');
+    await page.locator('#saveCartCountsBtn').click();
+    await page.waitForFunction(() => deliverySaveInProgress);
+    assert.deepEqual(await page.evaluate(() => _currentRows.map(row => row.del_qty)), [0, 0, 0, 3]);
+    await page.evaluate(() => finishSave(false));
+    await page.waitForFunction(() => !deliverySaveInProgress);
+    assert.deepEqual(await page.evaluate(() => _currentRows.map(row => row.del_qty)), [0, 1, 0, 3], 'Only the chosen overlapping record changes after confirmation');
+    await page.locator('#mobileStopDetails .choose-overlapping-stop').click();
+    await page.evaluate(() => { document.querySelector('#routeCheckboxes input[value="B"]').checked = false; applyFilters(); });
+    assert.equal(await page.locator('#mobileStopPicker').isVisible(), false, 'Filter changes dismiss stale choices');
+    await tapOverlap();
+    assert.equal(await page.locator('.mobile-stop-choice').count(), 2);
+    await page.evaluate(() => document.getElementById('resetMapBtn').click());
+    assert.equal(await page.locator('#mobileStopPicker').isVisible(), false);
     assert.deepEqual(errors, []);
     console.log('PASS route/day chip, polygon and partial-cart totals, Done/Cancel, failed-save recovery, copy/sync indicators, phone stop sheet, keyboard viewport, and desktop placement');
   } finally { if (browser) await browser.close(); server.close(); }
