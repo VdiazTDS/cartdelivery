@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261013-work-areas" />
+  <link rel="stylesheet" href="style.css?v=20261013-work-areas-ease" />
 
   <link rel="icon" href="favicon.ico" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -118,6 +118,8 @@
 <details id="workAreasSection" class="filter-group map-overlays">
   <summary class="filter-header"><strong>Profile work areas</strong></summary>
   <label class="work-areas-toggle"><input id="workAreasVisible" type="checkbox" checked>Show work areas on map</label>
+  <label class="work-area-filter-label" for="workAreasFilter">Whose areas?</label>
+  <select id="workAreasFilter" disabled><option value="all">All profiles</option></select>
   <p id="workAreasStatus" role="status" aria-live="polite">Sign in and open a team file or your copy to see work areas.</p>
   <div id="workAreasLegend" aria-label="Assigned profiles"></div>
   <button id="manageWorkAreasBtn" type="button" disabled>Manage work areas</button>
@@ -608,22 +610,28 @@
   <div class="profile-heading"><h2 id="workAreasTitle">Profile work areas</h2><button id="closeWorkAreasBtn" type="button">Close</button></div>
   <p id="workAreasHelp"></p>
   <div id="workAreasBrowse">
-    <button id="newWorkAreaBtn" type="button">Add work area</button>
+    <div class="work-area-toolbar"><button id="newWorkAreaBtn" class="profile-primary" type="button">+ Add work area</button><button id="workAreasTeamBtn" type="button" hidden>Open team Excel to edit areas</button><button id="workAreasReturnBtn" type="button" hidden>Back to my copy</button></div>
+    <label class="work-area-filter-label" for="workAreasListFilter">Whose areas?</label>
+    <select id="workAreasListFilter"><option value="all">All profiles</option></select>
     <div id="workAreasList"></div>
   </div>
   <form id="workAreaForm" hidden>
     <fieldset id="workAreaFields">
-      <label for="workAreaName">Area name</label><input id="workAreaName" maxlength="80" required placeholder="North side">
-      <label for="workAreaProfile">Assigned profile</label><select id="workAreaProfile" required></select>
-      <label for="workAreaColor">Map color</label><select id="workAreaColor">
+      <section class="work-area-step"><label for="workAreaName"><span class="work-area-step-number">1</span> Name this area</label><input id="workAreaName" maxlength="80" required placeholder="For example: North side"></section>
+      <section class="work-area-step"><label for="workAreaProfile"><span class="work-area-step-number">2</span> Who will deliver here?</label><select id="workAreaProfile" required aria-describedby="workAreaProfileHelp"></select>
+      <p id="workAreaProfileHelp">Choose a delivery profile. You can assign several areas to the same person.</p>
+      <details id="workAreaAppearance"><summary>Area color</summary><label for="workAreaColor">Map color</label><select id="workAreaColor">
         <option value="#2563eb">Blue</option><option value="#e11d48">Rose</option><option value="#15803d">Green</option>
         <option value="#9333ea">Purple</option><option value="#c2410c">Orange</option><option value="#0e7490">Teal</option>
-      </select>
-      <p id="workAreaBoundaryStatus"></p>
+      </select></details></section>
+      <section class="work-area-step"><h3><span class="work-area-step-number">3</span> Mark the area on the map</h3>
+      <p id="workAreaBoundaryStatus" role="status"></p>
+      <button id="adjustWorkAreaBtn" type="button" hidden>Move corners</button>
       <button id="drawWorkAreaBtn" type="button">Draw boundary</button>
-      <button id="adjustWorkAreaBtn" type="button" hidden>Adjust boundary</button>
+      </section>
     </fieldset>
-    <div class="profile-actions"><button id="saveWorkAreaBtn" class="profile-primary" type="submit">Save for everyone</button><button id="cancelWorkAreaBtn" type="button">Cancel</button></div>
+    <div class="work-area-save-bar"><p id="workAreaAssignmentPreview" role="status"></p><div class="profile-actions"><button id="saveWorkAreaBtn" class="profile-primary" type="submit">Save for everyone</button><button id="cancelWorkAreaBtn" type="button">Cancel changes</button></div></div>
+    <button id="deleteWorkAreaBtn" class="work-area-delete" type="button" hidden>Delete this area</button>
   </form>
   <p id="workAreaSaveStatus" role="status" aria-live="polite"></p>
   <button id="retryWorkAreaSaveBtn" type="button" hidden>Retry save</button>
@@ -631,6 +639,7 @@
 <section id="workAreaMapEditor" aria-label="Work area boundary editor" hidden>
   <strong id="workAreaMapTitle">Draw work area</strong>
   <p id="workAreaMapHelp" role="status">Tap each corner of the area, then finish the boundary.</p>
+  <button id="undoWorkAreaCorner" type="button" hidden>Undo last corner</button>
   <div><button id="finishWorkAreaBoundary" type="button" disabled>Finish boundary</button><button id="cancelWorkAreaBoundary" type="button">Cancel boundary</button></div>
 </section>
 
@@ -676,7 +685,7 @@
 </dialog>
 
 <script src="profile-field-mapping.js?v=20261012-delivery-ease" defer></script>
-<script src="app.js?v=20261013-work-areas" defer></script>
+<script src="app.js?v=20261013-work-areas-ease" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">

@@ -753,7 +753,7 @@ function renderRouteContext() {
 }
 function setupRouteContext() {
   const template = profileElement("routeContext");
-  document.querySelectorAll("dialog:not(#pocketLock):not(#teamUploadDialog):not(#cartCountsDialog), .modal-content").forEach(container => {
+  document.querySelectorAll("dialog:not(#pocketLock):not(#teamUploadDialog):not(#cartCountsDialog):not(#workAreasDialog), .modal-content").forEach(container => {
     const banner = template.cloneNode(true);
     banner.removeAttribute("id"); banner.removeAttribute("role");
     container.prepend(banner);
@@ -4710,7 +4710,7 @@ function setupWorkAreas() {
   const pane = map.createPane('workAreasPane'); pane.style.zIndex = '310'; pane.style.pointerEvents = 'none';
   const labelPane = map.createPane('workAreaLabelsPane'); labelPane.style.zIndex = '360'; labelPane.style.pointerEvents = 'none';
   const layer = L.layerGroup(), draftLayer = L.featureGroup().addTo(map);
-  let state = {}, contextKey = '';
+  let state = {}, contextKey = '', returnCopyFileId = null;
   const node = (tag, text, className) => {
     const n = document.createElement(tag); n.textContent = text;
     if (className) n.className = className;
@@ -4719,6 +4719,24 @@ function setupWorkAreas() {
   const canEdit = () => Boolean(profileState.user && profileState.workspace?.fileId &&
     profileState.workspace.mode === 'original' && !profileState.busy && state.loaded);
   const message = text => { el('workAreaSaveStatus').textContent = text; };
+  const profileLabel = profile => `${profile.name}${profile.id === profileState.user?.id ? ' (you)' : ''}`;
+  const shownAreas = () => (state.snapshot?.areas || []).filter(area => !state.filter || state.filter === 'all' || area.profileId === (state.filter === 'mine' ? profileState.user?.id : state.filter));
+  function renderFilters() {
+    const areas = state.snapshot?.areas || [], profiles = state.snapshot?.profiles || [];
+    if (state.filter && !['all','mine'].includes(state.filter) && !profiles.some(profile => profile.id === state.filter)) state.filter = 'all';
+    const choices = [['all', `All profiles (${areas.length})`], ['mine', `My areas (${areas.filter(area => area.profileId === profileState.user?.id).length})`],
+      ...profiles.filter(profile => profile.id !== profileState.user?.id).map(profile => [profile.id, `${profile.name} (${areas.filter(area => area.profileId === profile.id).length})`])];
+    for (const id of ['workAreasFilter','workAreasListFilter']) {
+      const select = el(id), key = JSON.stringify(choices);
+      if (select.dataset.choices !== key) { select.replaceChildren(...choices.map(([value,label]) => new Option(label,value))); select.dataset.choices = key; }
+      select.value = state.filter || 'all'; select.disabled = !state.loaded || state.busy;
+    }
+  }
+  function assignmentPreview() {
+    if (!state.draft) return;
+    const profile = state.snapshot.profiles.find(item => item.id === el('workAreaProfile').value);
+    el('workAreaAssignmentPreview').textContent = `${el('workAreaName').value.trim() || 'New area'} → ${profile ? profileLabel(profile) : 'Choose a profile'}. ${state.draft.geometry ? 'Save to share this assignment with everyone.' : 'Draw a boundary before saving.'}`;
+  }
   const errorText = error => {
     if (/CLIENT_UPDATE_REQUIRED|cd_work_areas|SETUP_REQUIRED/.test(error.message)) return 'Work areas need the server update before they can be used.';
     if (/STALE_VERSION/.test(error.message)) return 'Another profile changed these areas. Your edit was not saved. Cancel this edit, refresh, and reopen the area to use the latest boundaries.';
@@ -4728,7 +4746,7 @@ function setupWorkAreas() {
   };
   function renderMap() {
     layer.clearLayers();
-    for (const area of state.snapshot?.areas || []) {
+    for (const area of shownAreas()) {
       const title = node('span', `${area.profileName} · ${area.name}`);
       L.geoJSON(area.geometry, { pane: 'workAreasPane', interactive: false,
         style: { color: area.color, fillColor: area.color, fillOpacity: 0.12, opacity: 0.95, weight: 3 }
@@ -4742,8 +4760,12 @@ function setupWorkAreas() {
   }
   function render() {
     const workspace = profileState.workspace, signed = Boolean(profileState.user), editable = canEdit();
+    renderFilters();
+    const shown = shownAreas(), total = state.snapshot?.areas.length || 0;
+    const overlayStatus = !visible.checked ? 'Work areas are hidden.' : state.filter === 'mine' && !shown.length ? 'No areas assigned to you yet.'
+      : `${shown.length} of ${total} ${total === 1 ? 'area' : 'areas'} shown.`;
     visible.disabled = !signed || !workspace?.fileId;
-    el('manageWorkAreasBtn').disabled = !state.loaded || state.busy || !signed;
+    el('manageWorkAreasBtn').disabled = !state.loaded || state.busy || profileState.busy || !signed;
     el('manageWorkAreasBtn').textContent = editable ? 'Manage work areas' : 'View work areas';
     el('prepareWorkAreasBtn').hidden = !(signed && workspace?.legacy && workspace.mode === 'original');
     el('prepareWorkAreasBtn').disabled = profileState.busy;
@@ -4751,11 +4773,16 @@ function setupWorkAreas() {
     el('workAreasStatus').textContent = !signed ? 'Sign in to see profile work areas.' : !workspace ? 'Open a team file or your copy to see work areas.'
       : !workspace.fileId ? state.error || 'Enable work areas on the team Excel to share boundaries for this file.'
       : state.error || (state.loading && !state.loaded ? 'Loading shared work areas…'
-      : `${state.snapshot?.areas.length || 0} shared areas. ${workspace.mode === 'original' ? 'Edit here for everyone.' : 'View only in your copy; edit on the team Excel.'}`);
-    el('workAreasHelp').textContent = `${workspace?.name || ''} · ${editable ? 'Changes save directly for everyone. Each profile can have several areas. Delivery records stay unchanged.' : 'These are the shared team boundaries. Open the team Excel while signed in to edit them.'}`;
+      : `${overlayStatus} ${workspace.mode === 'original' ? 'Edit here for everyone.' : 'View only in your copy; edit on the team Excel.'}`);
+    el('workAreasTitle').textContent = state.draft ? state.draft.existing ? 'Edit work area' : 'Add work area' : 'Profile work areas';
+    el('workAreasHelp').textContent = `${workspace?.name || ''} · ${workspace?.mode === 'original' ? 'Team Excel — you can edit areas and assign profiles here.' : 'Your copy — view areas here. To change boundaries or assignments, open the team Excel.'}`;
+    el('workAreasTeamBtn').hidden = !signed || workspace?.mode !== 'copy';
+    el('workAreasTeamBtn').disabled = state.busy || profileState.busy;
+    el('workAreasReturnBtn').hidden = !signed || workspace?.mode !== 'original' || workspace.fileId !== returnCopyFileId;
+    el('workAreasReturnBtn').disabled = state.busy || profileState.busy;
     const legend = el('workAreasLegend'); legend.replaceChildren();
     const profiles = new Map();
-    for (const area of state.snapshot?.areas || []) {
+    for (const area of shownAreas()) {
       const key = `${area.profileId}:${area.color}`;
       const entry = profiles.get(key) || { ...area, count: 0 }; entry.count++; profiles.set(key, entry);
     }
@@ -4773,34 +4800,40 @@ function setupWorkAreas() {
     el('saveWorkAreaBtn').textContent = state.busy ? 'Saving…' : state.pending ? 'Retry save for everyone' : 'Save for everyone';
     el('cancelWorkAreaBtn').disabled = state.busy;
     el('closeWorkAreasBtn').disabled = state.busy;
+    el('deleteWorkAreaBtn').hidden = !state.draft?.existing;
+    el('deleteWorkAreaBtn').disabled = !editable || state.busy || Boolean(state.pending);
     el('retryWorkAreaSaveBtn').hidden = !state.pending || Boolean(state.draft) || state.conflict;
     el('retryWorkAreaSaveBtn').disabled = state.busy || !editable;
-    el('workAreaBoundaryStatus').textContent = state.draft?.geometry ? 'Boundary ready to save. Changes are not shared until you save.' : 'Draw the boundary on the map before saving.';
-    el('drawWorkAreaBtn').textContent = state.draft?.geometry ? 'Redraw boundary' : 'Draw boundary';
+    el('workAreaBoundaryStatus').textContent = state.draft?.geometry ? 'Boundary ready. Keep it as it is, move its corners, or draw a replacement.' : 'Tap Draw boundary, then tap at least 3 corners around the delivery area.';
+    el('drawWorkAreaBtn').textContent = state.draft?.geometry ? 'Draw again' : 'Draw boundary';
     el('adjustWorkAreaBtn').hidden = !state.draft?.geometry;
+    assignmentPreview();
     const list = el('workAreasList'); list.replaceChildren();
-    if (!state.snapshot?.areas.length) list.append(node('p', 'No work areas have been saved for this team file yet.'));
-    for (const area of state.snapshot?.areas || []) {
+    if (!shownAreas().length) {
+      const empty = node('div', '', 'work-area-empty');
+      empty.append(node('strong', state.filter === 'mine' ? 'No areas assigned to you yet' : state.snapshot?.areas.length ? 'No areas for this profile yet' : 'Plan who delivers where'),
+        node('p', editable ? 'Add a work area, choose who will deliver there, and draw its boundary.' : 'Open the team Excel to add areas or assign them to a profile.'));
+      list.append(empty);
+    }
+    for (const area of shownAreas()) {
       const card = node('article', '', 'work-area-card'); card.style.borderLeftColor = area.color;
-      card.append(node('strong', area.name), node('p', `Assigned to ${area.profileName}`));
+      card.append(node('strong', area.name), node('p', `Assigned to ${area.profileName}${area.profileId === profileState.user?.id ? ' (you)' : ''}`, 'work-area-assignee'));
+      const actions = node('div', '', 'work-area-card-actions');
       const zoom = node('button', 'Show on map'); zoom.type = 'button';
       zoom.disabled = state.busy || Boolean(state.pending);
       zoom.onclick = () => {
         visible.checked = true; renderMap(); dialog.close(); closeMobileMenu();
         map.fitBounds(L.geoJSON(area.geometry).getBounds(), { padding: [30,30], maxZoom: 17 });
       };
-      card.append(zoom);
+      actions.append(zoom);
       if (editable) {
-        const edit = node('button', 'Edit'), remove = node('button', 'Delete');
-        edit.type = remove.type = 'button'; edit.disabled = remove.disabled = state.busy || Boolean(state.pending);
+        const edit = node('button', 'Edit area'), assign = node('button', 'Assign profile');
+        edit.type = assign.type = 'button'; edit.disabled = assign.disabled = state.busy || Boolean(state.pending);
         edit.onclick = () => editArea(area);
-        remove.onclick = () => {
-          if (!canEdit() || state.busy || state.pending || !confirm(`Delete "${area.name}" for everyone using ${workspace.name}?`)) return;
-          const { revision, areas } = state.snapshot;
-          saveSnapshot(areas.filter(item => item.id !== area.id), revision);
-        };
-        card.append(edit, remove);
+        assign.onclick = () => { editArea(area); el('workAreaProfile').focus(); };
+        actions.append(edit, assign);
       }
+      card.append(actions);
       list.append(card);
     }
   }
@@ -4821,6 +4854,7 @@ function setupWorkAreas() {
   }
   function syncContext() {
     const workspace = profileState.workspace;
+    if (!profileState.user || workspace?.fileId !== returnCopyFileId) returnCopyFileId = null;
     const key = `${profileState.user?.id || ''}:${workspace?.fileId || workspace?.sourceKey || ''}:${workspace?.mode || ''}`;
     if (key === contextKey) { render(); return; }
     stopBoundary(false, false); dialog.close(); contextKey = key;
@@ -4831,15 +4865,17 @@ function setupWorkAreas() {
   function editArea(area = null) {
     if (!canEdit() || state.busy || state.pending) return;
     const own = state.snapshot.areas.find(item => item.profileId === profileState.user.id);
-    state.draft = { id: area?.id || crypto.randomUUID(), geometry: area ? structuredClone(area.geometry) : null,
+    state.draft = { id: area?.id || crypto.randomUUID(), existing: Boolean(area), geometry: area ? structuredClone(area.geometry) : null,
       revision: state.snapshot.revision, areas: structuredClone(state.snapshot.areas) };
     state.conflict = false;
     el('workAreaName').value = area?.name || '';
-    el('workAreaProfile').replaceChildren(...state.snapshot.profiles.map(profile => new Option(profile.name, profile.id)));
+    el('workAreaProfile').replaceChildren(...state.snapshot.profiles.map(profile => new Option(profileLabel(profile), profile.id)));
     el('workAreaProfile').value = area?.profileId || profileState.user.id;
     el('workAreaColor').value = area?.color || own?.color || '#2563eb';
     if (!el('workAreaColor').value) el('workAreaColor').value = '#2563eb';
-    message(''); render(); el('workAreaName').focus();
+    if (!area && !own) el('workAreaProfile').onchange();
+    el('workAreaAppearance').open = false;
+    message(''); render(); dialog.scrollTop = 0; el('workAreaName').focus();
   }
   function startBoundary(adjust = false) {
     if (!canEdit() || !state.draft || state.busy || state.pending || optimoLocationPicker || resequenceBusy || deliverySaveInProgress) return;
@@ -4851,7 +4887,9 @@ function setupWorkAreas() {
     document.body.classList.add('editing-work-area');
     el('workAreaMapEditor').hidden = false;
     el('workAreaMapTitle').textContent = `${adjust ? 'Adjust' : 'Draw'} boundary · ${el('workAreaName').value.trim() || 'New area'}`;
-    el('workAreaMapHelp').textContent = adjust ? 'Drag corners or midpoint handles. Use boundary returns to the shared-save review.' : 'Tap each corner, then Finish boundary. Pan or pinch to move around the map.';
+    el('workAreaMapHelp').textContent = adjust ? 'Drag a circle to move a corner. Drag a faded circle to add a corner. Tap Use boundary when finished, then save.' : 'Tap at least 3 corners around the area. Pinch to zoom or drag to move the map. Then tap Finish boundary.';
+    el('undoWorkAreaCorner').hidden = adjust;
+    el('undoWorkAreaCorner').disabled = true;
     el('finishWorkAreaBoundary').disabled = !adjust;
     el('finishWorkAreaBoundary').textContent = adjust ? 'Use boundary' : 'Finish boundary';
     if (adjust) {
@@ -4885,7 +4923,7 @@ function setupWorkAreas() {
     try {
       const result = await profileApi(state.pending);
       if (session !== state) return;
-      state.snapshot = result; state.loaded = true; state.draft = null; state.pending = null; state.error = '';
+      state.snapshot = result; state.loaded = true; state.draft = null; state.pending = null; state.error = ''; state.filter = 'all';
       renderMap(); message('Saved for everyone. Other open maps refresh within 15 seconds.');
     } catch (error) {
       if (session !== state) return;
@@ -4906,12 +4944,50 @@ function setupWorkAreas() {
   dialog.addEventListener('cancel', event => { event.preventDefault(); closeDialog(); });
   el('newWorkAreaBtn').onclick = () => editArea();
   el('cancelWorkAreaBtn').onclick = cancelEdit;
+  el('deleteWorkAreaBtn').onclick = () => {
+    if (!canEdit() || !state.draft?.existing || state.busy || state.pending) return;
+    const draft = state.draft, area = draft.areas.find(item => item.id === draft.id);
+    if (!confirm(`Delete "${area.name}" for everyone using ${profileState.workspace.name}?`)) return;
+    state.draft = null;
+    saveSnapshot(draft.areas.filter(item => item.id !== draft.id), draft.revision);
+  };
+  el('workAreaName').oninput = assignmentPreview;
+  el('workAreaProfile').onchange = () => {
+    if (!state.draft) return;
+    if (!state.draft.customColor) {
+      const id = el('workAreaProfile').value;
+      const existing = state.snapshot.areas.find(area => area.profileId === id);
+      const options = el('workAreaColor').options;
+      el('workAreaColor').value = existing?.color || options[Math.max(0,state.snapshot.profiles.findIndex(profile => profile.id === id)) % options.length].value;
+    }
+    assignmentPreview();
+  };
+  el('workAreaColor').onchange = () => { if (state.draft) state.draft.customColor = true; };
+  for (const id of ['workAreasFilter','workAreasListFilter']) el(id).onchange = event => {
+    state.filter = event.target.value; render(); renderMap();
+  };
+  el('workAreasTeamBtn').onclick = async () => {
+    const fileId = profileState.workspace?.fileId;
+    if (!profileState.user || profileState.workspace?.mode !== 'copy' || profileState.busy || state.busy) return;
+    returnCopyFileId = fileId;
+    dialog.close();
+    await openProfileFile({fileId}, 'original');
+    if (profileState.workspace?.fileId !== fileId || profileState.workspace.mode !== 'original') return;
+    dialog.showModal(); render(); refresh();
+  };
+  el('workAreasReturnBtn').onclick = async () => {
+    const fileId = returnCopyFileId;
+    if (!fileId || !profileState.user || profileState.workspace?.fileId !== fileId || profileState.busy || state.busy) return;
+    dialog.close();
+    await openProfileFile({fileId}, 'copy');
+  };
   el('refreshWorkAreasBtn').onclick = refresh;
   el('retryWorkAreaSaveBtn').onclick = () => saveSnapshot();
   el('drawWorkAreaBtn').onclick = () => startBoundary();
   el('adjustWorkAreaBtn').onclick = () => startBoundary(true);
   el('finishWorkAreaBoundary').onclick = () => { if (state.mapMode === 'draw') state.drawer?.completeShape(); else stopBoundary(true); };
   el('cancelWorkAreaBoundary').onclick = () => stopBoundary();
+  el('undoWorkAreaCorner').onclick = () => { if (state.mapMode === 'draw') state.drawer?.deleteLastVertex(); };
   el('workAreaForm').onsubmit = event => {
     event.preventDefault();
     if (!state.draft || !canEdit()) return;
@@ -4935,9 +5011,14 @@ function setupWorkAreas() {
     });
     if (profileElement('profileStatus').dataset.state === 'error') { state.error = profileElement('profileStatus').textContent; render(); }
   };
-  visible.onchange = () => { renderMap(); if (visible.checked) refresh(); };
+  visible.onchange = () => { render(); renderMap(); if (visible.checked) refresh(); };
   map.on('draw:drawvertex', event => {
-    if (state.mapMode === 'draw') el('finishWorkAreaBoundary').disabled = (event.layers?.getLayers().length || 0) < 3;
+    if (state.mapMode === 'draw') {
+      const count = event.layers?.getLayers().length || 0;
+      el('finishWorkAreaBoundary').disabled = count < 3;
+      el('undoWorkAreaCorner').disabled = count < 2;
+      el('workAreaMapHelp').textContent = `${count} ${count === 1 ? 'corner' : 'corners'} placed. ${count < 3 ? `Add ${3-count} more to make an area.` : 'Add more corners or tap Finish boundary.'} Drag the map or pinch to zoom.`;
+    }
   });
   map.on('draw:drawstop', () => { if (state.mapMode === 'draw') stopBoundary(); });
   document.addEventListener('keydown', event => { if (event.key === 'Escape' && state.mapMode) stopBoundary(); });

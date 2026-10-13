@@ -74,7 +74,9 @@ const server = http.createServer((req, res) => {
       await page.locator('#newWorkAreaBtn').click();
       await page.locator('#workAreaName').fill(name);
       await page.locator('#workAreaProfile').selectOption(profileId);
+      await page.locator('#workAreaAppearance > summary').click();
       await page.locator('#workAreaColor').selectOption(color);
+      await page.locator('#workAreaAppearance > summary').click();
       await page.locator('#drawWorkAreaBtn').click();
       const bounds=await page.locator('#map').boundingBox();
       const width=Math.min(bounds.width,500);
@@ -84,9 +86,13 @@ const server = http.createServer((req, res) => {
         await page.waitForTimeout(100);
       }
       assert(await page.locator('#finishWorkAreaBoundary').isEnabled(),'Three or more vertices enable Finish');
+      await page.locator('#undoWorkAreaCorner').click();
+      assert.match(await page.locator('#workAreaMapHelp').textContent(),/3 corners placed/);
       await page.locator('#finishWorkAreaBoundary').click();
       assert(await page.locator('#workAreasDialog').isVisible());
       assert(await page.locator('#saveWorkAreaBtn').isEnabled());
+      assert.match(await page.locator('#workAreaAssignmentPreview').textContent(),new RegExp(name));
+      await page.screenshot({path:path.join(root,`local-artifacts/work-area-form-${page.viewportSize().width}.png`)});
     }
     const count = page => page.evaluate(()=>map.getPane('workAreasPane').querySelectorAll('path').length);
     async function adjustBoundary(page) {
@@ -133,14 +139,26 @@ const server = http.createServer((req, res) => {
     assert.equal(await count(b),2,'Another profile copy sees shared areas');
     await manager(b);
     assert.equal(await b.locator('#newWorkAreaBtn').isVisible(),false);
-    assert.equal(await b.locator('#workAreasList button').filter({hasText:/^(Edit|Delete)$/}).count(),0);
+    assert.equal(await b.locator('#workAreasList button').filter({hasText:/^(Edit area|Assign profile|Delete)$/}).count(),0);
+    await b.locator('#workAreasListFilter').selectOption('mine');
+    assert.equal(await count(b),0);
+    assert.match(await b.locator('#workAreasList').textContent(),/No areas assigned to you yet/);
+    await b.locator('#workAreasListFilter').selectOption(north.id);
+    assert.equal(await count(b),2);
+    assert.equal(await b.locator('#workAreasFilter').inputValue(),north.id);
+    await b.locator('#workAreasListFilter').selectOption('all');
     await b.locator('#closeWorkAreasBtn').click();
     await menu(b);
     await b.locator('#workAreasVisible').uncheck(); assert.equal(await count(b),0);
     await b.locator('#workAreasVisible').check(); assert.equal(await count(b),2);
     assert.equal(requests.filter(r=>r.action==='work-areas-save' && r.mode==='copy').length,0);
-    await b.evaluate(fileId=>openProfileFile({fileId},'original'),fileId);
-    await b.waitForFunction(()=>!document.getElementById('manageWorkAreasBtn').disabled);
+    await manager(b);
+    const copyBefore=await fx.call(south,'open',{fileId});
+    await b.locator('#workAreasTeamBtn').click();
+    await b.waitForFunction(()=>profileState.workspace.mode==='original' && !document.getElementById('manageWorkAreasBtn').disabled);
+    assert.equal(await b.evaluate(()=>profileState.workspace.mode),'original');
+    assert.equal((await fx.call(south,'open',{fileId})).copyRevision,copyBefore.copyRevision,'Switching to edit areas preserves the profile copy');
+    await b.locator('#closeWorkAreasBtn').click();
     await addArea(b,'South side',south.id,'#e11d48');
     await b.locator('#saveWorkAreaBtn').click();
     await b.waitForFunction(()=>document.getElementById('workAreaSaveStatus').textContent.startsWith('Saved'));
@@ -157,10 +175,17 @@ const server = http.createServer((req, res) => {
         const label=await page.locator('.work-area-label').first().boundingBox();
         assert(label.width>80 && label.height<65,'Map labels remain readable without one-letter wrapping');
         await page.screenshot({path:path.join(root,`local-artifacts/work-areas-${page.viewportSize().width}-${light}.png`)});
+        await page.locator('#manageWorkAreasBtn').click();
+        await page.screenshot({path:path.join(root,`local-artifacts/work-area-list-${page.viewportSize().width}-${light}.png`)});
+        assert(await page.locator('#workAreasDialog').evaluate(el=>el.scrollWidth<=el.clientWidth));
+        await page.locator('#closeWorkAreasBtn').click();
       }
     }
     await manager(b);
-    await b.locator('.work-area-card').filter({hasText:'South side'}).getByRole('button',{name:'Edit',exact:true}).click();
+    await b.locator('.work-area-card').filter({hasText:'South side'}).getByRole('button',{name:'Assign profile',exact:true}).click();
+    assert(await b.locator('#workAreaProfile').evaluate(el=>el===document.activeElement));
+    await b.locator('#cancelWorkAreaBtn').click();
+    await b.locator('.work-area-card').filter({hasText:'South side'}).getByRole('button',{name:'Edit area',exact:true}).click();
     await adjustBoundary(b);
     await b.locator('#workAreaName').fill('South adjusted');
     // Another editor changes the same shared revision before this draft is saved.
@@ -171,7 +196,7 @@ const server = http.createServer((req, res) => {
     assert.equal((await fx.call(north,'work-areas',{fileId})).areas[2].name,'South side');
     await b.locator('#cancelWorkAreaBtn').click();
     await b.waitForFunction(()=>document.getElementById('workAreasList').textContent.includes('North updated'));
-    await b.locator('.work-area-card').filter({hasText:'South side'}).getByRole('button',{name:'Edit',exact:true}).click();
+    await b.locator('.work-area-card').filter({hasText:'South side'}).getByRole('button',{name:'Edit area',exact:true}).click();
     await adjustBoundary(b);
     await b.locator('#workAreaName').fill('South renamed');
     await b.locator('#workAreaProfile').selectOption(north.id);
@@ -186,9 +211,12 @@ const server = http.createServer((req, res) => {
     assert.equal(latest.revision,5,'Lost response retry commits once');
     assert.equal(latest.areas[2].profileId,north.id);
     assert.notDeepEqual(latest.areas[2].geometry,shared.areas[2].geometry,'Adjusted corners persist only after confirmed save');
-    await b.locator('.work-area-card').filter({hasText:'South renamed'}).getByRole('button',{name:'Delete',exact:true}).click();
+    await b.locator('.work-area-card').filter({hasText:'South renamed'}).getByRole('button',{name:'Edit area',exact:true}).click();
+    await b.locator('#deleteWorkAreaBtn').click();
     await b.waitForFunction(()=>document.querySelectorAll('#workAreasList .work-area-card').length===2);
-    await b.locator('#closeWorkAreasBtn').click();
+    await b.locator('#workAreasReturnBtn').click();
+    await b.waitForFunction(()=>profileState.workspace.mode==='copy' && !profileState.busy);
+    assert.equal((await fx.call(south,'open',{fileId})).copyRevision,copyBefore.copyRevision);
     await b.evaluate(fileId=>openProfileFile({fileId},'copy'),other.fileId);
     await b.waitForFunction(()=>!document.getElementById('manageWorkAreasBtn').disabled);
     assert.equal(await count(b),0,'File switches discard previous boundaries');

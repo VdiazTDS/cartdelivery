@@ -5290,6 +5290,27 @@ body .sidebar #workAreasSection button {
 .work-area-card { border: 1px solid var(--profile-border); border-left-width: 5px; border-radius: 8px; padding: 12px; margin: 12px 0; overflow-wrap: anywhere; }
 .work-area-card p { margin: 6px 0; }
 .work-area-card button { margin: 4px 6px 0 0; }
+.work-area-filter-label { display: block; margin: 8px 0 5px; font-size: 13px; font-weight: 700; }
+#workAreasFilter, #workAreasListFilter { width: 100%; min-height: 44px; box-sizing: border-box; font-size: 16px; border: 1px solid var(--profile-border, var(--tool-edge)); border-radius: 8px; padding: 8px; background: var(--profile-card, var(--tool-bg)); color: var(--profile-text, var(--tool-ink)); }
+#workAreasDialog .work-area-toolbar { display: flex; gap: 8px; margin: 12px 0; }
+#workAreasDialog .profile-heading { position: sticky; top: -1px; z-index: 2; padding: 6px 0 12px; background: var(--profile-bg); }
+#workAreasDialog .work-area-toolbar button { flex: 1; }
+#workAreasDialog .work-area-empty { padding: 20px 14px; margin: 14px 0; background: var(--profile-card); border: 1px dashed var(--profile-border); border-radius: 12px; }
+#workAreasDialog .work-area-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+#workAreasDialog .work-area-card-actions button { flex: 1 1 130px; margin: 0; }
+#workAreasDialog .work-area-assignee { font-size: 15px; color: var(--profile-text); margin: 8px 0 12px; }
+.work-area-step { padding: 12px; border: 1px solid var(--profile-border); border-radius: 12px; margin: 12px 0; background: var(--profile-card); }
+#workAreaFields .work-area-step > label, .work-area-step h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 16px; font-weight: 700; }
+.work-area-step-number { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 28px; height: 28px; border-radius: 50%; background: #2563eb; color: white; font-size: 14px; }
+#workAreasDialog .work-area-step p { color: var(--profile-muted); font-size: 13px; line-height: 1.45; margin: 8px 0; }
+#workAreaAppearance summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; font-size: 14px; }
+#workAreaAppearance summary::before { content: '+'; margin-right: 8px; }
+#workAreaAppearance[open] summary::before { content: '−'; }
+.work-area-save-bar { position: sticky; bottom: -1px; background: var(--profile-bg); border-top: 1px solid var(--profile-border); padding: 10px 0 max(10px, env(safe-area-inset-bottom)); z-index: 1; }
+#workAreaAssignmentPreview { margin: 0 0 8px; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+#workAreaForm .profile-actions { grid-template-columns: 1fr 1fr; margin: 0; }
+#workAreasDialog .work-area-delete { color: var(--profile-text); margin-top: 18px; border-color: #c65757; background: transparent; }
+#undoWorkAreaCorner { margin-bottom: 8px; width: 100%; }
 #workAreaSaveStatus, #workAreasHelp { overflow-wrap: anywhere; }
 #workAreaMapEditor {
   position: fixed; z-index: 3600; left: 50%; transform: translateX(-50%);
