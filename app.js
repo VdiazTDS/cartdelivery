@@ -1345,28 +1345,49 @@ async function showProfileHistory(more = false) {
 function setupHelp() {
   const dialog = document.getElementById('helpDialog'), el = id => document.getElementById(id);
   const steps = [
-    { team: 0, mine: 0, other: 0, arrow: '↓', action: 'Each person opens their own copy', mineNote: 'Ready for your deliveries', otherNote: 'Their own saved work',
-      title: '1. Start from the team file', text: 'Sign in, choose a team Excel, then open your own copy. Both copies start with the team’s delivery records.', next: 'Next: save a delivery →' },
-    { team: 0, mine: 1, other: 0, arrow: '↓', action: 'The team file has not changed', mineNote: 'Saved · 1 stop waiting to sync', otherNote: 'Has not received your delivery',
-      title: '2. Your save stays in your copy', text: 'You deliver 1 cart and save it. Your copy now shows 1 of 2 delivered, so 1 cart remains. The main team file and your teammate’s copy still show 0.', next: 'Next: sync to team →' },
-    { team: 1, mine: 1, other: 0, arrow: '↑', action: 'Your reviewed changes → team file', mineNote: 'Up to date · nothing waiting to sync', otherNote: 'Still needs to check for updates',
-      title: '3. Review, confirm, then share', text: 'After you confirm Sync to team Excel, the team file shows 1 of 2 delivered. Your copy also receives the latest team updates. It stays your working copy, ready for the next delivery.', next: 'Next: teammate updates →' },
-    { team: 1, mine: 1, other: 1, arrow: '↓', action: 'Latest team records → teammate’s copy', mineNote: 'Your saved work is shared', otherNote: 'Updated · now sees your delivery',
-      title: '4. Your teammate brings in the update', text: 'Their existing copy does not update by itself. With no pending changes, they use Check for team updates and confirm. If they have saved changes of their own, they review and sync those instead. Everyone can then work from the latest shared records.', next: 'Replay the example ↺' }
+    { team: 0, mine: 0, other: 0, arrow: '↓', action: 'Open your own copy', mineNote: 'Ready to work', otherNote: 'Their own copy',
+      title: 'One shared starting point', text: 'Each profile works in its own copy.', next: 'Next: save →' },
+    { team: 0, mine: 1, other: 0, arrow: '‖', action: 'Not shared yet', mineNote: 'Saved · waiting to sync', otherNote: 'Unchanged',
+      title: 'Saved in your copy only', text: '1 cart delivered. Team still sees 0.', next: 'Next: sync →' },
+    { team: 1, mine: 1, other: 0, arrow: '↑', action: 'Review → confirm → share', mineNote: 'Up to date', otherNote: 'Needs team update',
+      title: 'Team file now shows your delivery', text: 'Your copy also receives the latest team updates.', next: 'Next: teammate →' },
+    { team: 1, mine: 1, other: 1, arrow: '↓', action: 'Teammate checks for team updates', mineNote: 'Shared', otherNote: 'Updated',
+      title: 'Now both copies see it', text: 'Teammate has unsynced work? They review and sync instead.', next: 'Replay ↺' }
   ];
+  const showCarts = (id, count) => {
+    [...el(id).children].forEach((cart, index) => {
+      cart.classList.toggle('is-delivered', index < count);
+      cart.querySelector('b').textContent = index < count ? '✓' : '·';
+    });
+  };
+  const syncExamples = {
+    same: { mine: 1, team: 1, result: '✓ Agree: keep 1 delivered', reason: 'Same report twice ≠ 2 carts.' },
+    different: { mine: 1, team: 2, result: 'Choose the correct total', reason: '1 and 2 are never automatically added to make 3.' },
+    correction: { mine: 1, team: 3, result: 'Check before reducing 3 → 1', reason: 'Using your count removes 2 delivered carts and reopens this stop.' }
+  };
+  function showSyncExample(name) {
+    const example = syncExamples[name];
+    showCarts('helpSyncMineCarts', example.mine); showCarts('helpSyncTeamCarts', example.team);
+    el('helpSyncMine').textContent = `${example.mine} / 3`;
+    el('helpSyncTeam').textContent = `${example.team} / 3`;
+    el('helpSyncResult').textContent = example.result; el('helpSyncReason').textContent = example.reason;
+    el('helpSyncExample').dataset.example = name;
+    dialog.querySelectorAll('[data-help-sync]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.helpSync === name)));
+  }
   let current = 0;
   function showStep(index) {
     current = index;
     const step = steps[index];
-    el('helpTeamCount').textContent = `${step.team} of 2 carts delivered`;
-    el('helpMyCount').textContent = `${step.mine} of 2 delivered`;
-    el('helpOtherCount').textContent = `${step.other} of 2 delivered`;
+    el('helpTeamCount').textContent = `${step.team} / 2 delivered`;
+    el('helpMyCount').textContent = `${step.mine} / 2 delivered`;
+    el('helpOtherCount').textContent = `${step.other} / 2 delivered`;
+    showCarts('helpTeamCarts', step.team); showCarts('helpMyCarts', step.mine); showCarts('helpOtherCarts', step.other);
     for (const [id,value] of Object.entries({ helpMyNote: step.mineNote, helpOtherNote: step.otherNote, helpFlowArrow: step.arrow,
-      helpFlowAction: step.action, helpStepTitle: step.title, helpStepText: step.text, helpNextStep: step.next, helpStepCount: `Step ${index + 1} of 4` })) el(id).textContent = value;
+      helpFlowAction: step.action, helpStepTitle: step.title, helpStepText: step.text, helpNextStep: step.next, helpStepCount: `${index + 1} / 4` })) el(id).textContent = value;
     dialog.querySelectorAll('[data-help-step]').forEach(button => button.setAttribute('aria-pressed',String(Number(button.dataset.helpStep) === index)));
   }
   el('openHelpBtn').onclick = () => {
-    showStep(0); dialog.querySelectorAll('details').forEach(details => { details.open = false; });
+    showStep(0); showSyncExample('same'); dialog.querySelectorAll('details').forEach(details => { details.open = false; });
     dialog.showModal(); el('helpDialog').querySelector('.help-content').scrollTop = 0; el('closeHelpBtn').focus({ preventScroll: true });
   };
   const close = () => dialog.close();
@@ -1374,6 +1395,7 @@ function setupHelp() {
   dialog.addEventListener('cancel',event => { event.preventDefault(); close(); });
   dialog.addEventListener('close',() => el('openHelpBtn').focus({ preventScroll: true }));
   dialog.querySelectorAll('[data-help-step]').forEach(button => { button.onclick = () => showStep(Number(button.dataset.helpStep)); });
+  dialog.querySelectorAll('[data-help-sync]').forEach(button => { button.onclick = () => showSyncExample(button.dataset.helpSync); });
   el('helpNextStep').onclick = () => showStep((current + 1) % steps.length);
 }
 
