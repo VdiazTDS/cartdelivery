@@ -63,12 +63,16 @@ const server=http.createServer((req,res)=>{
       }
       const name='new_driver_'+width;
       await page.locator('#adminNewBtn').click();await page.locator('#adminEditUsername').fill(name);await page.locator('#adminEditPassword').fill('123456');
+      assert(await page.locator('#adminUseColor').isChecked());
+      await page.locator('#adminEditColor').fill('#730f26');
       failSave=true;await page.locator('#adminSaveBtn').click();await page.waitForFunction(()=>document.getElementById('adminStatus').textContent.includes('Could not confirm'));
       assert.equal((await fx.pg.query('select count(*)::int n from auth.users where email=$1',[name+'@profiles.cartdelivery.invalid'])).rows[0].n,0);
       failSave=false;await page.locator('#adminSaveBtn').click();await page.waitForFunction(()=>document.getElementById('adminStatus').textContent==='Profile saved.');
       await page.locator('#adminSearch').fill(name);
       assert.equal(await page.locator('.admin-profile-card').count(),1);
+      assert.equal(await page.locator('.admin-profile-card .profile-color-swatch').evaluate(el=>el.style.backgroundColor),'rgb(115, 15, 38)');
       await page.getByRole('button',{name:'Manage profile',exact:true}).click();
+      assert.equal(await page.locator('#adminEditColor').inputValue(),'#730f26');
       await page.locator('#adminEditUsername').fill(name+'_renamed');await page.locator('#adminEditPassword').fill('654321');await page.locator('#adminSaveBtn').click();
       await page.waitForFunction(()=>document.getElementById('adminStatus').textContent==='Profile saved.');
       await page.getByRole('button',{name:'Manage profile',exact:true}).click();

@@ -1281,6 +1281,7 @@ function setupProfileAdmin() {
     if (/INVALID_REMOVE_CONFIRMATION/.test(message)) return 'Type the exact username to confirm removal.';
     if (/Invalid login credentials/i.test(message)) return 'The admin username or password is incorrect.';
     if (/INVALID_USERNAME/.test(message)) return 'Use 3–30 letters, numbers, underscores or hyphens for the username.';
+    if (/INVALID_PROFILE_COLOR/.test(message)) return 'Choose a valid profile color.';
     return 'Could not confirm the change. Refresh the profiles to check what was saved before trying again.';
   };
   function render() {
@@ -1288,6 +1289,7 @@ function setupProfileAdmin() {
     el('adminDashboard').hidden = screen !== 'list'; el('adminEditForm').hidden = screen !== 'edit';
     dialog.querySelectorAll('button,input').forEach(input => { input.disabled = busy; });
     el('adminEditUsername').disabled = busy || Boolean(editing?.isAdmin);
+    el('adminEditColor').disabled = busy || !el('adminUseColor').checked;
     el('adminRemoveBtn').disabled = busy || !editing || editing.isAdmin || el('adminRemoveConfirm').value !== editing.username || editing.areas > 0;
     dialog.setAttribute('aria-busy',String(busy));
     if (screen !== 'list') return;
@@ -1298,7 +1300,12 @@ function setupProfileAdmin() {
     if (!shown.length) list.append(text('p','No profiles match this search.'));
     for (const profile of shown) {
       const card = document.createElement('article'); card.className = 'admin-profile-card';
-      card.append(text('strong',profile.username),text('span',profile.isAdmin ? 'Administrator' : profile.disabled ? 'Sign-in disabled' : 'Active'));
+      const name = text('strong',profile.username);
+      if (/^#[0-9a-f]{6}$/i.test(profile.color || '')) {
+        const swatch = text('i',''); swatch.className = 'profile-color-swatch'; swatch.style.backgroundColor = profile.color;
+        swatch.setAttribute('aria-label',`Profile color ${profile.color}`); name.prepend(swatch);
+      }
+      card.append(name,text('span',profile.isAdmin ? 'Administrator' : profile.disabled ? 'Sign-in disabled' : 'Active'));
       card.append(text('p',`${profile.copies} saved copies · ${profile.pending} unsynced stops · ${profile.areas} work areas`));
       card.append(text('small',`Created ${profile.createdAt ? new Date(profile.createdAt).toLocaleDateString() : 'date unavailable'} · Last sign-in: ${profile.lastSignInAt ? new Date(profile.lastSignInAt).toLocaleString() : 'Never'}`));
       const button = text('button',profile.isAdmin ? 'Change admin password' : 'Manage profile'); button.type = 'button'; button.disabled = busy;
@@ -1335,6 +1342,8 @@ function setupProfileAdmin() {
     editing = profile; screen = 'edit'; status('');
     el('adminEditContext').textContent = profile ? `Manage ${profile.username}. Changes apply to this profile on every device.` : 'Create a delivery profile. Share its username and password with the person who will use it.';
     el('adminEditUsername').value = profile?.username || ''; el('adminEditPassword').value = ''; el('adminEditPassword').required = !profile;
+    el('adminUseColor').checked = !profile || Boolean(profile.color);
+    el('adminEditColor').value = profile?.color || '#2563eb';
     el('adminPasswordHelp').textContent = profile ? 'Leave blank to keep the password, or enter at least 6 characters to reset it. Existing passwords cannot be viewed.' : 'At least 6 characters. No other password rules.';
     el('adminAccessControls').hidden = !profile || profile.isAdmin;
     el('adminAccessHelp').textContent = profile ? `${profile.disabled ? 'Sign-in is disabled.' : 'Sign-in is enabled.'} Disabling access preserves their saved work.${profile.areas ? ` Reassign ${profile.areas} work areas before removing this account.` : ''}` : '';
@@ -1363,11 +1372,13 @@ function setupProfileAdmin() {
   el('adminRefreshBtn').onclick = () => task(async()=>{await reload();status('Profiles refreshed.');});
   el('adminNewBtn').onclick = () => edit();
   el('adminSearch').oninput = render;
+  el('adminUseColor').onchange = render;
   el('adminCancelEditBtn').onclick = () => {editing=null;el('adminEditPassword').value='';screen='list';status('');render();};
   el('adminRemoveConfirm').oninput = render;
   el('adminEditForm').onsubmit = event => {
     event.preventDefault(); if (!el('adminEditForm').reportValidity()) return;
-    const body = {action:'admin-save',userId:editing?.id,username:el('adminEditUsername').value,password:el('adminEditPassword').value};
+    const body = {action:'admin-save',userId:editing?.id,username:el('adminEditUsername').value,password:el('adminEditPassword').value,
+      color:el('adminUseColor').checked ? el('adminEditColor').value : null};
     task(async()=>{await api(body);await refreshAfterChange('Profile saved.');});
   };
   el('adminToggleAccessBtn').onclick = () => {
@@ -4924,6 +4935,7 @@ function setupWorkAreas() {
     el('workAreaBoundaryStatus').textContent = state.draft?.geometry ? 'Boundary ready. Keep it as it is, move its corners, or draw a replacement.' : 'Tap Draw boundary, then tap at least 3 corners around the delivery area.';
     el('drawWorkAreaBtn').textContent = state.draft?.geometry ? 'Draw again' : 'Draw boundary';
     el('adjustWorkAreaBtn').hidden = !state.draft?.geometry;
+    syncAssignedProfileColor();
     assignmentPreview();
     const list = el('workAreasList'); list.replaceChildren();
     if (!shownAreas().length) {
@@ -4978,6 +4990,19 @@ function setupWorkAreas() {
     state = { loaded: false, loading: false, busy: false, snapshot: null, draft: null, pending: null, error: '', conflict: false, mapMode: null };
     layer.clearLayers(); if (map.hasLayer(layer)) map.removeLayer(layer);
     message(''); render(); refresh();
+  }
+  function syncAssignedProfileColor() {
+    const profile = state.snapshot?.profiles.find(item => item.id === el('workAreaProfile').value);
+    const color = /^#[0-9a-f]{6}$/i.test(profile?.color || '') ? profile.color : null;
+    el('workAreaProfileColor').hidden = !color;
+    el('workAreaAppearance').hidden = Boolean(color);
+    el('workAreaColor').disabled = Boolean(color);
+    if (!color) return;
+    const picker = el('workAreaColor');
+    if (![...picker.options].some(option => option.value === color)) picker.add(new Option('Profile color',color));
+    picker.value = color;
+    el('workAreaProfileColor').querySelector('i').style.backgroundColor = color;
+    el('workAreaProfileColor').querySelector('span').textContent = `Uses ${profile.name}’s profile color. An admin can change it in profile administration.`;
   }
   function editArea(area = null) {
     if (!canEdit() || state.busy || state.pending) return;
@@ -5077,7 +5102,7 @@ function setupWorkAreas() {
       const options = el('workAreaColor').options;
       el('workAreaColor').value = existing?.color || options[Math.max(0,state.snapshot.profiles.findIndex(profile => profile.id === id)) % options.length].value;
     }
-    assignmentPreview();
+    syncAssignedProfileColor(); assignmentPreview();
   };
   el('workAreaColor').onchange = () => { if (state.draft) state.draft.customColor = true; };
   for (const id of ['workAreasFilter','workAreasListFilter']) el(id).onchange = event => {

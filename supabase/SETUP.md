@@ -4,7 +4,9 @@ The app uses Supabase Auth, PostgreSQL and Storage. Excel is an immutable import
 
 ## Current deployment
 
-Project: `lffazhbwvorwxineklsy` (`VdiazTDS's Project`). All seven migrations are installed; **do not run them again**. Email/password signup is enabled, email confirmation is disabled for username aliases, and passwords require six characters with no additional composition rules.
+Project: `lffazhbwvorwxineklsy` (`VdiazTDS's Project`). All eight migrations are installed; **do not run them again**. Email/password signup is enabled, email confirmation is disabled for username aliases, and passwords require six characters with no additional composition rules.
+
+**Profile colors deployed October 13, 2026:** `202610130002_profile_colors.sql` adds profile colors to the protected directories, applies them to assigned work areas, and propagates admin color changes to existing areas with revision checks. The function is ACTIVE at version 7 and includes color validation in `admin-service.mjs`. Six requested delivery profiles were provisioned through the admin API; each password sign-in and color was verified, along with availability in the shared work-area profile picker. Credentials are not stored in this repository. No workbooks or delivery records were changed.
 
 **Admin setup completed October 13, 2026:** `202610130001_profile_admin.sql` is installed and `profile-workbooks` is ACTIVE at version 6, bundling `index.ts`, `data-service.mjs` and `admin-service.mjs`. The requested Admin account was created and granted the server-controlled `cartdelivery_admin` role. A live password sign-in and admin-directory read succeeded. The one shared file, two copies, 5,364 delivery records and 45 storage objects were preserved. Public team reads still pass. Account mutations were tested with local fake Auth/database fixtures; production provisioning created only the requested administrator.
 
@@ -32,7 +34,7 @@ supabase functions deploy profile-workbooks --project-ref lffazhbwvorwxineklsy -
 
 The public-team-views migration adds a read-only function; it does not change records, copies, storage objects or table permissions. Do not revert to the old workbook-based function after database saves: old tables no longer represent current work.
 
-For a fresh project, apply all seven migrations in filename order. Enable Email/password signup, disable email confirmation for username aliases, and require six-character passwords with no additional composition rules. Review project-wide Auth changes if other apps share the project. Aliases use `<username>@profiles.cartdelivery.invalid` and must not receive mail.
+For a fresh project, apply all eight migrations in filename order. Enable Email/password signup, disable email confirmation for username aliases, and require six-character passwords with no additional composition rules. Review project-wide Auth changes if other apps share the project. Aliases use `<username>@profiles.cartdelivery.invalid` and must not receive mail.
 
 Bootstrap the first administrator through trusted Supabase administration: create the requested alias account, then set `app_metadata.cartdelivery_admin` to boolean `true` for its verified user ID. Merely choosing the username `admin` does not grant privileges. Never put its password or a service key in frontend code, migrations, documentation or test fixtures. Later password resets use the admin UI. The separate browser admin session is memory-only and does not replace the driver's login; use **Sign out of admin** to end it.
 
@@ -90,6 +92,7 @@ node tests/work-areas.backend.cjs
 node tests/work-areas.browser.cjs
 node tests/profile-admin.backend.cjs
 node tests/profile-admin.browser.cjs
+node tests/profile-colors.backend.cjs
 node tests/cart-counts.browser.cjs
 node tests/resequence.browser.cjs
 ```

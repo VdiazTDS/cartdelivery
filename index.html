@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261013-profile-admin" />
+  <link rel="stylesheet" href="style.css?v=20261013-profile-colors" />
 
   <link rel="icon" href="favicon.ico" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -626,6 +626,9 @@
     <small>3–30 letters, numbers, underscores or hyphens. Capitalization does not matter.</small>
     <label for="adminEditPassword">New password</label><input id="adminEditPassword" type="password" minlength="6" autocomplete="new-password">
     <small id="adminPasswordHelp">At least 6 characters. No other password rules. Existing passwords cannot be viewed.</small>
+    <label class="admin-color-choice"><input id="adminUseColor" type="checkbox"> Use a profile color</label>
+    <label for="adminEditColor">Profile color</label><input id="adminEditColor" type="color" value="#2563eb" aria-describedby="adminColorHelp">
+    <small id="adminColorHelp">All work areas assigned to this profile use this color. Changing it updates their existing areas for everyone.</small>
     <div class="profile-actions"><button id="adminSaveBtn" class="profile-primary" type="submit">Save profile</button><button id="adminCancelEditBtn" type="button">Back to profiles</button></div>
     <section id="adminAccessControls" hidden><h3>Account access</h3><p id="adminAccessHelp"></p><button id="adminToggleAccessBtn" type="button">Disable sign-in</button>
       <details class="admin-remove"><summary>Remove this profile</summary><p>Removes the login permanently. Delivery records and history are kept. Reassign this profile’s work areas before removing it.</p><label for="adminRemoveConfirm">Type the username to confirm</label><input id="adminRemoveConfirm" autocomplete="off"><button id="adminRemoveBtn" type="button">Remove profile permanently</button></details>
@@ -648,6 +651,7 @@
       <section class="work-area-step"><label for="workAreaName"><span class="work-area-step-number">1</span> Name this area</label><input id="workAreaName" maxlength="80" required placeholder="For example: North side"></section>
       <section class="work-area-step"><label for="workAreaProfile"><span class="work-area-step-number">2</span> Who will deliver here?</label><select id="workAreaProfile" required aria-describedby="workAreaProfileHelp"></select>
       <p id="workAreaProfileHelp">Choose a delivery profile. You can assign several areas to the same person.</p>
+      <p id="workAreaProfileColor" class="profile-color-note" hidden><i class="profile-color-swatch" aria-hidden="true"></i><span></span></p>
       <details id="workAreaAppearance"><summary>Area color</summary><label for="workAreaColor">Map color</label><select id="workAreaColor">
         <option value="#2563eb">Blue</option><option value="#e11d48">Rose</option><option value="#15803d">Green</option>
         <option value="#9333ea">Purple</option><option value="#c2410c">Orange</option><option value="#0e7490">Teal</option>
@@ -713,7 +717,7 @@
 </dialog>
 
 <script src="profile-field-mapping.js?v=20261012-delivery-ease" defer></script>
-<script src="app.js?v=20261013-profile-admin" defer></script>
+<script src="app.js?v=20261013-profile-colors" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">

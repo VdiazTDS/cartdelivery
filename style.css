@@ -5283,6 +5283,11 @@ header #openAdminBtn:focus-visible { outline: 3px solid #489fff; outline-offset:
 #adminAccessControls { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--profile-border); }
 body #adminRemoveBtn { border-color: #b74b4b !important; }
 #adminLoginForm > button { width: 100%; margin-top: 16px; }
+.profile-color-swatch { display: inline-block; width: 16px; height: 16px; flex: 0 0 16px; border: 1px solid #94a3b8; border-radius: 3px; vertical-align: middle; margin-right: 8px; }
+.profile-color-note { display: flex; align-items: center; }
+body #adminDialog .admin-color-choice { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+body #adminDialog #adminUseColor { width: 24px; height: 24px; min-height: 24px; margin: 0; }
+body #adminDialog #adminEditColor { width: 100%; min-height: 44px; padding: 4px; }
 #workAreasSection > summary::after { content: '+'; font-size: 20px; }
 #workAreasSection[open] > summary::after { content: '−'; }
 body .sidebar #workAreasSection :is(p, span, strong, label) { color: var(--tool-ink) !important; }

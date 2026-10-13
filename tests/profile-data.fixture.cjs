@@ -11,6 +11,7 @@ async function fixture({ legacySeed } = {}) {
   await fx.pg.exec(fs.readFileSync(require('node:path').join(__dirname, '../supabase/migrations/202610120003_last_sync_time.sql'), 'utf8'));
   await fx.pg.exec(fs.readFileSync(require('node:path').join(__dirname, '../supabase/migrations/202610120004_profile_work_areas.sql'), 'utf8'));
   await fx.pg.exec(fs.readFileSync(require('node:path').join(__dirname, '../supabase/migrations/202610130001_profile_admin.sql'), 'utf8'));
+  await fx.pg.exec(fs.readFileSync(require('node:path').join(__dirname, '../supabase/migrations/202610130002_profile_colors.sql'), 'utf8'));
   const db = { ...fx.db, rpc: async (name, args) => {
     try {
       if (name === 'cd_data_public_read') return { data: (await fx.pg.query('select public.cd_data_public_read($1) result', [args.p])).rows[0].result };

@@ -21,6 +21,10 @@ export function createAdminService(db) {
       const password = body.password;
       if (typeof password !== 'string' || ((creating || password.length) && [...password].length < 6)) throw new Error('INVALID_PASSWORD');
       if (target?.app_metadata?.cartdelivery_admin === true && (target.id !== actor.id || username !== target.email.split('@')[0])) throw new Error('ADMIN_PROTECTED');
+      if (body.color !== undefined) {
+        if (body.color !== null && (typeof body.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(body.color))) throw new Error('INVALID_PROFILE_COLOR');
+        metadata.cartdelivery_color = body.color?.toLowerCase() || null;
+      }
       const attributes = { email: `${username}@profiles.cartdelivery.invalid`, email_confirm: true, app_metadata: metadata, ...(password ? { password } : {}) };
       const result = creating ? await db.auth.admin.createUser(attributes) : await db.auth.admin.updateUserById(target.id, attributes);
       const user = unwrap(result).user;

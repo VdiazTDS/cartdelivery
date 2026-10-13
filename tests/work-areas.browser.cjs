@@ -234,6 +234,21 @@ const server = http.createServer((req, res) => {
     await b.waitForFunction(()=>!profileState.busy && !document.getElementById('manageWorkAreasBtn').disabled);
     assert.equal(await b.evaluate(()=>profileState.workspace.mode),'original');
     assert.equal((await fx.pg.query('select count(*)::int n from cd_data_copies')).rows[0].n,copiesBefore,'Enabling areas never creates a copy');
+    await fx.pg.query("update auth.users set raw_app_meta_data=raw_app_meta_data || '{\"cartdelivery_color\":\"#730f26\"}'::jsonb where id=$1",[north.id]);
+    for(const page of [a,b]) {
+      await page.evaluate(()=>workAreas.refresh());
+      await manager(page);await page.locator('#newWorkAreaBtn').click();
+      await page.locator('#workAreaProfile').selectOption(north.id);
+      assert(await page.locator('#workAreaProfileColor').isVisible());
+      assert(!await page.locator('#workAreaAppearance').isVisible());
+      assert.equal(await page.locator('#workAreaColor').inputValue(),'#730f26');
+      assert(await page.locator('#workAreaColor').isDisabled());
+      await page.screenshot({path:path.join(root,`local-artifacts/profile-color-area-${page.viewportSize().width}.png`)});
+      await page.locator('#workAreaProfile').selectOption(south.id);
+      assert(await page.locator('#workAreaAppearance').isVisible());
+      assert(!await page.locator('#workAreaProfileColor').isVisible());
+      await page.locator('#cancelWorkAreaBtn').click();await page.locator('#closeWorkAreasBtn').click();
+    }
     assert.equal(fx.state.uploads.length,0,'Work areas never write Excel objects');
     await b.evaluate(()=>{profileState.user=null;renderProfileState();});
     assert.equal(await count(b),0);

@@ -1,0 +1,43 @@
+const assert=require('node:assert/strict');
+const {randomUUID}=require('node:crypto');
+const {fixture}=require('./profile-admin.fixture.cjs');
+(async()=>{
+  const fx=await fixture();
+  try {
+    const admin=(await fx.db.auth.admin.createUser({email:'admin@profiles.cartdelivery.invalid',password:'fake-password',app_metadata:{cartdelivery_admin:true}})).data.user;
+    const call=(action,fields={})=>fx.dispatch({action,...fields},admin);
+    const first=await call('admin-save',{username:'color_one',password:'123456',color:'#730F26'});
+    const second=await call('admin-save',{username:'color_two',password:'123456',color:'#0075bc'});
+    const one=await fx.user(first.userId),two=await fx.user(second.userId);
+    assert.equal((await call('admin-list')).profiles.find(p=>p.id===one.id).color,'#730f26');
+    await assert.rejects(()=>call('admin-save',{userId:one.id,username:'color_one',password:'',color:'red'}),/INVALID_PROFILE_COLOR/);
+    await assert.rejects(()=>fx.dispatch({action:'admin-save',userId:one.id,username:'color_one',password:'',color:'#ffffff'},one),/ADMIN_REQUIRED/);
+    const {fileId}=await fx.importRows(one,'Colors.xlsx',[{QTY:2}]);
+    const copy=await fx.call(one,'open',{fileId});
+    const geometry={type:'Polygon',coordinates:[[[-98,30],[-97,30],[-97,31],[-98,30]]]};
+    const areas=[1,2].map(n=>({id:randomUUID(),name:'Area '+n,profileId:one.id,color:'#ffffff',geometry}));
+    const request={fileId,mode:'original',revision:0,areas,requestId:randomUUID()};
+    const saved=await fx.call(one,'work-areas-save',request);
+    assert(saved.areas.every(a=>a.color==='#730f26'),'Server uses profile color even for older clients');
+    assert.equal(saved.profiles.find(p=>p.id===two.id).color,'#0075bc');
+    assert.deepEqual(await fx.call(one,'work-areas-save',request),saved);
+    await call('admin-save',{userId:one.id,username:'color_one',password:'',color:'#009e60'});
+    let current=await fx.call(one,'work-areas',{fileId});
+    assert.equal(current.revision,2);assert(current.areas.every(a=>a.color==='#009e60'));
+    await assert.rejects(()=>fx.call(one,'work-areas-save',{...request,revision:1,requestId:randomUUID()}),/STALE_VERSION/);
+    fx.state.failAdminUpdate=true;
+    await assert.rejects(()=>call('admin-save',{userId:one.id,username:'color_one',password:'',color:'#111111'}),/Simulated/);
+    fx.state.failAdminUpdate=false;
+    assert.equal((await fx.call(one,'work-areas',{fileId})).revision,2);
+    current=await fx.call(one,'work-areas-save',{fileId,mode:'original',revision:2,areas:current.areas.map(a=>({...a,profileId:two.id}))});
+    assert(current.areas.every(a=>a.color==='#0075bc'),'Reassignment adopts recipient color');
+    await call('admin-save',{userId:two.id,username:'color_two',password:''});
+    assert.equal((await call('admin-list')).profiles.find(p=>p.id===two.id).color,'#0075bc','Older clients preserve color');
+    await call('admin-save',{userId:two.id,username:'color_two',password:'',color:null});
+    current=await fx.call(one,'work-areas-save',{fileId,mode:'original',revision:3,areas:current.areas.map(a=>({...a,color:'#9333ea'}))});
+    assert(current.areas.every(a=>a.color==='#9333ea'),'Opting out retains per-area colors');
+    assert.equal((await fx.call(one,'open',{fileId})).copyRevision,copy.copyRevision);
+    assert.equal(fx.state.uploads.length,0);
+    console.log('PASS: admin-only profile colors, directory, canonical area colors, recoloring, stale revisions, retries, reassignment, failures, opt-out and delivery isolation.');
+  }finally{await fx.pg.close();}
+})().catch(error=>{console.error(error);process.exitCode=1;});
