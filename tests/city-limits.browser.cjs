@@ -111,11 +111,12 @@ const collection = { type: 'FeatureCollection', features: [{ type: 'Feature', pr
         }
       }
     }
-    // The filled area must not intercept normal map clicks.
+    // Click inside the fill, away from the stop marker and polygon hole.
     await page.evaluate(() => { window.cityTestClicks = 0; map.on('click', () => window.cityTestClicks++); });
-    const point = await page.evaluate(() => { const p = map.latLngToContainerPoint([30.751,-98.23]); const box = map.getContainer().getBoundingClientRect(); return { x: box.x+p.x, y: box.y+p.y }; });
+    const point = await page.evaluate(() => { const p = map.latLngToContainerPoint([30.755,-98.225]); const box = map.getContainer().getBoundingClientRect(); return { x: box.x+p.x, y: box.y+p.y }; });
     await page.mouse.click(point.x,point.y);
     assert.equal(await page.evaluate(() => window.cityTestClicks), 1);
+    assert.deepEqual(await state(), original, 'Clicking city fill preserves stop selection');
     await toggle(false); assert.equal(await page.evaluate(() => cityLimitsPolygons.getLayers().length), 0);
     mode = 'hold'; await toggle(true);
     await page.waitForTimeout(500); assert(release);

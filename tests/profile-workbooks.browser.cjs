@@ -247,7 +247,7 @@ const server = http.createServer((req, res) => {
     await a.evaluate(() => { document.getElementById('commitProfileShareBtn').click(); document.getElementById('commitProfileShareBtn').click(); });
     await a.waitForFunction(() => !profileState.busy && profileState.workspace.pending === 0);
     assert.match(await a.locator('#profileLastSync').textContent(), /Last sync:/);
-    assert.match(await a.locator('#routeContext').textContent(), /Nothing awaiting sync/);
+    assert.match(await a.locator('#routeContext').textContent(), /Synced to team/);
     assert.equal(syncRequests, 2, 'Only the initial request and its lost-response retry are sent');
     assert.equal((await fx.pg.query('select count(*)::int n from cd_data_history')).rows[0].n, 1, 'Lost response retry syncs once');
     await review(b);

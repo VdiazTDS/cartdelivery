@@ -41,6 +41,7 @@ let optimoLocationPicker = null;
 let workAreas = null;
 let selectedPendingStopCount = 0;
 let mobileStopMarker = null;
+const deliveryFeedback = new Map();
 let resetAddressSearch = () => {};
 let refreshAddressSearch = () => {};
 let refreshStreetLabels = () => {};
@@ -58,7 +59,7 @@ function updateDeliveryButtons() {
     if (!button) return;
     button.textContent = id === 'completeStopsBtnMobile' && !deliverySaveInProgress
       ? `${perRecord ? 'Enter carts delivered' : 'Deliver 1 cart each'} · ${count} ${count === 1 ? 'stop' : 'stops'}` : label;
-    if (id === 'completeStopsBtnMobile') button.parentElement.hidden = count === 0 && !deliverySaveInProgress;
+    if (id === 'completeStopsBtnMobile') button.parentElement.hidden = mobileStopSelectionMode || (count === 0 && !deliverySaveInProgress);
     button.disabled = readOnly || deliverySaveInProgress || resequenceBusy || count === 0;
     button.setAttribute("aria-busy", String(deliverySaveInProgress));
     button.title = !count ? "Select undelivered stops on the map first" : perRecord
@@ -78,6 +79,21 @@ function updateDeliveryButtons() {
 }
 
 function updatePendingDeliveryCount(markers) {
+  const tester = createSelectionTester();
+  const selected = [...markers].filter(marker => isStopSelected(marker, tester));
+  let remaining = 0, unknown = 0;
+  selected.forEach(marker => {
+    const row = marker._rowRef;
+    if (isDeliveredRow(row)) return;
+    const total = cartTotal(row);
+    if (total === null) unknown++;
+    else remaining += Math.max(0, total - deliveredCartCount(row));
+  });
+  const summary = document.getElementById('selectionSummary');
+  summary.hidden = !selected.length && !mobileStopSelectionMode;
+  document.getElementById('selectionTotals').textContent = `${selected.length} ${selected.length === 1 ? 'stop' : 'stops'} · ${remaining} ${unknown ? 'known ' : ''}${remaining === 1 ? 'cart' : 'carts'} remaining${unknown ? ` · ${unknown} missing QTY` : ''}`;
+  document.getElementById('selectionHelp').textContent = mobileStopSelectionMode && window.innerWidth <= 900
+    ? 'Done keeps your selection. Cancel clears it. Neither saves a delivery.' : 'Selection ready · Choose a delivery action to save.';
   selectedPendingStopCount = [...markers].filter(marker =>
     marker._rowRef &&
     !isDeliveredRow(marker._rowRef)
@@ -90,6 +106,8 @@ function setDeliverySaveStatus(state, message) {
   const status = document.getElementById("deliverySaveStatus");
   status.dataset.state = state;
   status.textContent = message;
+  document.querySelectorAll('#cancelSelectionBtn, #mobileSelectionBtn').forEach(button => { button.disabled = deliverySaveInProgress; });
+  document.querySelectorAll('.delivery-feedback').forEach(node => renderDeliveryFeedback(node, node._row));
   updateDeliveryButtons();
   renderRouteContext();
 }
@@ -635,6 +653,7 @@ function copySaveSummary() {
   if (deliverySaveInProgress) return 'Saving to my copy…';
   if (profileElement('deliverySaveStatus')?.dataset.state === 'error') return 'Save not confirmed · Retry or reload my copy';
   const count = profileState.workspace?.pending || 0;
+  if (!count && profileState.workspace?.lastSyncedAt) return 'Synced to team · No pending changes';
   return `Saved to your copy · ${count ? `${count} ${count === 1 ? 'stop' : 'stops'} awaiting sync` : 'Nothing awaiting sync'}`;
 }
 function lastSyncSummary() {
@@ -759,6 +778,9 @@ function renderRouteContext() {
         : copySaveSummary();
       banner.querySelector('.route-context-help').title = main ? '' : lastSyncSummary();
       const status = banner.querySelector('.route-context-help');
+      status.dataset.saveState = main ? 'team' : deliverySaveInProgress ? 'saving'
+        : document.getElementById('deliverySaveStatus')?.dataset.state === 'error' ? 'error'
+        : workspace?.pending ? 'copy' : workspace?.lastSyncedAt ? 'synced' : 'copy';
       if (status.tagName === 'BUTTON') {
         status.disabled = main || !workspace || !user || profileState.busy || deliverySaveInProgress;
         status.setAttribute('aria-label', `${status.textContent}${main ? '' : '. Open sync review'}`);
@@ -2889,6 +2911,31 @@ document.getElementById("routeDayNone").onclick = () => {
 
 
 // ================= APPLY MAP FILTERS =================
+function updateMapScopeChip() {
+  const chip = document.getElementById('mapScopeChip');
+  const groups = Object.entries(routeDayGroups);
+  chip.hidden = !groups.length;
+  const routes = new Set([...document.querySelectorAll('#routeCheckboxes input:checked')].map(input => input.value));
+  const days = new Set([...document.querySelectorAll('#dayCheckboxes input:checked')].map(input => input.value));
+  const activeRoutes = new Set(), activeDays = new Set(), statuses = new Set();
+  groups.forEach(([key, group]) => {
+    if (!(layerVisibilityState[key] ?? !key.endsWith('|Delivered'))) return;
+    group.layers.forEach(marker => {
+      const row = marker._rowRef, route = String(rowRoute(row)), day = String(rowDay(row));
+      if (!routes.has(route) || !days.has(day)) return;
+      activeRoutes.add(route); activeDays.add(day);
+      statuses.add(isDeliveredRow(row) ? 'Delivered' : 'Pending');
+    });
+  });
+  const routeLabel = activeRoutes.size === 1 ? `Route ${[...activeRoutes][0]}` : `${activeRoutes.size} routes`;
+  const dayLabel = activeDays.size === 1 ? dayName(Number([...activeDays][0])) || 'Day not provided' : `${activeDays.size} days`;
+  const statusLabel = statuses.size === 1 ? [...statuses][0] : 'Pending + delivered';
+  chip.textContent = activeRoutes.size ? `${routeLabel} · ${dayLabel} · ${statusLabel}` : 'No active layers · Change filters';
+  if (document.getElementById('multipleCartsOnly').checked) chip.textContent += ' · QTY 2+';
+  chip.title = chip.textContent;
+  chip.setAttribute('aria-label', `${chip.textContent}. Change map filters`);
+}
+
 function applyFilters() {
 
   const routeCheckboxes = [...document.querySelectorAll("#routeCheckboxes input")];
@@ -2939,6 +2986,7 @@ function applyFilters() {
   updateSelectionCount();
   updateUndoButtonState();
   updateStats();
+  updateMapScopeChip();
   refreshAddressSearch();
   refreshMobileStopDetails();
   scheduleSequenceRender();
@@ -4127,6 +4175,43 @@ function closeMobileStopDetails(restoreFocus = false) {
   if (restoreFocus) document.getElementById('map').focus({ preventScroll: true });
 }
 
+async function reloadDeliveryCopy(row = mobileStopMarker?._rowRef) {
+  if (deliverySaveInProgress || profileState.busy || profileState.workspace?.mode !== 'copy') return;
+  const workspace = profileState.workspace, user = profileState.user;
+  const index = window._currentRows?.indexOf(row) ?? -1;
+  document.getElementById('cartCountsDialog').close();
+  await openProfileFile(workspace);
+  if (profileState.user !== user || profileState.workspace?.fileId !== workspace.fileId || index < 0) return;
+  const marker = Object.values(routeDayGroups).flatMap(group => group.layers).find(marker => marker._rowRef === window._currentRows[index]);
+  if (marker) {
+    if (window.innerWidth <= 900) openMobileStopDetails(marker);
+    else marker.openPopup();
+  }
+}
+
+function renderDeliveryFeedback(node, row) {
+  const feedback = deliveryFeedback.get(row);
+  node.replaceChildren();
+  node.hidden = !feedback;
+  if (!feedback) return;
+  node.dataset.state = feedback.state;
+  node.setAttribute('role', 'status');
+  const title = document.createElement('strong');
+  title.textContent = feedback.state === 'error' ? 'Save not confirmed' : feedback.state === 'saving' ? 'Saving to your copy…' : 'Saved to your copy';
+  const detail = document.createElement('span');
+  detail.textContent = feedback.state === 'error'
+    ? 'Counts shown are unchanged. Reload your saved copy to check before recording again.'
+    : feedback.state === 'saving' ? 'Keep the app open. Counts update after confirmation.' : 'Not synced to team yet. Open sync review when ready.';
+  node.append(title, detail);
+  if (feedback.state === 'error') {
+    const button = document.createElement('button');
+    button.type = 'button'; button.textContent = 'Reload saved copy';
+    button.disabled = deliverySaveInProgress || profileState.busy;
+    button.onclick = () => reloadDeliveryCopy(row);
+    node.append(button);
+  }
+}
+
 function refreshMobileStopDetails() {
   if (!mobileStopMarker) return;
   const content = document.querySelector('#mobileStopDetails .mobile-stop-content');
@@ -4162,6 +4247,9 @@ function deliveryStopCard(row, marker = null) {
     if (!map.hasLayer(marker)) line('small', 'Show this stop in Map filters to record a delivery.');
     button.onclick = () => recordSingleStop(marker);
   } else if (profileState.workspace?.mode === 'original') line('small', 'Team Excel · View only');
+  const feedback = line('div', '', 'delivery-feedback');
+  feedback._row = row;
+  renderDeliveryFeedback(feedback, row);
   const details = document.createElement('details');
   const summary = document.createElement('summary'); summary.textContent = 'Route & container details'; details.append(summary);
   const info = document.createElement('div');
@@ -4172,6 +4260,7 @@ function deliveryStopCard(row, marker = null) {
 
 function processExcelBuffer(buffer, parsedWorkbook = null, confirmedRows = null) {
   closeMobileStopDetails();
+  deliveryFeedback.clear();
   const wb = parsedWorkbook || XLSX.read(new Uint8Array(buffer), { type: "array", cellStyles: true, bookVBA: true });
   const ws = wb.Sheets[wb.SheetNames[0]];
 
@@ -4970,8 +5059,10 @@ function placeDeliveryControls() {
   const recordCartsBtn = document.getElementById("recordCartsBtn");
   const profileButton = document.getElementById('profileWorkspaceBtn');
   const selectBtn = document.getElementById('mobileSelectionBtn');
+  const summary = document.getElementById('selectionSummary');
 
   if (window.innerWidth <= 900) {
+    dock.prepend(summary);
     document.querySelector('.header-top').append(profileButton);
     quickActions.insertBefore(locateBtn, moreBtn);
     quickActions.insertBefore(selectBtn, moreBtn);
@@ -4980,6 +5071,7 @@ function placeDeliveryControls() {
     dock.insertBefore(saveStatus, quickActions);
   } else {
     closeMobileStopDetails();
+    selectionBox.insertBefore(summary, desktopContainer);
     document.querySelector('.header-workspace').append(profileButton);
     selectionBox.insertBefore(clearBtn, desktopContainer);
     desktopContainer.append(locateBtn, copyLocationBtn, recordCartsBtn, completeBtn, saveStatus, undoBtn, streetLabel, loadLogBtn);
@@ -4995,7 +5087,8 @@ function placeDeliveryControls() {
     map.closePopup();
     if (!mobileStopSelectionMode && !workAreas?.mapActive && !optimoLocationPicker) openMobileStopDetails(marker);
   }
-  updateDeliveryButtons();
+  updateSelectionCount();
+  updateUndoButtonState();
 }
 
 //undo button state
@@ -5668,7 +5761,7 @@ function syncMobileSidebarLayout() {
   if (window.innerWidth <= 900) {
     const headerHeight = Math.ceil(pageHeader.getBoundingClientRect().height);
     sidebar.style.top = `${headerHeight}px`;
-    sidebar.style.height = `calc(100dvh - ${headerHeight}px)`;
+    sidebar.style.height = `calc(100dvh - ${headerHeight}px - var(--mobile-controls-height, 80px))`;
   } else {
     sidebar.style.top = "";
     sidebar.style.height = "";
@@ -5731,6 +5824,22 @@ if (mobileMenuBtn && sidebar && overlay) {
   overlay.addEventListener("click", closeMobileMenu);
 }
 // ===== MOBILE SELECTION TOGGLE =====
+document.getElementById('mapScopeChip').addEventListener('click', () => {
+  closeMobileStopDetails();
+  if (window.innerWidth <= 900 && !sidebar.classList.contains('open')) mobileMenuBtn.click();
+  if (window.innerWidth > 900 && document.querySelector('.app-container').classList.contains('collapsed')) document.getElementById('toggleSidebarBtn').click();
+  const section = document.getElementById('mapFiltersSection');
+  section.open = true;
+  ['routeDay', 'routes', 'days'].forEach(prefix => {
+    document.getElementById(`${prefix}Content`).classList.remove('collapsed');
+    document.getElementById(`${prefix}Toggle`).classList.add('open');
+  });
+  requestAnimationFrame(() => {
+    section.scrollIntoView({ block: 'nearest' });
+    section.querySelector('summary').focus({ preventScroll: true });
+    map.invalidateSize({ pan: false });
+  });
+});
 const mobileSelBtn = document.getElementById("mobileSelectionBtn");
 
 
@@ -5745,10 +5854,17 @@ if (mobileSelBtn && selectionBox) {
     if (isActive) { map.closePopup(); closeMobileStopDetails(); }
     selectionBox.classList.remove("show");
     updateSelectionCount();
+    updateUndoButtonState();
   }
 
   mobileSelBtn.addEventListener("click", () => {
     setMobileStopSelectionMode(!mobileStopSelectionMode);
+  });
+  document.getElementById('cancelSelectionBtn').addEventListener('click', () => {
+    if (deliverySaveInProgress) return;
+    Object.values(drawControl._toolbars).forEach(toolbar => toolbar.disable());
+    document.getElementById('clearSelectionBtn').click();
+    setMobileStopSelectionMode(false);
   });
 
   document.getElementById("mobileStopPickerClose").addEventListener("click", () => {
@@ -5761,7 +5877,7 @@ if (mobileSelBtn && selectionBox) {
     originalUpdate();
     const count = Number(document.getElementById("selectionCount").textContent);
     mobileSelBtn.textContent = mobileStopSelectionMode
-      ? `Done · ${count}`
+      ? 'Done'
       : count
         ? `Selected: ${count}`
         : "Select Stops";
@@ -5806,6 +5922,7 @@ if (resetBtn) {
     // 4. Clear stored marker groups & symbols
     Object.keys(routeDayGroups).forEach(k => delete routeDayGroups[k]);
     Object.keys(symbolMap).forEach(k => delete symbolMap[k]);
+    updateMapScopeChip();
     updateSelectionCount();
 
     // 5. Reset counters & stats
@@ -6415,6 +6532,7 @@ function setupCartCounts() {
   function open(selected, perRecord = el("multipleCartsOnly").checked) {
     if (deliverySaveInProgress || resequenceBusy) return;
     if (!selected.length) return;
+    el('reloadCartCountCopyBtn').hidden = true;
     snapshot = { selected, rows: window._currentRows, workbook: window._currentWorkbook, filePath: window._currentFilePath, entries: [] };
     el('cartCountContext').textContent = `Your copy · ${profileUsername(profileState.user)} · ${profileState.workspace?.name || window._currentFilePath || ''}`;
     el('cartCountDetails').open = false;
@@ -6456,6 +6574,7 @@ function setupCartCounts() {
   dialog.querySelectorAll('[name="cartCountOperation"]').forEach(input => input.addEventListener('change', syncMode));
   el("cartCountAmount").addEventListener("input", preview);
   el("closeCartCountsBtn").addEventListener("click", () => { if (!saving) dialog.close(); });
+  el('reloadCartCountCopyBtn').addEventListener('click', () => reloadDeliveryCopy(snapshot?.selected[0]?.row));
   dialog.addEventListener("cancel", event => { if (saving) event.preventDefault(); });
   el("cartCountsForm").addEventListener("submit", async event => {
     event.preventDefault();
@@ -6467,6 +6586,7 @@ function setupCartCounts() {
     const changes = preview();
     if (!changes) return;
     saving = true;
+    el('reloadCartCountCopyBtn').hidden = true;
     el("cartCountFields").disabled = true;
     el("closeCartCountsBtn").disabled = true;
     el("saveCartCountsBtn").disabled = true;
@@ -6475,7 +6595,10 @@ function setupCartCounts() {
     try {
       const saved = await persistDeliveryChanges(snapshot.selected.filter(({ row }) => changes.has(row)), changes, "cart counts updated");
       if (saved) dialog.close();
-      else el("cartCountStatus").textContent = el("deliverySaveStatus").textContent;
+      else {
+        el("cartCountStatus").textContent = `${el("deliverySaveStatus").textContent} Counts shown are unchanged. Reload your saved copy to check what saved.`;
+        el('reloadCartCountCopyBtn').hidden = false;
+      }
     } finally {
       saving = false;
       el("cartCountFields").disabled = false;
@@ -6537,6 +6660,7 @@ async function persistDeliveryChanges(selected, changes, action) {
     return false;
   }
   const count = selected.length;
+  selected.forEach(({ row }) => deliveryFeedback.set(row, { state: 'saving' }));
   const stopLabel = count === 1 ? "stop" : "stops";
   const nextRows = rows.map(row => changes.has(row) ? { ...row, ...changes.get(row) } : row);
   const started = performance.now();
@@ -6558,6 +6682,7 @@ async function persistDeliveryChanges(selected, changes, action) {
     });
   } catch (error) {
     console.error("Cloud Save Error:", error);
+    selected.forEach(({ row }) => deliveryFeedback.set(row, { state: 'error' }));
     setDeliverySaveStatus("error", profileMessage(error));
     return false;
   } finally {
@@ -6598,6 +6723,7 @@ async function persistDeliveryChanges(selected, changes, action) {
   }
 
   const fileNote = routeIsCurrent ? "" : ` in ${filePath}`;
+  if (routeIsCurrent) selected.forEach(({ row }) => deliveryFeedback.set(row, { state: 'saved' }));
   setDeliverySaveStatus("saved", `Saved to your copy — ${count} ${stopLabel} ${action}${fileNote}. Sync to team Excel when ready.`);
   refreshMobileStopDetails();
   return true;

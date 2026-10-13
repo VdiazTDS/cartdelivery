@@ -5680,6 +5680,44 @@ body header #reviewSaveStatusBtn:focus-visible { outline: 3px solid #e6ad22; out
   body #fileManagerModal #savedFiles { max-height: none; overflow: visible; flex-shrink: 0; }
 }
 
+/* Map scope and selection context stay separate from delivery actions. */
+.map-container { position: relative; min-width: 0; }
+#mapScopeChip {
+  position: absolute; z-index: 800; top: 12px; left: 64px;
+  max-width: calc(100% - 370px); min-height: 44px; padding: 8px 14px;
+  border: 1px solid #8198ae; border-radius: 22px; background: #1c3044; color: #edf5ff;
+  font: 600 13px/1.35 system-ui, sans-serif; text-align: left; cursor: pointer;
+  box-shadow: 0 2px 8px #0003; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#mapScopeChip[hidden], #selectionSummary[hidden], .delivery-feedback[hidden], #reloadCartCountCopyBtn[hidden] { display: none !important; }
+body.sun-mode #mapScopeChip { background: #fff; color: #163c60; border-color: #9eafbf; }
+#selectionSummary { display: flex; align-items: center; gap: 10px; padding: 10px; margin-bottom: 8px; border: 1px solid #81aff5; border-radius: 12px; background: #183455; color: #edf5ff; text-align: left; }
+#selectionSummary > div { min-width: 0; flex: 1; }
+#selectionTotals { display: block; font-size: 14px; line-height: 1.4; }
+#selectionHelp { display: block; margin-top: 4px; font-size: 12px; line-height: 1.4; }
+body #selectionSummary #cancelSelectionBtn { flex: 0 0 auto; width: auto; min-height: 44px; min-width: 60px; padding: 8px; margin: 0; border: 1px solid currentColor; border-radius: 8px; background: transparent; color: inherit; font: 600 13px system-ui, sans-serif; }
+body.sun-mode #selectionSummary { background: #eaf2ff; color: #183b6a; border-color: #6e97cb; }
+.delivery-feedback { display: grid; gap: 5px; padding: 10px; border-radius: 8px; border: 1px solid #6e97cb; background: #eaf2ff; color: #163c60; font-size: 13px; line-height: 1.4; }
+.delivery-feedback[data-state="error"] { background: #fff0db; border-color: #a76000; color: #633600; }
+body .delivery-feedback button, body #reloadCartCountCopyBtn { min-height: 44px; padding: 8px 12px; border: 1px solid #9a600e; border-radius: 8px; background: #fff7e9; color: #633600; font: 600 14px system-ui, sans-serif; cursor: pointer; }
+body header #routeContext #reviewSaveStatusBtn[data-save-state="copy"] { color: #99cbff; }
+body header #routeContext #reviewSaveStatusBtn[data-save-state="synced"] { color: #8be2b2; }
+body header #routeContext #reviewSaveStatusBtn[data-save-state="error"] { color: #ffd092; }
+body.sun-mode header #routeContext #reviewSaveStatusBtn[data-save-state="copy"] { color: #205c99; }
+body.sun-mode header #routeContext #reviewSaveStatusBtn[data-save-state="synced"] { color: #176946; }
+body.sun-mode header #routeContext #reviewSaveStatusBtn[data-save-state="error"] { color: #8c4700; }
+body #deliverySaveStatus[data-state="saved"] { color: #99cbff; }
+body.sun-mode #deliverySaveStatus[data-state="saved"] { color: #205c99; }
+#selectionBox:has(#selectionSummary:not([hidden])) > :is(strong, #selectionCount, #clearSelectionBtn) { display: none; }
+:is(#mapScopeChip, #cancelSelectionBtn, #reloadCartCountCopyBtn, .delivery-feedback button):focus-visible { outline: 3px solid #e6ad22; outline-offset: 2px; }
+.picking-optimo-location #mapScopeChip, .editing-work-area #mapScopeChip { visibility: hidden; }
+@media (max-width: 900px) {
+  #mapScopeChip { max-width: calc(100% - 80px - env(safe-area-inset-right)); left: max(64px, env(safe-area-inset-left)); }
+  .mobile-overlay { bottom: var(--mobile-controls-height, 80px); }
+  #mobileStopDetails .delivery-feedback { order: 2; }
+  body.mobile-stop-selection-mode #deliveryControls .delivery-controls-main { display: none; }
+}
+
 /* The filename and sync status share one 44px tap area on phones. */
 @media (max-width: 900px) {
   body > header { padding-bottom: 4px !important; }

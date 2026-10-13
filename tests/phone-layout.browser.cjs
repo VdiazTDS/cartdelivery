@@ -61,6 +61,32 @@ const server = http.createServer((req, res) => {
     assert.equal(await page.locator('#completeStopsBtnMobile').isVisible(), false);
     assert.deepEqual(await page.locator('#deliveryQuickActions > button').evaluateAll(buttons => buttons.map(b => b.id)), ['mobileMenuBtn', 'locateMeBtn', 'mobileSelectionBtn', 'deliveryMoreBtn']);
     assert.equal(await page.locator('#copyLocationBtn').isVisible(), false);
+    assert.equal(await page.locator('#mapScopeChip').textContent(), 'Route A · Monday · Pending');
+    await page.locator('#mapScopeChip').click();
+    assert(await page.locator('.sidebar').evaluate(el => el.classList.contains('open')));
+    assert(await page.locator('#mapFiltersSection').evaluate(el => el.open));
+    assert(await page.locator('#routeDayLayers input').first().isVisible());
+    await page.locator('#mobileMenuBtn').click();
+    await page.evaluate(() => {
+      document.querySelector('#dayCheckboxes input[value="1"]').checked = false; applyFilters();
+    });
+    assert.match(await page.locator('#mapScopeChip').textContent(), /No active layers/);
+    await page.evaluate(() => {
+      document.querySelector('#dayCheckboxes input[value="1"]').checked = true; applyFilters();
+      const polygon = L.rectangle([[30.749, -98.231], [30.752, -98.229]]);
+      drawnLayer.addLayer(polygon); updateSelectionCount(); updateUndoButtonState();
+    });
+    assert.equal(await page.locator('#selectionTotals').textContent(), '2 stops · 6 carts remaining');
+    await page.evaluate(() => { individuallyDeselectedMarkers.add(testMarker()); updateSelectionCount(); updateUndoButtonState(); });
+    assert.equal(await page.locator('#selectionTotals').textContent(), '1 stop · 3 carts remaining');
+    await page.evaluate(() => {
+      _currentRows[1].QTY = ''; updateSelectionCount(); updateUndoButtonState();
+    });
+    assert.match(await page.locator('#selectionTotals').textContent(), /0 known carts remaining · 1 missing QTY/);
+    await page.evaluate(() => { _currentRows[1].QTY = 3; });
+    await page.locator('#cancelSelectionBtn').click();
+    assert.equal(await page.locator('#selectionCount').textContent(), '0');
+    assert.equal(await page.evaluate(() => drawnLayer.getLayers().length), 0);
     for (const light of [false, true]) {
       await page.evaluate(light => document.body.classList.toggle('sun-mode', light), light);
       await tapStop();
@@ -88,6 +114,13 @@ const server = http.createServer((req, res) => {
     await page.waitForFunction(() => !deliverySaveInProgress);
     assert.equal(await page.evaluate(() => _currentRows[0].del_qty), 0);
     assert.match(await page.locator('#reviewSaveStatusBtn').textContent(), /Save not confirmed/);
+    assert(await page.locator('#reloadCartCountCopyBtn').isVisible());
+    assert.match(await page.locator('#mobileStopDetails .delivery-feedback').textContent(), /Save not confirmed/);
+    assert.match(await page.locator('#mobileStopDetails').textContent(), /3 carts remaining/);
+    await page.locator('#closeCartCountsBtn').click();
+    assert(await page.locator('#mobileStopDetails .delivery-feedback button').isVisible());
+    await page.locator('#mobileStopDetails .stop-delivery-action').click();
+    await page.locator('#cartCountEntries input').fill('1');
     await page.locator('#saveCartCountsBtn').click();
     await page.waitForFunction(() => deliverySaveInProgress);
     await page.evaluate(() => finishSave(false));
@@ -95,16 +128,34 @@ const server = http.createServer((req, res) => {
     assert.equal(await page.evaluate(() => _currentRows[0].del_qty), 1);
     assert.match(await page.locator('#mobileStopDetails').textContent(), /2 carts remaining/);
     assert.match(await page.locator('#reviewSaveStatusBtn').textContent(), /Saved to your copy · 1 stop awaiting sync/);
+    assert.equal(await page.locator('#reviewSaveStatusBtn').getAttribute('data-save-state'), 'copy');
+    assert.match(await page.locator('#mobileStopDetails .delivery-feedback').textContent(), /Saved to your copy/);
     await page.locator('#mobileSelectionBtn').click();
     assert.equal(await page.locator('#mobileStopDetails').isVisible(), false);
     await page.evaluate(() => { individuallySelectedMarkers.add(testMarker()); updateSelectionCount(); updateUndoButtonState(); });
+    assert.equal(await page.locator('#selectionTotals').textContent(), '1 stop · 2 carts remaining');
+    assert.equal(await page.locator('#completeStopsBtnMobile').isVisible(), false);
+    assert.equal(await page.locator('#mobileSelectionBtn').textContent(), 'Done');
+    for (const width of [360, 1440, 440]) {
+      await page.setViewportSize({ width, height: 956 });
+      for (const light of [false, true]) {
+        await page.evaluate(light => document.body.classList.toggle('sun-mode', light), light);
+        await page.waitForTimeout(250);
+        await inViewport('#cancelSelectionBtn');
+        assert((await page.locator('#cancelSelectionBtn').boundingBox()).height >= 44);
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+        await page.screenshot({ path: path.join(root, `local-artifacts/workflow-selection-${width}-${light}.png`) });
+      }
+    }
+    await page.locator('#mobileSelectionBtn').click();
+    assert(await page.locator('#completeStopsBtnMobile').isVisible());
+    assert.equal(await page.evaluate(() => _currentRows[0].del_qty), 1, 'Done does not record a delivery');
     assert.equal(await page.locator('#completeStopsBtnMobile').textContent(), 'Deliver 1 cart each · 1 stop');
     await page.locator('#deliveryMoreBtn').click();
     assert(await page.locator('#copyLocationBtn').isVisible());
     await page.locator('#clearSelectionBtn').click();
     assert.equal(await page.locator('#completeStopsBtnMobile').isVisible(), false);
     await page.locator('#deliveryMoreBtn').click();
-    await page.locator('#mobileSelectionBtn').click();
     await page.evaluate(() => {
       window.reviewOpened = 0;
       reviewProfileSync = async () => { reviewOpened++; document.getElementById('profileDialog').close(); document.getElementById('profileSyncDialog').showModal(); };
@@ -140,10 +191,59 @@ const server = http.createServer((req, res) => {
     assert(await page.locator('.leaflet-popup .delivery-stop-card').isVisible());
     assert.equal(await page.locator('#mobileStopDetails').isVisible(), false);
     assert.equal(await page.locator('#copyLocationBtn').evaluate(el => el.parentElement.id), 'desktopLocateContainer');
+    assert.equal(await page.locator('#selectionSummary').evaluate(el => el.parentElement.id), 'selectionBox');
     await page.screenshot({ path: path.join(root, 'local-artifacts/phone-flow-desktop.png') });
     await page.setViewportSize({ width: 440, height: 956 });
     await page.locator('#mobileStopDetails').waitFor();
     assert.equal(await page.locator('#copyLocationBtn').evaluate(el => el.parentElement.id), 'deliveryMoreActions');
+    assert.equal(await page.locator('#selectionSummary').evaluate(el => el.parentElement.id), 'deliveryControls');
+    await page.evaluate(() => {
+      deliveryFeedback.set(testMarker()._rowRef, { state: 'error' }); refreshMobileStopDetails();
+      window.reloadCount = 0;
+      openProfileFile = async () => {
+        reloadCount++;
+        const rows = _currentRows.map(row => ({ ...row, del_qty: row.ID === 0 ? 2 : 0 }));
+        const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Stops');
+        processExcelBuffer(null, wb, rows);
+      };
+    });
+    for (const width of [440, 360]) {
+      await page.setViewportSize({ width, height: 956 });
+      await page.waitForTimeout(350);
+      await inViewport('#mobileStopDetails .delivery-feedback button');
+      assert((await page.locator('#mapScopeChip').boundingBox()).height >= 44);
+      await page.screenshot({ path: path.join(root, `local-artifacts/workflow-save-error-${width}.png`) });
+    }
+    await page.locator('#mobileStopDetails .delivery-feedback button').click();
+    assert.equal(await page.evaluate(() => reloadCount), 1);
+    assert.match(await page.locator('#mobileStopDetails').textContent(), /1 cart remaining/);
+    assert.equal(await page.locator('#mobileStopDetails .delivery-feedback').isVisible(), false);
+    await page.evaluate(() => {
+      profileState.workspace.pending = 0;
+      profileState.workspace.lastSyncedAt = '2026-10-13T12:00:00Z'; renderProfileState();
+    });
+    assert.equal(await page.locator('#reviewSaveStatusBtn').getAttribute('data-save-state'), 'synced');
+    assert.match(await page.locator('#reviewSaveStatusBtn').textContent(), /Synced to team/);
+    await page.evaluate(() => {
+      const rows = _currentRows.map(row => ({ ...row, ROUTE: row.ID === 0 ? 'A' : 'B', DAY: row.ID === 0 ? 1 : 2, NEWROUTE: 'IGNORED', NEWDAY: 7 }));
+      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Stops');
+      processExcelBuffer(null, wb, rows);
+    });
+    assert.match(await page.locator('#mapScopeChip').textContent(), /2 routes · 2 days/);
+    await page.evaluate(() => {
+      document.querySelector('#routeCheckboxes input[value="B"]').checked = false; applyFilters();
+      document.getElementById('multipleCartsOnly').checked = true; applyFilters();
+    });
+    assert.equal(await page.locator('#mapScopeChip').textContent(), 'Route A · Monday · Pending · QTY 2+');
+    await page.evaluate(() => {
+      const rows = _currentRows.map(row => ({ ...row, del_qty: row.ID === 0 ? 3 : 0 }));
+      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Stops');
+      processExcelBuffer(null, wb, rows);
+      document.querySelector('#routeCheckboxes input[value="B"]').checked = false;
+      const input = document.querySelector('#deliveredControls input[data-key="A|Delivered"]');
+      input.checked = true; input.dispatchEvent(new Event('change'));
+    });
+    assert.match(await page.locator('#mapScopeChip').textContent(), /Route A · Monday · Delivered/);
     await page.evaluate(() => {
       closeMobileStopDetails(); profileState.workspace.mode = 'original'; renderProfileState(); testMarker().openPopup();
     });
@@ -153,7 +253,9 @@ const server = http.createServer((req, res) => {
     await page.setViewportSize({ width: 360, height: 780 });
     await inViewport('#closeMobileStopDetails');
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await page.evaluate(() => document.getElementById('resetMapBtn').click());
+    assert.equal(await page.locator('#mapScopeChip').isVisible(), false);
     assert.deepEqual(errors, []);
-    console.log('PASS phone stop sheet, confirmed saves, dock, sync shortcut, keyboard viewport, pinned dialog actions, desktop placement');
+    console.log('PASS route/day chip, polygon and partial-cart totals, Done/Cancel, failed-save recovery, copy/sync indicators, phone stop sheet, keyboard viewport, and desktop placement');
   } finally { if (browser) await browser.close(); server.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

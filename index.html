@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261013-compact-header" />
+  <link rel="stylesheet" href="style.css?v=20261013-map-workflow" />
 
   <link rel="icon" href="favicon.ico" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -362,6 +362,7 @@
 
    <main class="map-container">
     <div id="map"></div>
+    <button id="mapScopeChip" type="button" aria-controls="mapFiltersSection" hidden></button>
   </main>
 
   
@@ -406,6 +407,10 @@
 </div> <!-- end app-container -->
 <!-- Phone controls stay below the map. Shared actions move to the sidebar on desktop. -->
 <section id="deliveryControls" class="delivery-controls" aria-label="Delivery controls">
+  <div id="selectionSummary" hidden>
+    <div><strong id="selectionTotals" role="status" aria-live="polite"></strong><small id="selectionHelp"></small></div>
+    <button id="cancelSelectionBtn" type="button">Cancel</button>
+  </div>
   <div class="delivery-controls-main" hidden>
     <button id="completeStopsBtnMobile" data-action="deliver" class="delivery-action primary-btn" type="button" disabled>Deliver 1 cart per stop</button>
   </div>
@@ -772,6 +777,7 @@
     </fieldset>
     <div class="cart-count-footer">
       <p id="cartCountStatus" role="status" aria-live="polite"></p>
+      <button id="reloadCartCountCopyBtn" type="button" hidden>Reload saved copy</button>
       <button id="saveCartCountsBtn" type="submit">Save to my copy</button>
       <p>Saves to your copy. Sync to team Excel when you’re ready.</p>
     </div>
@@ -789,7 +795,7 @@
 </dialog>
 
 <script src="profile-field-mapping.js?v=20261012-delivery-ease" defer></script>
-<script src="app.js?v=20261013-phone-flow" defer></script>
+<script src="app.js?v=20261013-map-workflow" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">
