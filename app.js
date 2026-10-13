@@ -755,7 +755,7 @@ function renderRouteContext() {
 }
 function setupRouteContext() {
   const template = profileElement("routeContext");
-  document.querySelectorAll("dialog:not(#pocketLock):not(#teamUploadDialog):not(#cartCountsDialog):not(#workAreasDialog):not(#adminDialog), .modal-content").forEach(container => {
+  document.querySelectorAll("dialog:not(#pocketLock):not(#teamUploadDialog):not(#cartCountsDialog):not(#workAreasDialog):not(#adminDialog):not(#helpDialog), .modal-content").forEach(container => {
     const banner = template.cloneNode(true);
     banner.removeAttribute("id"); banner.removeAttribute("role");
     container.prepend(banner);
@@ -1265,6 +1265,41 @@ async function showProfileHistory(more = false) {
   } catch (error) { profileElement("profileHistoryStatus").textContent = profileMessage(error); }
   finally { button.disabled = false; profileState.busy = false; renderProfileState(); }
 }
+function setupHelp() {
+  const dialog = document.getElementById('helpDialog'), el = id => document.getElementById(id);
+  const steps = [
+    { team: 0, mine: 0, other: 0, arrow: '↓', action: 'Each person opens their own copy', mineNote: 'Ready for your deliveries', otherNote: 'Their own saved work',
+      title: '1. Start from the team file', text: 'Sign in, choose a team Excel, then open your own copy. Both copies start with the team’s delivery records.', next: 'Next: save a delivery →' },
+    { team: 0, mine: 1, other: 0, arrow: '↓', action: 'The team file has not changed', mineNote: 'Saved · 1 stop waiting to sync', otherNote: 'Has not received your delivery',
+      title: '2. Your save stays in your copy', text: 'You deliver 1 cart and save it. Your copy now shows 1 of 2 delivered, so 1 cart remains. The main team file and your teammate’s copy still show 0.', next: 'Next: sync to team →' },
+    { team: 1, mine: 1, other: 0, arrow: '↑', action: 'Your reviewed changes → team file', mineNote: 'Up to date · nothing waiting to sync', otherNote: 'Still needs to check for updates',
+      title: '3. Review, confirm, then share', text: 'After you confirm Sync to team Excel, the team file shows 1 of 2 delivered. Your copy also receives the latest team updates. It stays your working copy, ready for the next delivery.', next: 'Next: teammate updates →' },
+    { team: 1, mine: 1, other: 1, arrow: '↓', action: 'Latest team records → teammate’s copy', mineNote: 'Your saved work is shared', otherNote: 'Updated · now sees your delivery',
+      title: '4. Your teammate brings in the update', text: 'Their existing copy does not update by itself. With no pending changes, they use Check for team updates and confirm. If they have saved changes of their own, they review and sync those instead. Everyone can then work from the latest shared records.', next: 'Replay the example ↺' }
+  ];
+  let current = 0;
+  function showStep(index) {
+    current = index;
+    const step = steps[index];
+    el('helpTeamCount').textContent = `${step.team} of 2 carts delivered`;
+    el('helpMyCount').textContent = `${step.mine} of 2 delivered`;
+    el('helpOtherCount').textContent = `${step.other} of 2 delivered`;
+    for (const [id,value] of Object.entries({ helpMyNote: step.mineNote, helpOtherNote: step.otherNote, helpFlowArrow: step.arrow,
+      helpFlowAction: step.action, helpStepTitle: step.title, helpStepText: step.text, helpNextStep: step.next, helpStepCount: `Step ${index + 1} of 4` })) el(id).textContent = value;
+    dialog.querySelectorAll('[data-help-step]').forEach(button => button.setAttribute('aria-pressed',String(Number(button.dataset.helpStep) === index)));
+  }
+  el('openHelpBtn').onclick = () => {
+    showStep(0); dialog.querySelectorAll('details').forEach(details => { details.open = false; });
+    dialog.showModal(); el('helpDialog').querySelector('.help-content').scrollTop = 0; el('closeHelpBtn').focus({ preventScroll: true });
+  };
+  const close = () => dialog.close();
+  el('closeHelpBtn').onclick = el('helpBackToMap').onclick = close;
+  dialog.addEventListener('cancel',event => { event.preventDefault(); close(); });
+  dialog.addEventListener('close',() => el('openHelpBtn').focus({ preventScroll: true }));
+  dialog.querySelectorAll('[data-help-step]').forEach(button => { button.onclick = () => showStep(Number(button.dataset.helpStep)); });
+  el('helpNextStep').onclick = () => showStep((current + 1) % steps.length);
+}
+
 function setupProfileAdmin() {
   const el = id => document.getElementById(id), dialog = el('adminDialog');
   let client = null, user = null, busy = false, screen = 'prompt', directory = null, editing = null;
@@ -5170,6 +5205,7 @@ function setupWorkAreas() {
 function initApp() { //begining of initApp=================================================================
 
 setupProfileAdmin();
+setupHelp();
 setupPocketLock();
 const openCartCounts = setupCartCounts();
 recordSingleStop = marker => {

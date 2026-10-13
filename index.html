@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261013-street-labels" />
+  <link rel="stylesheet" href="style.css?v=20261013-help" />
 
   <link rel="icon" href="favicon.ico" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -344,6 +344,7 @@
         <span class="reset-map-subtitle">Clear markers, filters, and selection</span>
       </span>
     </button>
+    <button id="openHelpBtn" type="button" aria-haspopup="dialog" aria-controls="helpDialog"><span aria-hidden="true">?</span> Help · Learn the app</button>
     <div class="mobile-sidebar-tools">
       <button id="toolsMenuBtnMobile" class="tools-menu-btn mobile-tools-btn" aria-expanded="false" aria-haspopup="true">
         Other Apps
@@ -606,6 +607,71 @@
   <div class="optimo-picker-actions"><button id="cancelOptimoLocation" type="button">Cancel</button><button id="useOptimoLocation" type="button" disabled>Confirm location</button></div>
 </section>
 
+<dialog id="helpDialog" class="profile-dialog" aria-labelledby="helpTitle">
+  <div class="help-heading"><div><span class="help-eyebrow">YOUR FIRST DAY</span><h2 id="helpTitle">How Cart Delivery works</h2></div><button id="closeHelpBtn" type="button" autofocus>Close</button></div>
+  <div class="help-content">
+    <p class="help-intro">Work in <strong>your copy</strong>. Sync when you’re ready to share with the team.</p>
+    <figure class="help-flow" aria-labelledby="helpFlowTitle">
+      <figcaption id="helpFlowTitle">One team file. A saved copy for each person.</figcaption>
+      <p class="help-example-note">Try this example: one stop needs 2 carts. These buttons only change the illustration.</p>
+      <div class="help-steps" role="group" aria-label="Explore the saving and syncing example">
+        <button type="button" data-help-step="0" aria-pressed="true" aria-controls="helpExample"><span>1</span> Open a copy</button>
+        <button type="button" data-help-step="1" aria-pressed="false" aria-controls="helpExample"><span>2</span> Save delivery</button>
+        <button type="button" data-help-step="2" aria-pressed="false" aria-controls="helpExample"><span>3</span> Sync to team</button>
+        <button type="button" data-help-step="3" aria-pressed="false" aria-controls="helpExample"><span>4</span> Team catches up</button>
+      </div>
+      <div id="helpExample" aria-live="polite" aria-atomic="true">
+        <div class="help-file help-team"><span class="help-file-label">MAIN TEAM EXCEL</span><strong id="helpTeamCount">0 of 2 carts delivered</strong><small>The shared delivery record everyone can view</small></div>
+        <div class="help-connector"><span id="helpFlowArrow" aria-hidden="true">↓</span><span id="helpFlowAction">Each person opens their own copy</span></div>
+        <div class="help-copy-grid">
+          <div class="help-file help-mine"><span class="help-file-label">YOUR COPY</span><strong id="helpMyCount">0 of 2 delivered</strong><small id="helpMyNote">Ready for your deliveries</small></div>
+          <div class="help-file help-other"><span class="help-file-label">TEAMMATE’S COPY</span><strong id="helpOtherCount">0 of 2 delivered</strong><small id="helpOtherNote">Their own saved work</small></div>
+        </div>
+        <div class="help-explanation"><h3 id="helpStepTitle">1. Start from the team file</h3><p id="helpStepText">Sign in, choose a team Excel, then open your own copy. Both copies start with the team’s delivery records.</p></div>
+      </div>
+      <div class="help-pager"><span id="helpStepCount">Step 1 of 4</span><button id="helpNextStep" type="button">Next: save a delivery →</button></div>
+    </figure>
+    <p class="help-takeaway"><strong>Saved ≠ synced.</strong> “Saved” means your delivery is in your profile copy. “Waiting to sync” means the team file has not received that change yet.</p>
+    <h3 class="help-section-title">How to use it on your phone</h3>
+    <details class="help-topic"><summary>Start your first delivery</summary>
+      <ol><li>Tap <strong>Sign in / Profile</strong> in the header and sign in with your own username.</li><li>Open <strong>Menu → Open / Switch File</strong>. Choose the correct team Excel.</li><li>Tap <strong>Start my own copy</strong>, or <strong>Continue my work</strong> if you already have one.</li><li>Check the filename and <strong>YOUR COPY</strong> label in the header before recording deliveries.</li></ol>
+      <p>Your saved copy follows your profile. Use the same account to continue on another phone.</p>
+    </details>
+    <details class="help-topic"><summary>Select stops and record deliveries</summary>
+      <div class="help-mini-flow" aria-label="Delivery steps"><span>Tap Select Stops</span><b aria-hidden="true">↓</b><span>Tap stops → check count → Done</span><b aria-hidden="true">↓</b><span>Record carts → wait for Saved</span></div>
+      <p>Tapping a stop normally opens its details. With <strong>Select Stops</strong> on, tapping selects or deselects it. When stops overlap, use the chooser and check the address and bin number.</p>
+      <p><strong>Deliver 1 cart per stop</strong> adds one cart to each selected pending stop. For different quantities or corrections, use <strong>More → Record carts</strong> and review the totals before saving. With the QTY 2+ filter on, the delivery button asks for quantities.</p>
+      <p>Pan with one finger and pinch to zoom. Selecting a stop alone never records a delivery. A stop is complete when all its carts are delivered.</p>
+    </details>
+    <details class="help-topic"><summary>Sync your work to the main team Excel</summary>
+      <ol><li>Finish saving your deliveries. Tap <strong>Profile → Sync to team Excel</strong>.</li><li>Review the summary. If someone changed the same stop, resolve the conflict by checking the correct delivered total. Counts are not simply added together.</li><li>Tap <strong>Next: confirm sync</strong>, read the final check, tick the acknowledgement and tap <strong>Confirm sync to team Excel</strong>.</li><li>Wait for confirmation. The team file receives your reviewed changes. Your copy also takes in the latest team updates and has no changes waiting to sync.</li></ol>
+      <p>Sync includes all saved changes waiting in this copy, even stops hidden by map filters. Other people’s existing copies stay as they were until they update or sync them.</p>
+      <p>If your copy has no pending changes, use <strong>Check for team updates</strong> in Profile to review and confirm an update. If you have pending changes, use the sync review so your work is included.</p>
+    </details>
+    <details class="help-topic"><summary>View the team file or download Excel</summary>
+      <p>Open <strong>Menu → Open / Switch File</strong>, find the file, then choose <strong>View team Excel (read only)</strong>. Look for <strong>TEAM EXCEL</strong> in the header. You can view shared deliveries without signing in.</p>
+      <p>Opening the team view does not sync your copy. To keep delivering, choose <strong>Continue my work</strong> for your copy.</p>
+      <div class="help-mini-flow"><span>Sync your copy</span><b aria-hidden="true">↓</b><span>Open team Excel</span><b aria-hidden="true">↓</b><span>Download the team’s updated spreadsheet</span></div>
+      <p>The uploaded spreadsheet is the starting file. Delivery progress is saved in the app. Downloading makes a spreadsheet of the view you have open—your copy or the team file. Downloading never syncs changes.</p>
+    </details>
+    <details class="help-topic"><summary>Understand profile work areas</summary>
+      <svg class="help-area-map" viewBox="0 0 320 160" role="img" aria-labelledby="helpAreasTitle helpAreasDesc"><title id="helpAreasTitle">Two delivery areas assigned to different profiles</title><desc id="helpAreasDesc">A blue north area belongs to you. A green south area belongs to a teammate. These boundaries are shared, while delivery saves stay in each person’s copy.</desc><rect width="320" height="160" rx="12" fill="#eef3f7"/><path d="M20 40H300M20 80H300M20 120H300M75 15V145M160 15V145M245 15V145" stroke="#ccd7e0" stroke-width="5"/><path d="M30 20H210L275 64L175 74H30Z" fill="#dbeafe" stroke="#2563eb" stroke-width="3"/><path d="M35 92L185 84L285 100V140H35Z" fill="#dcfce7" stroke="#15803d" stroke-width="3"/><text x="57" y="50" fill="#163c77" font-size="15" font-weight="700">Your north area</text><text x="58" y="119" fill="#15552d" font-size="15" font-weight="700">Teammate’s south area</text></svg>
+      <div class="help-mini-flow"><span>Team view + signed-in profile: draw &amp; assign</span><b aria-hidden="true">↓ Save for everyone</b><span>All profiles see the same boundaries</span><b aria-hidden="true">↓</b><span>Your copy: view areas while delivering</span></div>
+      <p>In the team view, open <strong>Profile work areas → Manage work areas → Add work area</strong>. Name it, choose a profile, draw the boundary and press <strong>Save for everyone</strong>. One person can have several areas. Their profile color is used when one is assigned.</p>
+      <p>In your copy, areas are view-only. Use <strong>Whose areas? → My areas</strong> and <strong>Show work areas on map</strong>. Boundaries refresh automatically; you can also tap <strong>Refresh areas</strong>.</p>
+      <p><strong>An area is a guide, not a delivery save.</strong> It does not select stops, mark them delivered or prevent someone from working outside it. Area changes are shared when saved; they do not wait for delivery sync.</p>
+    </details>
+    <details class="help-topic"><summary>Know what changes your data</summary>
+      <dl class="help-effects"><dt>Map view, filters, labels &amp; search</dt><dd>Change what you see or help you find a stop. Hiding a stop does not delete it or mark it delivered. Street labels pause while selecting or drawing and return afterward.</dd><dt>Delivery sequence &amp; arrows</dt><dd>Help show stop order. They do not record deliveries. Arrows are straight connections, not turn-by-turn directions. A saved Optimo sequence stays on this phone.</dd><dt>Record carts &amp; Undo Delivered</dt><dd>Change delivery totals in your copy after a successful save. To correct a quantity, use Record carts. Sync again to share a correction already saved in your copy.</dd><dt>Truck / Trailer Loads</dt><dd>A separate shared unloading log. Adding a load does not mark map stops delivered, and delivering stops does not add a load.</dd><dt>Clear Selection &amp; Reset Map</dt><dd>Clear Selection removes the highlighted selection. Reset Map clears the current markers and filters from the screen. Neither erases saved delivery records; reopen the file to restore its map.</dd><dt>Locate, Copy Location &amp; pocket lock</dt><dd>Locate follows your GPS position. Copy Location helps you share where you are. The header lock blocks accidental taps; hold the unlock button for two seconds, then release. None changes delivery records.</dd></dl>
+    </details>
+    <details class="help-topic"><summary>If something doesn’t look right</summary>
+      <ul><li><strong>Can’t record deliveries?</strong> Check that you’re signed in, the header says YOUR COPY, and you selected pending stops.</li><li><strong>Missing stops?</strong> Check route/day filters, delivered layers and Only show QTY 2+. Zoom out or search by address or bin number.</li><li><strong>Save not confirmed?</strong> Keep the app open and check your connection. Retry as prompted, or use Profile → Reload my saved copy to check what reached the server. Do not assume it saved or enter the delivery again without checking.</li><li><strong>A teammate’s delivery is missing?</strong> They must sync it first. Then check for team updates in your copy. Reopening your saved copy alone does not pull in newer team deliveries.</li></ul>
+      <p>Saving, syncing and fetching team updates need an internet connection. An offline map does not mean deliveries can be saved offline.</p>
+    </details>
+    <button id="helpBackToMap" type="button" class="profile-primary">Close help · return to my work</button>
+  </div>
+</dialog>
+
 <dialog id="adminDialog" class="profile-dialog" aria-labelledby="adminTitle">
   <div class="profile-heading"><h2 id="adminTitle">Profile administration</h2><button id="closeAdminBtn" type="button">Close</button></div>
   <div id="adminPrompt"><p>Do you want to sign in as an administrator?</p><p>Your delivery profile will stay signed in.</p><div class="profile-actions"><button id="adminProceedBtn" class="profile-primary" type="button">Sign in as admin</button><button id="adminDismissBtn" type="button">Not now</button></div></div>
@@ -717,7 +783,7 @@
 </dialog>
 
 <script src="profile-field-mapping.js?v=20261012-delivery-ease" defer></script>
-<script src="app.js?v=20261013-street-labels" defer></script>
+<script src="app.js?v=20261013-help" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">
