@@ -4019,25 +4019,34 @@ function stopDirectionsDestination(row) {
     ? `${Number(row.LATITUDE)},${Number(row.LONGITUDE)}` : '';
   return { street, address: text(row.CSSTRT) ? [street, locality].filter(Boolean).join(', ') : '', coordinates, hasLocality: Boolean(city || state || zip) };
 }
-function stopDirectionsLinks(destination, userAgent = navigator.userAgent, platform = navigator.platform, touchPoints = navigator.maxTouchPoints) {
+function stopDirectionsLinks(destination, userAgent = navigator.userAgent, platform = navigator.platform, touchPoints = navigator.maxTouchPoints, app = 'default') {
   const encoded = encodeURIComponent(destination);
   const apple = /iPhone|iPad|iPod/.test(userAgent) || (platform === 'MacIntel' && touchPoints > 1);
-  const web = apple ? `https://maps.apple.com/?daddr=${encoded}&dirflg=d`
-    : `https://www.google.com/maps/dir/?api=1&destination=${encoded}&travelmode=driving`;
+  const google = `https://www.google.com/maps/dir/?api=1&destination=${encoded}&travelmode=driving`;
+  const web = apple && app !== 'google' ? `https://maps.apple.com/?daddr=${encoded}&dirflg=d` : google;
+  if (app === 'google' || (apple && app === 'apple')) return { primary: web, web, apple };
   if (apple) {
     const version = userAgent.match(/(?:OS |Version\/)(\d+)[_.](\d+)/);
     const supportsDefault = version && (Number(version[1]) > 18 || (Number(version[1]) === 18 && Number(version[2]) >= 4));
-    return { primary: supportsDefault ? `geo-navigation:///directions?destination=${encoded}` : web, web };
+    return { primary: supportsDefault ? `geo-navigation:///directions?destination=${encoded}` : web, web, apple };
   }
   if (/Android/i.test(userAgent)) {
     // No package: let Android use the chosen geo handler, with a browser fallback.
-    return { primary: `intent:0,0?q=${encoded}#Intent;scheme=geo;action=android.intent.action.VIEW;S.browser_fallback_url=${encodeURIComponent(web)};end`, web };
+    const primary = /Chrome\//.test(userAgent)
+      ? `intent:0,0?q=${encoded}#Intent;scheme=geo;action=android.intent.action.VIEW;S.browser_fallback_url=${encodeURIComponent(web)};end`
+      : `geo:0,0?q=${encoded}`;
+    return { primary, web, apple };
   }
-  return { primary: web, web };
+  return { primary: web, web, apple };
 }
 function showStopDirections(row, trigger) {
-  const destination = stopDirectionsDestination(row), dialog = document.getElementById('stopDirectionsDialog');
-  dialog._returnFocus = trigger;
+  const dialog = document.getElementById('stopDirectionsDialog');
+  dialog._returnFocus = trigger; dialog._row = row;
+  renderStopDirectionsChoices(row);
+  dialog.showModal();
+}
+function renderStopDirectionsChoices(row) {
+  const destination = stopDirectionsDestination(row);
   document.getElementById('stopDirectionsRecord').textContent = `${destination.street || 'Address not available'} · Bin ${String(row.BINNO ?? '').trim() || 'Not provided'}`;
   const list = document.getElementById('stopDirectionsChoices'); list.replaceChildren();
   const fallbacks = document.getElementById('stopDirectionsFallbacks'); fallbacks.replaceChildren();
@@ -4051,7 +4060,7 @@ function showStopDirections(row, trigger) {
     const help = document.createElement('small'); help.textContent = description;
     choice.append(heading, detail, help);
     if (value) {
-      const links = stopDirectionsLinks(value);
+      const links = stopDirectionsLinks(value, undefined, undefined, undefined, document.getElementById('stopDirectionsApp').value);
       choice.href = links.primary; choice.target = '_blank'; choice.rel = 'noopener noreferrer';
       const fallback = document.createElement('a'); fallback.href = links.web; fallback.target = '_blank'; fallback.rel = 'noopener noreferrer';
       fallback.textContent = `${title} → browser directions`; fallbacks.append(fallback);
@@ -4060,14 +4069,17 @@ function showStopDirections(row, trigger) {
   }
   document.getElementById('stopDirectionsFallback').open = false;
   document.getElementById('stopDirectionsFallback').hidden = !fallbacks.children.length;
-  dialog.showModal();
 }
 function setupStopDirections() {
   const dialog = document.getElementById('stopDirectionsDialog');
+  const app = document.getElementById('stopDirectionsApp');
+  if (stopDirectionsLinks('').apple) app.add(new Option('Apple Maps', 'apple'));
+  app.add(new Option('Google Maps', 'google'));
+  app.onchange = () => { if (dialog.open && dialog._row) renderStopDirectionsChoices(dialog._row); };
   document.getElementById('closeStopDirectionsBtn').onclick = () => dialog.close();
   dialog.addEventListener('close', () => {
     if (dialog._returnFocus?.isConnected) dialog._returnFocus.focus({ preventScroll: true });
-    dialog._returnFocus = null;
+    dialog._returnFocus = null; dialog._row = null;
   });
 }
 function stopDirectionsAddressLink(row) {

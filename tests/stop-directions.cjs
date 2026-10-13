@@ -15,7 +15,8 @@ const cases = [
   ['Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X)', 'iPhone', 5, 'geo-navigation:'],
   ['Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X)', 'iPhone', 5, 'https:'],
   ['Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) Version/18.5 Safari/605.1.15', 'MacIntel', 5, 'geo-navigation:'],
-  ['Mozilla/5.0 (Linux; Android 15)', 'Linux armv8l', 5, 'intent:'],
+  ['Mozilla/5.0 (Linux; Android 15) Chrome/130.0', 'Linux armv8l', 5, 'intent:'],
+  ['Mozilla/5.0 (Android 15; Mobile; rv:130.0) Gecko/130.0 Firefox/130.0', 'Linux armv8l', 5, 'geo:'],
   ['Mozilla/5.0 (Windows NT 10.0)', 'Win32', 0, 'https:']
 ];
 for (const [agent, platform, touch, scheme] of cases) {
@@ -25,6 +26,14 @@ for (const [agent, platform, touch, scheme] of cases) {
   const web = new URL(links.web);
   assert.equal(web.searchParams.get('destination') ?? web.searchParams.get('daddr'), value);
   assert(!links.primary.includes('<img'));
+  const google = context.stopDirectionsLinks(value, agent, platform, touch, 'google');
+  assert.equal(new URL(google.primary).hostname, 'www.google.com');
+  assert.equal(new URL(google.primary).searchParams.get('destination'), value);
+  if (links.apple) {
+    const apple = context.stopDirectionsLinks(value, agent, platform, touch, 'apple');
+    assert.equal(new URL(apple.primary).hostname, 'maps.apple.com');
+    assert.equal(new URL(apple.primary).searchParams.get('daddr'), value);
+  }
   if (scheme === 'geo-navigation:') assert.equal(new URL(links.primary).searchParams.get('destination'), value);
   if (scheme === 'intent:') {
     assert(!links.primary.includes('package='), 'Allow Android to choose the map app');
