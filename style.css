@@ -5282,7 +5282,7 @@ body .sidebar #workAreasSection button {
 #workAreasSection [hidden], #workAreasDialog [hidden], #workAreaMapEditor[hidden] { display: none !important; }
 .work-area-legend-item { display: flex; gap: 8px; align-items: center; min-height: 28px; font-size: 12px; overflow-wrap: anywhere; }
 .work-area-swatch { width: 14px; height: 14px; flex: 0 0 14px; border-radius: 3px; border: 1px solid #ffffff80; }
-.work-area-label { background: #ffffffeb; color: #172b40; border: 1px solid #64748b; border-radius: 5px; box-shadow: 0 1px 4px #0004; font-size: 12px; font-weight: 700; max-width: 180px; white-space: normal; overflow-wrap: anywhere; pointer-events: none; }
+.work-area-label { background: #ffffffeb; color: #172b40; border: 1px solid #64748b; border-radius: 5px; box-shadow: 0 1px 4px #0004; font-size: 12px; font-weight: 700; width: max-content; max-width: 180px; white-space: normal; overflow-wrap: anywhere; pointer-events: none; }
 #workAreaFields { min-width: 0; border: 0; margin: 0; padding: 0; }
 #workAreaFields label { display: block; margin: 12px 0 4px; }
 #workAreaFields :is(input, select) { display: block; width: 100%; min-height: 44px; box-sizing: border-box; font-size: 16px; }
@@ -5305,6 +5305,8 @@ body .sidebar #workAreasSection button {
 #workAreaMapEditor button:disabled { opacity: 0.55; cursor: default; }
 :is(#workAreasSection, #workAreasDialog, #workAreaMapEditor) :is(button, input, select, summary):focus-visible { outline: 3px solid #e6ad22; outline-offset: 2px; }
 .editing-work-area :is(.sidebar, .sidebar-toggle, .leaflet-draw, #selectionBox, #deliveryControls, #drawActionBar) { visibility: hidden !important; }
+.editing-work-area .leaflet-editing-icon { width: 44px !important; height: 44px !important; margin-left: -22px !important; margin-top: -22px !important; background: transparent; border: 0; }
+.editing-work-area .leaflet-editing-icon::after { content: ''; position: absolute; inset: 13px; background: white; border: 2px solid #2563eb; border-radius: 50%; box-sizing: border-box; }
 @media (max-width: 900px) {
   #workAreaMapEditor { bottom: calc(var(--mobile-controls-height, 80px) + max(8px, env(safe-area-inset-bottom))); }
 }

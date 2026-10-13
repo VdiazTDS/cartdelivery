@@ -21,16 +21,22 @@ const server = http.createServer((req, res) => {
     const other = await fx.importRows(north, 'Other area file.xlsx', rows);
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
-    let delaySave = false, releaseSave, failSave = false, loseResponse = false;
+    let delaySave = false, releaseSave, failSave = false, loseResponse = false, failImport = false;
     const errors = [], requests = [], users = new Map([[north.id,north],[south.id,south]]);
     async function create(user, width, mode) {
       const context = await browser.newContext({ viewport: { width, height: 956 }, hasTouch: width === 440, serviceWorkers: 'block' });
       await context.route('**/*', async route => {
         const req = route.request(), url = new URL(req.url());
         const json = (body, status=200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+        if (url.hostname === 'fixture.invalid' || url.pathname.includes('/storage/v1/object/public/excel-files/')) {
+          const key = url.hostname === 'fixture.invalid' ? decodeURIComponent(url.pathname.slice(1)) : 'excel-files/' + decodeURIComponent(url.pathname.split('/excel-files/')[1]);
+          const bytes = fx.objects.get(key);
+          return route.fulfill({status:bytes?200:404,contentType:'application/octet-stream',body:bytes?Buffer.from(bytes):''});
+        }
         if (url.hostname.endsWith('supabase.co')) {
           if (url.pathname.includes('/functions/v1/profile-workbooks')) {
             const body = req.postDataJSON(); requests.push(body);
+            if (body.action === 'import-start' && failImport) return json({error:'REQUEST_FAILED'},400);
             if (body.action === 'work-areas-save') {
               if (delaySave) await new Promise(resolve => { releaseSave = resolve; });
               if (failSave) return json({error:'REQUEST_FAILED'},400);
@@ -83,6 +89,25 @@ const server = http.createServer((req, res) => {
       assert(await page.locator('#saveWorkAreaBtn').isEnabled());
     }
     const count = page => page.evaluate(()=>map.getPane('workAreasPane').querySelectorAll('path').length);
+    async function adjustBoundary(page) {
+      await page.locator('#adjustWorkAreaBtn').click();
+      await page.waitForFunction(()=>!map._animatingZoom && !map._panAnim?._inProgress);
+      const box=await page.locator('.leaflet-editing-icon').first().boundingBox();
+      assert(box.width>=43.9 && box.height>=43.9,'Boundary handles meet phone tap-target size');
+      await page.screenshot({path:path.join(root,`local-artifacts/work-area-adjust-${page.viewportSize().width}.png`)});
+      const x=box.x+box.width/2,y=box.y+box.height/2;
+      if(page.viewportSize().width===440) {
+        const cdp=await page.context().newCDPSession(page);
+        await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});
+        for(let i=1;i<=5;i++) await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:x+i*5,y:y+i*4}]});
+        await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+        await cdp.detach();
+      } else {
+        await page.mouse.move(x,y);
+        await page.mouse.down();await page.mouse.move(x+25,y+20,{steps:5});await page.mouse.up();
+      }
+      await page.locator('#finishWorkAreaBoundary').click();
+    }
     const a=await create(north,1440,'original'), b=await create(south,440,'copy');
     await a.evaluate(()=>map.fire(L.Draw.Event.CREATED,{layerType:'polygon',layer:L.polygon([[30.74,-98.24],[30.76,-98.24],[30.76,-98.22]])}));
     const selection=await a.evaluate(()=>JSON.stringify(drawnLayer.toGeoJSON()));
@@ -97,6 +122,7 @@ const server = http.createServer((req, res) => {
     delaySave=false;releaseSave();
     await a.waitForFunction(()=>document.getElementById('workAreaSaveStatus').textContent.startsWith('Saved'));
     assert.equal(await a.evaluate(()=>JSON.stringify(drawnLayer.toGeoJSON())),selection,'Area drawing preserves stop selection');
+    await a.evaluate(()=>{drawnLayer.clearLayers();updateSelectionCount();updateUndoButtonState();});
     assert.equal(await count(a),1);
     await a.locator('#closeWorkAreasBtn').click();
     await addArea(a,'North extension',north.id);
@@ -128,17 +154,14 @@ const server = http.createServer((req, res) => {
         assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
         assert(await page.locator('.sidebar').evaluate(el=>el.scrollWidth<=el.clientWidth));
         for(const id of ['manageWorkAreasBtn','refreshWorkAreasBtn']) assert((await page.locator('#'+id).boundingBox()).height>=44);
+        const label=await page.locator('.work-area-label').first().boundingBox();
+        assert(label.width>80 && label.height<65,'Map labels remain readable without one-letter wrapping');
         await page.screenshot({path:path.join(root,`local-artifacts/work-areas-${page.viewportSize().width}-${light}.png`)});
       }
     }
     await manager(b);
     await b.locator('.work-area-card').filter({hasText:'South side'}).getByRole('button',{name:'Edit',exact:true}).click();
-    await b.locator('#adjustWorkAreaBtn').click();
-    const handle=b.locator('.leaflet-editing-icon').first();
-    const box=await handle.boundingBox();
-    await b.mouse.move(box.x+box.width/2,box.y+box.height/2);
-    await b.mouse.down();await b.mouse.move(box.x+box.width/2+25,box.y+box.height/2+20,{steps:5});await b.mouse.up();
-    await b.locator('#finishWorkAreaBoundary').click();
+    await adjustBoundary(b);
     await b.locator('#workAreaName').fill('South adjusted');
     // Another editor changes the same shared revision before this draft is saved.
     const shared=await fx.call(north,'work-areas',{fileId});
@@ -149,6 +172,7 @@ const server = http.createServer((req, res) => {
     await b.locator('#cancelWorkAreaBtn').click();
     await b.waitForFunction(()=>document.getElementById('workAreasList').textContent.includes('North updated'));
     await b.locator('.work-area-card').filter({hasText:'South side'}).getByRole('button',{name:'Edit',exact:true}).click();
+    await adjustBoundary(b);
     await b.locator('#workAreaName').fill('South renamed');
     await b.locator('#workAreaProfile').selectOption(north.id);
     failSave=true;
@@ -161,12 +185,28 @@ const server = http.createServer((req, res) => {
     const latest=await fx.call(north,'work-areas',{fileId});
     assert.equal(latest.revision,5,'Lost response retry commits once');
     assert.equal(latest.areas[2].profileId,north.id);
+    assert.notDeepEqual(latest.areas[2].geometry,shared.areas[2].geometry,'Adjusted corners persist only after confirmed save');
     await b.locator('.work-area-card').filter({hasText:'South renamed'}).getByRole('button',{name:'Delete',exact:true}).click();
     await b.waitForFunction(()=>document.querySelectorAll('#workAreasList .work-area-card').length===2);
     await b.locator('#closeWorkAreasBtn').click();
     await b.evaluate(fileId=>openProfileFile({fileId},'copy'),other.fileId);
     await b.waitForFunction(()=>!document.getElementById('manageWorkAreasBtn').disabled);
     assert.equal(await count(b),0,'File switches discard previous boundaries');
+    fx.objects.set('excel-files/Legacy areas.xlsx',fx.workbook(rows));
+    const copiesBefore=(await fx.pg.query('select count(*)::int n from cd_data_copies')).rows[0].n;
+    await b.evaluate(()=>openProfileFile({name:'Legacy areas.xlsx',sourceKey:'Legacy areas.xlsx'},'original'));
+    await menu(b);
+    assert(await b.locator('#prepareWorkAreasBtn').isVisible());
+    failImport=true;
+    await b.locator('#prepareWorkAreasBtn').click();
+    await b.waitForFunction(()=>!profileState.busy && document.getElementById('profileStatus').dataset.state==='error');
+    assert.equal(await b.locator('#workAreasStatus').textContent(),await b.locator('#profileStatus').textContent(),'Legacy preparation errors are visible in the sidebar');
+    failImport=false;
+    await b.locator('#prepareWorkAreasBtn').click();
+    await b.waitForFunction(()=>!profileState.busy && !document.getElementById('manageWorkAreasBtn').disabled);
+    assert.equal(await b.evaluate(()=>profileState.workspace.mode),'original');
+    assert.equal((await fx.pg.query('select count(*)::int n from cd_data_copies')).rows[0].n,copiesBefore,'Enabling areas never creates a copy');
+    assert.equal(fx.state.uploads.length,0,'Work areas never write Excel objects');
     await b.evaluate(()=>{profileState.user=null;renderProfileState();});
     assert.equal(await count(b),0);
     assert(await b.locator('#manageWorkAreasBtn').isDisabled());

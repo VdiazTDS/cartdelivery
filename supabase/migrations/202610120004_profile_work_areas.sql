@@ -46,12 +46,12 @@ begin
     for area in select value from jsonb_array_elements(p->'areas') loop
       if jsonb_typeof(area) is distinct from 'object'
         or coalesce(area->>'id','') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
-        or area->>'id'=any(ids)
+        or lower(area->>'id')=any(ids)
         or jsonb_typeof(area->'name') is distinct from 'string' or length(trim(area->>'name')) not between 1 and 80
         or coalesce(area->>'color','') !~ '^#[0-9a-fA-F]{6}$'
         or coalesce(area->>'profileId','') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
       then raise exception 'INVALID_WORK_AREA'; end if;
-      ids := array_append(ids,area->>'id');
+      ids := array_append(ids,lower(area->>'id'));
       select split_part(email,'@',1) into profile_name from auth.users
         where id=(area->>'profileId')::uuid and email ~ '^[a-z0-9][a-z0-9_-]{2,29}@profiles\.cartdelivery\.invalid$';
       if profile_name is null then raise exception 'INVALID_WORK_AREA_PROFILE'; end if;
@@ -78,8 +78,8 @@ begin
         previous_point := point;
       end loop;
       if signed_area=0 then raise exception 'INVALID_WORK_AREA_GEOMETRY'; end if;
-      clean := clean || jsonb_build_array(jsonb_build_object('id',area->>'id','name',trim(area->>'name'),
-        'profileId',area->>'profileId','profileName',profile_name,'color',area->>'color','geometry',area->'geometry'));
+      clean := clean || jsonb_build_array(jsonb_build_object('id',lower(area->>'id'),'name',trim(area->>'name'),
+        'profileId',lower(area->>'profileId'),'profileName',profile_name,'color',area->>'color','geometry',area->'geometry'));
     end loop;
     insert into public.cd_work_areas(file_id) values(fid) on conflict do nothing;
     select * into snapshot from public.cd_work_areas where file_id=fid for update;

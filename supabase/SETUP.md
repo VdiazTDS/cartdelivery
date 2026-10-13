@@ -12,35 +12,39 @@ The database replacement migration and updated function were deployed on October
 
 ## Deploy
 
-**Pending field-mapping and usability release:** apply `migrations/202610120002_import_field_mapping.sql`, then `migrations/202610120003_last_sync_time.sql`, then deploy the updated function before publishing the mapping frontend. This adds nullable metadata and a service-role-only import wrapper; existing records and workbook sources are unchanged. Publish `profile-field-mapping.js` and the updated `profile-import-worker.js` together with `index.html`, `app.js` and `style.css`. The browser checks that the backend accepted the mapping before uploading source bytes. These two migrations and the mapping function update have not yet been deployed. The last-sync migration adds an owner/date history index and returns the current copy owner's latest confirmed sync timestamp. Public team views return no profile timestamp; no source rows or delivery values change. Resume preferences and upload data checks run in the browser.
+**Backend deployed October 13, 2026:** the field-mapping, last-sync and shared-work-area migrations (`202610120002_import_field_mapping.sql`, `202610120003_last_sync_time.sql`, and `202610120004_profile_work_areas.sql`) were applied together in one transaction. The updated `profile-workbooks` function is ACTIVE at version 5. All six migration files are now installed; do not reapply them. This project was migrated through SQL queries and has no CLI migration-history table, so do not run an unreviewed `db push` against it.
 
-**Backend deployed October 12, 2026:** [202610120001_public_team_views.sql](migrations/202610120001_public_team_views.sql) and the updated `profile-workbooks` function are installed. All three migrations are now installed; do not reapply them. Read-only production checks confirmed guest listing, shared record reads and the existing Cart Delivery shortlist work, while private listing still rejects missing/invalid authentication. The existing one ready original and two profile copies were preserved. No source files were uploaded or deleted.
+Live checks confirmed work-area reads return the shared snapshot and profile directory, browser roles cannot access the table/RPC directly, unauthenticated work-area requests are rejected, and public team views still load. The existing one ready original, two copies, 5,364 records, 39 Excel-bucket objects and six GeoJSON-bucket objects were preserved. No work-area save was tested against production; mutations were verified using the local fake backend. The authenticated database read probe was rolled back.
+
+The field-mapping migration adds nullable metadata and a service-role-only import wrapper. The last-sync migration reports the current copy owner's confirmed sync time. Work areas use `cd_work_areas` and a service-role-only RPC with revision checks and retry receipts; they do not change delivery records, copy revisions or Excel sources. Publish `profile-field-mapping.js` and `profile-import-worker.js` together with `index.html`, `app.js` and `style.css` when releasing the frontend.
+
+**Backend deployed October 12, 2026:** [202610120001_public_team_views.sql](migrations/202610120001_public_team_views.sql) and the updated `profile-workbooks` function are installed. The first three migrations are installed; do not reapply them. Read-only production checks confirmed guest listing, shared record reads and the existing Cart Delivery shortlist work, while private listing still rejects missing/invalid authentication. The existing one ready original and two profile copies were preserved. No source files were uploaded or deleted.
 
 The earlier sign-in error on the guest file picker came from the old deployed function rejecting `public-list` before the file list could load. Team files use the same uploaded originals and `_cart-delivery-tab.json` shortlist; there is no separate collection to populate. An outdated guest API now displays a server-update message, and guests never seed a missing shared shortlist.
 
-Frontend changes remain in this workspace for publication through the normal site release. Publish the updated `index.html`, `app.js` and `style.css` together. For future function deployments:
+The public GitHub Pages app already includes the work-area controls. Frontend updates publish from this repository; release `index.html`, `app.js` and `style.css` together so cache versions stay aligned. For future function deployments:
 
 ```powershell
 supabase functions deploy profile-workbooks --project-ref lffazhbwvorwxineklsy --no-verify-jwt --use-api
 ```
 
-This new migration adds a read-only function; it does not change records, copies, storage objects or table permissions. Do not revert to the old workbook-based function after database saves: old tables no longer represent current work.
+The public-team-views migration adds a read-only function; it does not change records, copies, storage objects or table permissions. Do not revert to the old workbook-based function after database saves: old tables no longer represent current work.
 
-For a fresh project, apply all three migrations in order. Enable Email/password signup, disable email confirmation for username aliases, and require eight-character passwords. Review project-wide Auth changes if other apps share the project. Aliases use `<username>@profiles.cartdelivery.invalid` and must not receive mail.
+For a fresh project, apply all six migrations in filename order. Enable Email/password signup, disable email confirmation for username aliases, and require eight-character passwords. Review project-wide Auth changes if other apps share the project. Aliases use `<username>@profiles.cartdelivery.invalid` and must not receive mail.
 
-`verify_jwt = false` is intentional: only `public-list`, `public-original`, `public-rows` and `public-export-source` bypass authentication. These expose ready shared originals, never profile drafts or copy metadata. Public rows require an original-mode request and matching shared revision. Every other action requires `auth.getUser(token)`. The service key stays in Supabase's function environment, never in source or frontend code. Browser roles cannot access managed tables or either RPC directly. [Deployment reference](https://supabase.com/docs/guides/functions/deploy).
+`verify_jwt = false` is intentional: only `public-list`, `public-original`, `public-rows` and `public-export-source` bypass authentication. These expose ready shared originals, never profile drafts or copy metadata. Public rows require an original-mode request and matching shared revision. Every other action requires `auth.getUser(token)`. The service key stays in Supabase's function environment, never in source or frontend code. Browser roles cannot access managed tables or the RPCs directly. [Deployment reference](https://supabase.com/docs/guides/functions/deploy).
 
 ## Workflow and storage
 
 The profile UI calls the shared original **team Excel**. **Start my own copy** creates a copy; **Continue my work** reopens it. **Sync to team Excel** shows an aggregate summary of changes relative to the current shared values: stops updated, carts added/removed, completed/reopened stops, notes and affected routes/days. Individual stop details are optional and load 50 at a time. Conflicts still require decisions; unresolved conflicts are excluded from totals until resolved. The final confirmation uses the same request and choices as its summary. **Check for team updates** offers a copy refresh when there are no pending edits. These frontend changes do not require a backend deployment or migration. “Team Excel” refers to the app's shared dataset; the imported source remains immutable, and downloading the team view creates an updated spreadsheet.
 
 - First open imports records in batches. Later opens read database pages without downloading Excel.
-- Signed-out team viewing never imports or creates a copy: it reads confirmed shared records, or the existing public Excel source when not yet imported. All team views remain read-only. Signed-in users edit their own copies and sync through the final acknowledgement screen. The persistent team/copy banner is repeated inside dialogs.
+- Signed-out team viewing never imports or creates a copy: it reads confirmed shared records, or the existing public Excel source when not yet imported. Team delivery records remain read-only; signed-in profiles can edit shared work-area boundaries in the team view. Signed-in users edit their own copies and sync through the final acknowledgement screen. The persistent team/copy banner is repeated inside dialogs.
 - **Create my copy & open** creates an isolated profile view sharing immutable records. Only that profile's delivery changes are stored separately; no physical Excel duplicate is needed.
 - Delivery saves validate and commit the whole request before markers change. Stale copy revisions are rejected.
 - **Review & sync** compares baseline/profile/original. Conflicts require keeping original values, using profile changes, or entering a final total. Equal reported quantities can still conflict.
 - Sync atomically updates shared values, audit history, and the profile baseline. Other profiles keep their baselines until they sync/refresh. Request receipts prevent duplicate operations.
-- **View original** is read-only. **Download** exports the confirmed snapshot currently open; reopen first for newer work from another phone.
+- **View original** keeps delivery records read-only and allows signed-in profiles to manage shared work areas. **Download** exports the confirmed snapshot currently open; reopen first for newer work from another phone.
 
 `cd_data_files` holds metadata, source location and original revision. `cd_data_records` stores imported records once. `cd_data_copies` holds copy/baseline revisions. `cd_data_drafts` stores changed records. `cd_data_versions` retains shared delivery values by record/revision, keeping other profiles' baselines stable.
 
@@ -54,7 +58,7 @@ Legacy `excel-files` objects remain frozen sources under existing restrictive po
 
 ## Import and export
 
-**Upload new team Excel** in Saved Files (or the sidebar) lets the user choose a source and confirm **Upload & add to Cart Delivery**. The frontend imports it, reloads the shared shortlist, and adds the new name only after import succeeds. A failed shortlist write preserves the completed import and offers a retry without a second upload. The current map remains open until the user chooses a file or opens their copy. No backend changes are needed for this flow.
+**Upload new team Excel** in Saved Files lets the user choose a source and confirm **Upload & add to Cart Delivery**. The frontend imports it, reloads the shared shortlist, and adds the new name only after import succeeds. A failed shortlist write preserves the completed import and offers a retry without a second upload. The current map remains open until the user chooses a file or opens their copy. No backend changes are needed for this flow.
 
 `profile-import-worker.js` parses the first sheet in a browser worker, rejects macros/duplicate headings, and supplies batches of up to 250 records. The server validates row shapes. Partial imports stay hidden until finalization; retries resume confirmed batches. Existing datasets cannot be replaced. The importing profile supplies the initial record interpretation; the server does not independently re-parse Excel.
 
@@ -76,6 +80,8 @@ node tests/profile-public.backend.cjs
 node tests/profile-sync-summary.cjs
 node tests/profile-data.migration.cjs
 node tests/profile-workbooks.browser.cjs
+node tests/work-areas.backend.cjs
+node tests/work-areas.browser.cjs
 node tests/cart-counts.browser.cjs
 node tests/resequence.browser.cjs
 ```

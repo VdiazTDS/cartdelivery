@@ -698,7 +698,7 @@ function renderProfileState() {
   profileElement("profileSignedIn").hidden = !user;
   profileElement("profileAccountName").textContent = username;
   profileElement("profileFileSummary").textContent = workspace?.name || "Open a file to start your day";
-  profileElement("profileWorkspaceLabel").textContent = !workspace ? "GET STARTED" : workspace.mode === "original" ? "TEAM EXCEL · VIEW ONLY" : "YOUR SAVED COPY";
+  profileElement("profileWorkspaceLabel").textContent = !workspace ? "GET STARTED" : workspace.mode === "original" ? user ? "TEAM EXCEL" : "TEAM EXCEL · VIEW ONLY" : "YOUR SAVED COPY";
   profileElement("profileSaveSummary").textContent = !workspace
     ? "Your saved copies follow your account. Choose a file to continue where you left off."
     : workspace.mode === "original" ? "You're viewing the shared team Excel. Open your own copy to record deliveries."
@@ -4749,7 +4749,7 @@ function setupWorkAreas() {
     el('prepareWorkAreasBtn').disabled = profileState.busy;
     el('refreshWorkAreasBtn').disabled = !signed || !workspace?.fileId || state.loading || state.busy;
     el('workAreasStatus').textContent = !signed ? 'Sign in to see profile work areas.' : !workspace ? 'Open a team file or your copy to see work areas.'
-      : !workspace.fileId ? 'Enable work areas on the team Excel to share boundaries for this file.'
+      : !workspace.fileId ? state.error || 'Enable work areas on the team Excel to share boundaries for this file.'
       : state.error || (state.loading && !state.loaded ? 'Loading shared work areas…'
       : `${state.snapshot?.areas.length || 0} shared areas. ${workspace.mode === 'original' ? 'Edit here for everyone.' : 'View only in your copy; edit on the team Excel.'}`);
     el('workAreasHelp').textContent = `${workspace?.name || ''} · ${editable ? 'Changes save directly for everyone. Each profile can have several areas. Delivery records stay unchanged.' : 'These are the shared team boundaries. Open the team Excel while signed in to edit them.'}`;
@@ -4858,7 +4858,7 @@ function setupWorkAreas() {
       state.shape = L.geoJSON(state.draft.geometry, { style: { color: el('workAreaColor').value, weight: 3, dashArray: '8 6', fillOpacity: 0.15 } }).getLayers()[0];
       state.shape.options.poly = { allowIntersection: false };
       state.shape.addTo(draftLayer); state.shape.editing.enable();
-      map.fitBounds(state.shape.getBounds(), { padding: [45,45], maxZoom: 17 });
+      map.fitBounds(state.shape.getBounds(), { paddingTopLeft: [45,45], paddingBottomRight: [45,190], maxZoom: 20 });
       map.fire('draw:editstart');
     } else {
       state.drawer = new L.Draw.Polygon(map, { allowIntersection: false, showArea: false,

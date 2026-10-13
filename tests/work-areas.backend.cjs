@@ -32,7 +32,7 @@ const { fixture } = require('./profile-data.fixture.cjs');
     assert.equal(updated.areas[0].profileName, 'south_crew');
     await assert.rejects(() => fx.call(a, 'work-areas-save', { fileId, mode: 'original', revision: 1, areas: [] }), /STALE_VERSION/);
     const invalid = [
-      [north, north], [{ ...north, profileId: randomUUID() }], [{ ...north, name: '' }],
+      [north, north], [north, { ...north, id: north.id.toUpperCase() }], [{ ...north, profileId: randomUUID() }], [{ ...north, name: '' }],
       [{ ...north, color: 'red; bad' }], [{ ...north, geometry: { type: 'Point', coordinates: [0,0] } }],
       [{ ...north, geometry: { type: 'Polygon', coordinates: [[[-98,30],[-97,30],[-97,31],[-98,32]]] } }],
       [{ ...north, geometry: { type: 'Polygon', coordinates: [[[0,0],[1,1],[2,2],[0,0]]] } }],
