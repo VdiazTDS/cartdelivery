@@ -36,11 +36,11 @@ const impact = (preview, choices) => JSON.parse(JSON.stringify(context.profileSy
     ] });
     await fx.call(b, 'sync', { fileId: file.fileId, copyRevision: saved.copyRevision, masterRevision: other.masterRevision, resolutions: [] });
     const preview = await fx.call(a, 'preview', { fileId: file.fileId });
-    assert.equal(impact(preview).unresolved, 4);
-    const choices = [{ index: 2, choice: 'count', count: 3 }, { index: 3, choice: 'original' }, { index: 4, choice: 'mine' }, { index: 5, choice: 'mine' }];
+    assert.equal(impact(preview).unresolved, 2);
+    const choices = [{ index: 2, choice: 'count', count: 3 }, { index: 4, choice: 'mine' }];
     const summary = impact(preview, choices);
-    assert.deepEqual({ ...summary, routes: undefined }, { stops: 4, added: 4, removed: 2, completed: 2, reopened: 1, notes: 2, unknown: 0, unchanged: 2, unresolved: 0, routes: undefined });
-    assert.deepEqual(summary.routes.map(group => [group.route, group.day, group.stops]), [['Recycle', '2', 1], ['Trash', '1', 3]]);
+    assert.deepEqual({ ...summary, routes: undefined }, { stops: 5, added: 4, removed: 2, completed: 2, reopened: 1, notes: 3, unknown: 0, unchanged: 1, unresolved: 0, routes: undefined });
+    assert.deepEqual(summary.routes.map(group => [group.route, group.day, group.stops]), [['Recycle', '2', 2], ['Trash', '1', 3]]);
     assert.equal(impact(preview, choices.map(choice => choice.index === 2 ? { ...choice, count: null } : choice)).unresolved, 1);
     const zero = impact(preview, choices.map(choice => choice.index === 2 ? { ...choice, count: 0 } : choice));
     assert.equal(zero.removed, 4, 'Zero is a valid corrected total, not an unresolved choice');
@@ -48,6 +48,7 @@ const impact = (preview, choices) => JSON.parse(JSON.stringify(context.profileSy
     const actual = await fx.read(a, file.fileId, 'original');
     assert.deepEqual(actual.map(row => row.del_qty), [3, 1, 3, 1, 1, 1]);
     assert.equal(actual[4].delivery_notes, 'Mine', 'A note-only sync preserves the team cart count');
+    assert.equal(actual[3].delivery_notes, 'Mine', 'Independent note and count changes merge automatically');
     const history = await fx.call(a, 'history', { fileId: file.fileId, offset: 0 });
     assert.equal(history.history[0].change_count, summary.stops, 'Summary stop count matches the committed transaction');
     const unknown = impact({ changes: [{ index: 0, fields: ['del_status'], original: { QTY: '', del_status: '' }, mine: { QTY: '', del_status: 'Delivered' } }] });

@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261013-help" />
+  <link rel="stylesheet" href="style.css?v=20261013-sync" />
 
   <link rel="icon" href="favicon.ico" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -529,6 +529,7 @@
   <p id="profileSyncSummary"></p>
   <p id="profileSyncHelp" class="profile-callout"></p>
   <p id="profileSyncStatus" role="status" aria-live="polite"></p>
+  <div id="profileSyncConflictTools"></div>
   <section id="profileSyncImpact" class="profile-sync-impact" aria-label="Sync summary" aria-live="polite"></section>
   <div id="profileSyncChanges" class="profile-scroll"></div>
   <p class="profile-help">All unsynced stops in this file are included, even outside your map selection. Individual stop details are optional. Your copy will also receive the latest team Excel updates.</p>
@@ -644,7 +645,7 @@
       <p>Pan with one finger and pinch to zoom. Selecting a stop alone never records a delivery. A stop is complete when all its carts are delivered.</p>
     </details>
     <details class="help-topic"><summary>Sync your work to the main team Excel</summary>
-      <ol><li>Finish saving your deliveries. Tap <strong>Profile → Sync to team Excel</strong>.</li><li>Review the summary. If someone changed the same stop, resolve the conflict by checking the correct delivered total. Counts are not simply added together.</li><li>Tap <strong>Next: confirm sync</strong>, read the final check, tick the acknowledgement and tap <strong>Confirm sync to team Excel</strong>.</li><li>Wait for confirmation. The team file receives your reviewed changes. Your copy also takes in the latest team updates and has no changes waiting to sync.</li></ol>
+      <ol><li>Finish saving your deliveries. Tap <strong>Profile → Sync to team Excel</strong>.</li><li>Review the summary. Matching delivered totals agree automatically: two profiles reporting 1 delivered cart still means 1, not 2. Unrelated note and delivery changes merge.</li><li>For conflicts, choose a rule and tap <strong>Apply to all conflicts</strong>. Keep the higher delivered total, keep the team's values, or use your changes. Higher totals do not settle differing notes or unknown quantities. Expand individual conflicts to adjust exceptions or enter a verified total. Check any warning about counts going down.</li><li>Tap <strong>Next: confirm sync</strong>, read the final check, tick the acknowledgement and tap <strong>Confirm sync to team Excel</strong>.</li><li>Wait for confirmation. The team file receives your reviewed changes. Your copy also takes in the latest team updates and has no changes waiting to sync.</li></ol>
       <p>Sync includes all saved changes waiting in this copy, even stops hidden by map filters. Other people’s existing copies stay as they were until they update or sync them.</p>
       <p>If your copy has no pending changes, use <strong>Check for team updates</strong> in Profile to review and confirm an update. If you have pending changes, use the sync review so your work is included.</p>
     </details>
@@ -783,7 +784,7 @@
 </dialog>
 
 <script src="profile-field-mapping.js?v=20261012-delivery-ease" defer></script>
-<script src="app.js?v=20261013-help" defer></script>
+<script src="app.js?v=20261013-sync" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">

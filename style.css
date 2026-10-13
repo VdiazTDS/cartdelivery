@@ -5255,6 +5255,12 @@ body .profile-dialog .profile-file-tools button { font-size: 13px; padding: 10px
 .profile-sync-metrics dd { margin: 0; font-size: 24px; font-weight: 700; }
 .profile-sync-impact li { overflow-wrap: anywhere; }
 .profile-sync-impact ul { padding-left: 20px; }
+.profile-conflict-tools { padding: 12px; border: 2px solid #c9882d; border-radius: 12px; margin: 12px 0; }
+.profile-conflict-tools h3 { font-size: 16px; margin: 0; }
+.profile-conflict-tools button { width: 100%; }
+.profile-conflict-pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 12px 0; }
+.profile-conflict-pager span { font-size: 13px; text-align: center; }
+.profile-dialog .profile-sync-reduction { padding: 12px; border: 2px solid #c9882d; border-radius: 10px; color: var(--profile-text); font-weight: 600; }
 .profile-comparison { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--profile-border); font-size: 13px; line-height: 1.5; }
 .profile-comparison span { flex: 1; color: var(--profile-muted); }
 .profile-comparison strong { flex: 1; text-align: right; font-weight: 600; }

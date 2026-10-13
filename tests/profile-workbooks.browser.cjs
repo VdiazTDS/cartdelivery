@@ -210,6 +210,7 @@ const server = http.createServer((req, res) => {
     await a.waitForFunction(() => !deliverySaveInProgress && _currentRows[0].del_qty === 1);
     assert.match(await a.locator('#routeContext').textContent(), /2 stops waiting to sync/);
     await deliver(b, [1, 2]); await b.waitForFunction(() => !deliverySaveInProgress && _currentRows[1].del_qty === 1);
+    await deliver(b, [2]); await b.waitForFunction(() => !deliverySaveInProgress && _currentRows[2].del_qty === 2);
     await a.locator('#profileWorkspaceBtn').click();
     assert.match(await a.locator('#profileSaveSummary').textContent(), /saved in your copy/);
     await captureProfile(a, 'saved-work');
@@ -563,6 +564,70 @@ const server = http.createServer((req, res) => {
     await a.setViewportSize({ width: 440, height: 956 });
     await a.waitForFunction(() => document.getElementById('recordCartsBtn').parentElement.id === 'deliveryMoreActions');
     assert.equal(await a.locator('#recordCartsBtn').evaluate(el => el.parentElement.id), 'deliveryMoreActions');
+
+    const conflictRows = Array.from({ length: 523 }, (_, ID) => ({ ...rows[0], ID, QTY: ID === 522 ? '' : 3, delivery_notes: '' }));
+    const conflictFile = await fx.importRows(teamA, 'Bulk conflicts.xlsx', conflictRows);
+    const conflictA = await fx.call(teamA, 'open', { fileId: conflictFile.fileId });
+    const conflictB = await fx.call(teamB, 'open', { fileId: conflictFile.fileId });
+    const conflictEdits = (count, note) => conflictRows.map((row, index) => ({ index, values: {
+      del_qty: index === 522 ? '' : count, del_status: index === 522 ? 'Delivered' : '', delivery_notes: index >= 521 ? note : ''
+    } }));
+    await fx.call(teamA, 'save', { fileId: conflictFile.fileId, copyRevision: conflictA.copyRevision, edits: conflictEdits(1, 'Mine') });
+    const conflictSaved = await fx.call(teamB, 'save', { fileId: conflictFile.fileId, copyRevision: conflictB.copyRevision, edits: conflictEdits(2, 'Team') });
+    await fx.call(teamB, 'sync', { fileId: conflictFile.fileId, copyRevision: conflictSaved.copyRevision, masterRevision: conflictB.masterRevision, resolutions: [] });
+    await a.evaluate(fileId => openProfileFile({ fileId }), conflictFile.fileId);
+    await review(a);
+    assert.equal(await a.locator('[data-conflict-index]').count(), 0, 'Hundreds of conflicts start with bulk choices, not hundreds of cards');
+    assert.match(await a.locator('#profileConflictProgress').textContent(), /0 of 523/);
+    const chooseRule = async rule => { await a.locator('#profileConflictRule').selectOption(rule); await a.locator('#profileApplyConflicts').click(); };
+    await chooseRule('higher');
+    assert.match(await a.locator('#profileConflictProgress').textContent(), /521 of 523/);
+    await a.locator('#confirmProfileSyncBtn').click();
+    assert.equal(await a.locator('#profileShareDialog').isVisible(), false, 'Higher counts leave differing notes unresolved');
+    await chooseRule('original');
+    assert.equal(await a.locator('#profileSyncStatus').textContent(), '', 'Changing choices clears the old unresolved-conflict message');
+    assert.match(await a.locator('#profileConflictProgress').textContent(), /523 of 523/);
+    assert.deepEqual(await a.locator('#profileSyncImpact dd').allTextContents(), ['0', '0', '0', '0']);
+    await chooseRule('mine');
+    assert.match(await a.locator('#profileSyncImpact .profile-sync-reduction').textContent(), /removes 522 carts/);
+    await chooseRule('higher');
+    assert.equal(await a.locator('#profileSyncImpact .profile-sync-reduction').count(), 1, 'A retained note conflict choice can still reduce a count');
+    await a.locator('#profileConflictDetails summary').click();
+    await a.locator('[data-conflict-index]').first().waitFor();
+    assert.equal(await a.locator('[data-conflict-index]').count(), 20);
+    await a.locator('.profile-conflict-pager').getByRole('button', { name: 'Next', exact: true }).click();
+    await a.locator('[data-conflict-index="20"]').selectOption('count');
+    await a.locator('[data-conflict-count="20"]').fill('0');
+    await a.locator('.profile-conflict-pager').getByRole('button', { name: 'Previous', exact: true }).click();
+    await a.locator('.profile-conflict-pager').getByRole('button', { name: 'Next', exact: true }).click();
+    assert.equal(await a.locator('[data-conflict-count="20"]').inputValue(), '0', 'Off-page exceptions are retained');
+    await a.locator('#profileConflictDetails summary').click();
+    for (const width of [360, 440, 1440]) {
+      await a.setViewportSize({ width, height: 956 });
+      for (const light of [false, true]) {
+        await a.evaluate(light => document.body.classList.toggle('sun-mode', light), light);
+        await a.locator('#profileSyncDialog').evaluate(el => { el.scrollTop = 0; });
+        await a.screenshot({ path: path.join(root, `local-artifacts/sync-bulk-${width}-${light ? 'light' : 'dark'}.png`) });
+        assert(await a.locator('#profileSyncDialog').evaluate(el => el.scrollWidth <= el.clientWidth));
+        assert(await a.locator('#profileApplyConflicts').evaluate(el => el.getBoundingClientRect().height >= 44));
+        assert(await a.locator('#profileConflictRule').evaluate(el => el.getBoundingClientRect().height >= 44));
+      }
+    }
+    await a.setViewportSize({ width: 440, height: 956 });
+    const requestsBeforeBulk = syncRequests;
+    await a.locator('#confirmProfileSyncBtn').click();
+    assert.equal(syncRequests, requestsBeforeBulk, 'Bulk decisions still require a separate final confirmation');
+    assert.equal(await a.evaluate(() => profileState.shareConfirmation.request.resolutions.length), 523, 'All pages are included');
+    assert.match(await a.locator('#profileShareImpact .profile-sync-reduction').textContent(), /removes 3 carts/);
+    await a.locator('#profileShareAcknowledged').check();
+    await a.locator('#commitProfileShareBtn').click();
+    await a.waitForFunction(() => !profileState.busy && profileState.workspace.pending === 0);
+    const bulkActual = await fx.read(teamA, conflictFile.fileId, 'original');
+    assert.equal(bulkActual[0].del_qty, 2); assert.equal(bulkActual[520].del_qty, 2);
+    assert.equal(bulkActual[20].del_qty, 0); assert.equal(bulkActual[521].del_qty, 1);
+    assert.equal(bulkActual[521].delivery_notes, 'Mine'); assert.equal(bulkActual[522].delivery_notes, 'Mine');
+    assert.equal((await fx.call(teamA, 'history', { fileId: conflictFile.fileId })).history[0].resolution_count, 523);
+    await a.locator('#closeProfileBtn').click();
 
     const safetyFile = await fx.importRows(teamA, 'Safety.xlsx', rows);
     const safetyCopy = await fx.call(teamA, 'open', { fileId: safetyFile.fileId });

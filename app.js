@@ -723,7 +723,10 @@ function renderProfileState() {
   document.querySelectorAll("#profileDialog button, #profileSyncDialog button, #profileShareDialog button, #fileManagerModal button").forEach(button => { button.disabled = busy; });
   profileElement("profileShareAcknowledged").disabled = busy;
   profileElement("commitProfileShareBtn").disabled = busy || !profileState.shareConfirmation || !profileElement("profileShareAcknowledged").checked;
-  profileElement("profileSyncChanges").querySelectorAll("input, select").forEach(input => { input.disabled = busy || Boolean(profileState.syncRequest); });
+  profileElement("profileSyncDialog").querySelectorAll("input, select").forEach(input => { input.disabled = busy || Boolean(profileState.syncRequest); });
+  profileElement('profileSyncChanges').querySelectorAll('[data-page-disabled]').forEach(button => { button.disabled = busy || button.dataset.pageDisabled === 'true'; });
+  const bulkConflicts = profileElement('profileApplyConflicts');
+  if (bulkConflicts) bulkConflicts.disabled = busy || Boolean(profileState.syncRequest) || !profileElement('profileConflictRule').value;
   ["profileReviewBtn", "profileReloadCopyBtn", "profileHistoryBtn"].forEach(id => { profileElement(id).disabled = busy || !workspace; });
   profileElement("profileHistoryBtn").disabled = busy || !workspace?.fileId;
   profileElement("profileReviewBtn").disabled = busy || workspace?.mode !== "copy";
@@ -1060,10 +1063,13 @@ function profileSyncImpact(preview, resolutions = []) {
   return impact;
 }
 function profileSyncChoices() {
-  return [...profileElement('profileSyncChanges').querySelectorAll('[data-conflict-index]')].map(select => {
-    const input = profileElement('profileSyncChanges').querySelector(`[data-conflict-count="${select.dataset.conflictIndex}"]`);
-    return { index: Number(select.dataset.conflictIndex), choice: select.value, count: input.value.trim() ? Number(input.value) : null };
-  });
+  return [...(profileState.conflictChoices?.values() || [])];
+}
+function profileHigherCountChoice(item) {
+  const notes = row => String(row.delivery_notes ?? '');
+  const notesConflict = notes(item.mine) !== notes(item.base) && notes(item.original) !== notes(item.base) && notes(item.mine) !== notes(item.original);
+  if (cartTotal(item.original) === null || notesConflict) return null;
+  return { index: item.index, choice: 'count', count: Math.max(deliveredCartCount(item.mine), deliveredCartCount(item.original)) };
 }
 function renderProfileSyncImpact(container, preview, resolutions) {
   const impact = profileSyncImpact(preview, resolutions);
@@ -1075,6 +1081,11 @@ function renderProfileSyncImpact(container, preview, resolutions) {
     term.textContent = label; count.textContent = value.toLocaleString(); box.append(term, count); metrics.append(box);
   }
   container.append(title, metrics);
+  if (impact.removed || impact.reopened) {
+    const warning = document.createElement('p'); warning.className = 'profile-sync-reduction';
+    warning.textContent = `Check corrections: this sync removes ${impact.removed} carts from the team's delivered total and returns ${impact.reopened} completed stops to pending. Continue only if these corrections are intentional.`;
+    container.append(warning);
+  }
   const notes = document.createElement('p');
   notes.textContent = [
     impact.reopened ? `${impact.reopened} completed stops return to pending.` : '',
@@ -1107,14 +1118,22 @@ async function reviewProfileSync() {
       preview.changes.push(...page.changes);
     }
     profileState.preview = preview; profileState.syncRequest = null; profileState.shareConfirmation = null;
+    profileState.conflictChoices = new Map();
     const conflicts = preview.changes.filter(item => item.conflict).length;
     profileElement("profileSyncSummary").textContent = preview.name;
     profileElement("profileSyncHelp").textContent = conflicts
-      ? `${preview.changes.length} changed ${preview.changes.length === 1 ? "stop" : "stops"} to sync. The team also changed ${conflicts} of these. Choose which values to keep at each highlighted stop.`
+      ? `${preview.changes.length} changed stops to sync. ${conflicts} have different changes that need a choice. Resolve them together below, then adjust any exceptions.`
       : preview.changes.length ? `${preview.changes.length} saved ${preview.changes.length === 1 ? "stop" : "stops"} ready to sync. No conflicts — you can confirm the totals without reviewing each stop.`
       : "You have no changes waiting to sync. Update your copy to get the team's latest deliveries.";
     profileElement("profileSyncStatus").textContent = "";
     const list = profileElement("profileSyncChanges"); list.replaceChildren();
+    profileElement('profileSyncConflictTools').replaceChildren();
+    const refreshImpact = () => {
+      const impact = renderProfileSyncImpact(profileElement('profileSyncImpact'), preview, profileSyncChoices());
+      if (!profileState.syncRequest) profileElement('profileSyncStatus').textContent = '';
+      const progress = profileElement('profileConflictProgress');
+      if (progress) progress.textContent = `${conflicts - impact.unresolved} of ${conflicts} conflicts resolved. ${impact.unresolved} left to choose.`;
+    };
     const createChangeCard = item => {
       const card = document.createElement("article"); card.className = "profile-change";
       const title = document.createElement("strong"); title.textContent = `${formatStopAddress(item.mine)} · Bin ${item.mine.BINNO ?? "—"} · Record ${item.index + 1}`;
@@ -1132,14 +1151,72 @@ async function reviewProfileSync() {
         [["", "Choose which values to keep"], ["original", "Keep the team's values"], ["mine", "Use my changes"], ...(cartTotal(item.original) !== null ? [["count", "Enter the correct total delivered"]] : [])].forEach(([value, text]) => select.add(new Option(text, value)));
         const countLabel = document.createElement("label"); countLabel.textContent = "Final total delivered (all teams combined)"; countLabel.hidden = true;
         const input = document.createElement("input"); Object.assign(input, { type: "number", inputMode: "numeric", min: "0", max: String(cartTotal(item.original)), step: "1" }); input.dataset.conflictCount = item.index;
-        const refresh = () => renderProfileSyncImpact(profileElement('profileSyncImpact'), preview, profileSyncChoices());
+        const saved = profileState.conflictChoices.get(item.index);
+        select.value = saved?.choice || ''; input.value = saved?.count ?? ''; countLabel.hidden = select.value !== 'count';
+        select.disabled = input.disabled = Boolean(profileState.syncRequest);
+        const refresh = () => {
+          if (profileState.busy || profileState.syncRequest) return;
+          profileState.conflictChoices.set(item.index, { index: item.index, choice: select.value, ...(select.value === 'count' ? { count: input.value.trim() ? Number(input.value) : null } : {}) });
+          refreshImpact();
+        };
         countLabel.append(input); select.onchange = () => { countLabel.hidden = select.value !== "count"; refresh(); };
         input.oninput = refresh;
         label.append(select); card.append(label, countLabel);
       }
       return card;
     };
-    preview.changes.filter(item => item.conflict).forEach(item => list.append(createChangeCard(item)));
+    if (conflicts) {
+      const items = preview.changes.filter(item => item.conflict);
+      const bulk = document.createElement('section'); bulk.className = 'profile-conflict-tools';
+      const heading = document.createElement('h3'); heading.textContent = 'Resolve conflicts together';
+      const label = document.createElement('label'); label.textContent = 'Choose a rule for this sync';
+      const rule = document.createElement('select'); rule.id = 'profileConflictRule';
+      [['', 'Choose a rule'], ['higher', 'Keep the higher delivered total'], ['original', "Keep the team’s values"], ['mine', 'Use my changes']].forEach(([value, text]) => rule.add(new Option(text, value)));
+      label.append(rule);
+      const explanation = document.createElement('p'); explanation.id = 'profileConflictRuleHelp';
+      rule.setAttribute('aria-describedby', explanation.id);
+      const apply = document.createElement('button'); apply.type = 'button'; apply.id = 'profileApplyConflicts'; apply.textContent = `Apply to all ${conflicts} conflicts`; apply.disabled = true;
+      rule.onchange = () => {
+        apply.disabled = !rule.value || Boolean(profileState.syncRequest);
+        explanation.textContent = rule.value === 'higher'
+          ? 'Keeps the larger reported total; never adds the two counts. Differing notes and unknown quantities still need a choice. Use a correction instead if the larger count is wrong.'
+          : rule.value === 'original' ? 'Keeps the current team values for every conflicting stop, discarding your changes at those stops. Other stops still sync.'
+          : rule.value === 'mine' ? 'Applies your changed fields at every conflicting stop. This can lower delivered counts or replace team notes. Check the totals before syncing.'
+          : 'Matching delivery totals agree automatically. Unrelated note and delivery changes merge. Different totals are never added together.';
+      };
+      rule.onchange();
+      const progress = document.createElement('p'); progress.id = 'profileConflictProgress'; progress.setAttribute('role', 'status');
+      const hint = document.createElement('p'); hint.textContent = 'Applying a rule replaces earlier choices for eligible conflicts, including those not shown below. You can adjust exceptions. Nothing is synced until the final confirmation.';
+      bulk.append(heading, label, explanation, apply, progress, hint); profileElement('profileSyncConflictTools').append(bulk);
+      const details = document.createElement('details'); details.className = 'profile-explainer'; details.id = 'profileConflictDetails';
+      details.open = conflicts <= 10;
+      const summary = document.createElement('summary'); summary.textContent = `Review individual conflicts (${conflicts})`;
+      const cards = document.createElement('div');
+      const pager = document.createElement('div'); pager.className = 'profile-conflict-pager';
+      const previous = document.createElement('button'), next = document.createElement('button'), page = document.createElement('span');
+      previous.type = next.type = 'button'; previous.textContent = 'Previous'; next.textContent = 'Next';
+      let offset = 0;
+      const renderPage = () => {
+        cards.replaceChildren(...items.slice(offset, offset + 20).map(createChangeCard));
+        previous.disabled = offset === 0; next.disabled = offset + 20 >= conflicts;
+        previous.dataset.pageDisabled = String(previous.disabled); next.dataset.pageDisabled = String(next.disabled);
+        page.textContent = `${offset + 1}–${Math.min(offset + 20, conflicts)} of ${conflicts}`;
+      };
+      previous.onclick = () => { offset -= 20; renderPage(); summary.scrollIntoView({ block: 'start' }); };
+      next.onclick = () => { offset += 20; renderPage(); summary.scrollIntoView({ block: 'start' }); };
+      pager.append(previous, page, next); details.append(summary, cards, pager); list.append(details);
+      details.ontoggle = () => { if (details.open) renderPage(); };
+      if (details.open) renderPage();
+      apply.onclick = () => {
+        if (!rule.value || profileState.busy || profileState.syncRequest) return;
+        for (const item of items) {
+          const choice = rule.value === 'higher' ? profileHigherCountChoice(item) : { index: item.index, choice: rule.value };
+          if (choice) profileState.conflictChoices.set(item.index, choice);
+        }
+        if (details.open) renderPage();
+        refreshImpact();
+      };
+    }
     const ordinary = preview.changes.filter(item => !item.conflict);
     if (ordinary.length) {
       const details = document.createElement('details'); details.className = 'profile-explainer'; details.id = 'profileSyncDetails';
@@ -1155,7 +1232,7 @@ async function reviewProfileSync() {
       more.onclick = append;
       details.append(summary, cards, more); list.append(details);
     }
-    renderProfileSyncImpact(profileElement('profileSyncImpact'), preview, []);
+    refreshImpact();
     profileElement('profileSyncImpact').hidden = !preview.changes.length;
     list.hidden = !preview.changes.length;
     profileElement("confirmProfileSyncBtn").textContent = preview.changes.length ? "Next: confirm sync" : "Next: confirm copy update";
@@ -1170,11 +1247,11 @@ async function confirmProfileSync() {
     let request = profileState.syncRequest;
     if (!request) {
       const resolutions = preview.changes.filter(item => item.conflict).map(item => {
-        const choice = document.querySelector(`[data-conflict-index="${item.index}"]`).value;
+        const resolution = profileState.conflictChoices.get(item.index);
+        const choice = resolution?.choice;
         if (!choice) throw new Error("UNRESOLVED_CONFLICT");
-        const input = document.querySelector(`[data-conflict-count="${item.index}"]`);
-        if (choice === "count" && (!input.value.trim() || !input.checkValidity())) throw new Error("INVALID_QUANTITY");
-        return { index: item.index, choice, ...(choice === "count" ? { count: Number(input.value) } : {}) };
+        if (choice === "count" && (!Number.isSafeInteger(resolution.count) || cartTotal(item.original) === null || resolution.count < 0 || resolution.count > cartTotal(item.original))) throw new Error("INVALID_QUANTITY");
+        return { ...resolution };
       });
       request = { action: "sync", fileId: preview.fileId, copyRevision: preview.copyRevision,
         masterRevision: preview.masterRevision, resolutions, requestId: crypto.randomUUID() };

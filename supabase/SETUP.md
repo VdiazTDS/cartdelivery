@@ -4,7 +4,9 @@ The app uses Supabase Auth, PostgreSQL and Storage. Excel is an immutable import
 
 ## Current deployment
 
-Project: `lffazhbwvorwxineklsy` (`VdiazTDS's Project`). All eight migrations are installed; **do not run them again**. Email/password signup is enabled, email confirmation is disabled for username aliases, and passwords require six characters with no additional composition rules.
+Project: `lffazhbwvorwxineklsy` (`VdiazTDS's Project`). All nine migrations are installed; **do not run them again**. Email/password signup is enabled, email confirmation is disabled for username aliases, and passwords require six characters with no additional composition rules.
+
+**Sync agreement deployed October 13, 2026:** `202610130003_sync_agreement.sql` updates the server comparison and adds a service-only delivery-value helper. Equal delivered totals agree automatically, independent note/count changes merge, and different competing totals or notes still require a decision. No Edge Function redeployment is needed. A read-only check found pending conflicts fell from 558 to 44; the one file, two copies, 5,364 source records, 917 versions, 1,946 drafts, one history event and 45 storage objects were unchanged. No profile was synced by this deployment. Publish the matching frontend for bulk choices and refresh open phones before reviewing again.
 
 **Profile colors deployed October 13, 2026:** `202610130002_profile_colors.sql` adds profile colors to the protected directories, applies them to assigned work areas, and propagates admin color changes to existing areas with revision checks. The function is ACTIVE at version 7 and includes color validation in `admin-service.mjs`. Six requested delivery profiles were provisioned through the admin API; each password sign-in and color was verified, along with availability in the shared work-area profile picker. Credentials are not stored in this repository. No workbooks or delivery records were changed.
 
@@ -34,7 +36,7 @@ supabase functions deploy profile-workbooks --project-ref lffazhbwvorwxineklsy -
 
 The public-team-views migration adds a read-only function; it does not change records, copies, storage objects or table permissions. Do not revert to the old workbook-based function after database saves: old tables no longer represent current work.
 
-For a fresh project, apply all eight migrations in filename order. Enable Email/password signup, disable email confirmation for username aliases, and require six-character passwords with no additional composition rules. Review project-wide Auth changes if other apps share the project. Aliases use `<username>@profiles.cartdelivery.invalid` and must not receive mail.
+For a fresh project, apply all nine migrations in filename order. Enable Email/password signup, disable email confirmation for username aliases, and require six-character passwords with no additional composition rules. Review project-wide Auth changes if other apps share the project. Aliases use `<username>@profiles.cartdelivery.invalid` and must not receive mail.
 
 Bootstrap the first administrator through trusted Supabase administration: create the requested alias account, then set `app_metadata.cartdelivery_admin` to boolean `true` for its verified user ID. Merely choosing the username `admin` does not grant privileges. Never put its password or a service key in frontend code, migrations, documentation or test fixtures. Later password resets use the admin UI. The separate browser admin session is memory-only and does not replace the driver's login; use **Sign out of admin** to end it.
 
@@ -50,7 +52,7 @@ The profile UI calls the shared original **team Excel**. **Start my own copy** c
 - Signed-out team viewing never imports or creates a copy: it reads confirmed shared records, or the existing public Excel source when not yet imported. Team delivery records remain read-only; signed-in profiles can edit shared work-area boundaries in the team view. Signed-in users edit their own copies and sync through the final acknowledgement screen. The persistent team/copy banner is repeated inside dialogs.
 - **Create my copy & open** creates an isolated profile view sharing immutable records. Only that profile's delivery changes are stored separately; no physical Excel duplicate is needed.
 - Delivery saves validate and commit the whole request before markers change. Stale copy revisions are rejected.
-- **Review & sync** compares baseline/profile/original. Conflicts require keeping original values, using profile changes, or entering a final total. Equal reported quantities can still conflict.
+- **Review & sync** compares baseline/profile/original by delivery meaning and notes separately. Matching counts agree without adding them; independent note and delivery edits merge. Different competing totals or notes require a choice. Apply team values, your changes, or the higher reported count to a whole batch, then adjust exceptions. Higher-count choices skip differing notes and unknown quantities; corrections that reduce delivered totals are highlighted before confirmation. Requires the installed `202610130003_sync_agreement.sql`; do not reapply it.
 - Sync atomically updates shared values, audit history, and the profile baseline. Other profiles keep their baselines until they sync/refresh. Request receipts prevent duplicate operations.
 - **View original** keeps delivery records read-only and allows signed-in profiles to manage shared work areas. **Download** exports the confirmed snapshot currently open; reopen first for newer work from another phone.
 
@@ -86,6 +88,7 @@ git diff --check
 node tests/profile-data.backend.cjs
 node tests/profile-public.backend.cjs
 node tests/profile-sync-summary.cjs
+node tests/profile-sync-agreement.cjs
 node tests/profile-data.migration.cjs
 node tests/profile-workbooks.browser.cjs
 node tests/work-areas.backend.cjs
