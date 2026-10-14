@@ -4,6 +4,8 @@ The app uses Supabase Auth, PostgreSQL and Storage. Excel is an immutable import
 
 ## Current deployment
 
+**Delivery-save recovery frontend:** release `20261014-delivery-recovery` adds a device-local IndexedDB journal and **Needs confirmation** UI. It uses the existing `save` action and `cd_data_receipts` transaction mechanism; no Edge Function or migration change is required. Exact retries return the existing receipt before revision checks, while an uncommitted stale request is rejected. The frontend reloads current rows rather than applying an old receipt's revision. Publish `index.html`, `app.js` and `style.css` together. See the README's interrupted-save flow and `tests/delivery-recovery.browser.cjs`. Do not clear phone website data while recovery is pending.
+
 Project: `lffazhbwvorwxineklsy` (`VdiazTDS's Project`). All twelve migrations, through `202610140003_load_profile_owners.sql`, are installed; **do not run them again**. Email/password signup is enabled, email confirmation is disabled for username aliases, and passwords require six characters with no additional composition rules.
 
 **Truck count ownership deployed October 14, 2026:** `202610140003_load_profile_owners.sql` is installed and `profile-workbooks` is ACTIVE at version 10. The function now also bundles `load-service.mjs`. `cd_load_profile_owners` links the existing Vicente, Daniel, Mike, Camden and Justin truck profiles to their matching Auth account IDs. The service-only `cd_load_permissions` and `cd_load_owners` RPCs validate active accounts and administrator assignments respectively. Browser table access and RPC execution are revoked. The new restrictive Storage insert policy blocks all browser writes under `_cart-loads/`; the prior update/delete restrictions remain.

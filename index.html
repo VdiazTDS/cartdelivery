@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261014-load-owners" />
+  <link rel="stylesheet" href="style.css?v=20261014-delivery-recovery" />
 
   <link rel="icon" href="favicon.ico" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -79,6 +79,7 @@
     <button id="hardRefreshBtn" data-action="refresh" class="delivery-action primary-btn" title="Reload app data and clear cached view">Refresh App</button>
   </div>
 
+  <button id="deliveryRecoveryBtn" type="button" aria-haspopup="dialog" hidden></button>
 </header>
 
 
@@ -720,6 +721,15 @@
   </div>
 </dialog>
 
+<dialog id="deliveryRecoveryDialog" class="profile-dialog" aria-labelledby="deliveryRecoveryTitle">
+  <div class="profile-heading"><h2 id="deliveryRecoveryTitle">Needs confirmation</h2><button id="closeDeliveryRecoveryBtn" type="button">Close</button></div>
+  <p>Your attempted deliveries are kept on this phone until the server confirms them. An interrupted save retries without counting it twice. Changed records need review.</p>
+  <p>Keep this phone’s website data until recovery finishes. Unconfirmed attempts are not available on another phone.</p>
+  <button id="retryDeliveryRecoveryBtn" type="button" class="profile-primary">Check and retry</button>
+  <p id="deliveryRecoveryStatus" role="status" aria-live="polite"></p>
+  <div id="deliveryRecoveryList"></div>
+</dialog>
+
 <dialog id="adminDialog" class="profile-dialog" aria-labelledby="adminTitle">
   <div class="profile-heading"><h2 id="adminTitle">Profile administration</h2><button id="closeAdminBtn" type="button">Close</button></div>
   <div id="adminPrompt"><p>Do you want to sign in as an administrator?</p><p>Your delivery profile will stay signed in.</p><div class="profile-actions"><button id="adminProceedBtn" class="profile-primary" type="button">Sign in as admin</button><button id="adminDismissBtn" type="button">Not now</button></div></div>
@@ -842,7 +852,7 @@
 </dialog>
 
 <script src="profile-field-mapping.js?v=20261012-delivery-ease" defer></script>
-<script src="app.js?v=20261014-load-owners" defer></script>
+<script src="app.js?v=20261014-delivery-recovery" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">

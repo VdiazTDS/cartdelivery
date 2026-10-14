@@ -5017,6 +5017,18 @@ header {
 #lockScreenBtn:focus-visible { outline: 3px solid #ffd54a; outline-offset: 2px; }
 body.sun-mode #lockScreenBtn { background: #e4eef8; color: #16324d; border-color: #b9ccdf; }
 
+/* Recovery stays visible even when no route file is open. */
+body header #deliveryRecoveryBtn { display: block; box-sizing: border-box; width: 100%; min-height: 44px; margin: 6px 0 0; padding: 10px 12px; white-space: normal; overflow-wrap: anywhere; color: #fff3d6; background: #633f08; border: 1px solid #f5bb51; border-radius: 9px; font-size: 14px; cursor: pointer; }
+body header #deliveryRecoveryBtn[hidden] { display: none; }
+body.sun-mode header #deliveryRecoveryBtn { color: #593500; background: #fff0cc; border-color: #9c650b; }
+#deliveryRecoveryDialog .profile-heading { position: sticky; top: -22px; z-index: 1; padding: 12px 0; background: var(--profile-bg); }
+#deliveryRecoveryDialog .recovery-entry { border: 1px solid var(--profile-border); border-radius: 12px; padding: 12px; margin-top: 14px; overflow-wrap: anywhere; }
+#deliveryRecoveryDialog .recovery-entry h3 { margin: 0; }
+#deliveryRecoveryDialog .recovery-entry button { display: block; width: 100%; margin-top: 10px; white-space: normal; }
+#deliveryRecoveryDialog summary { min-height: 44px; box-sizing: border-box; padding: 12px 0; cursor: pointer; }
+#deliveryRecoveryDialog ol { padding-left: 24px; }
+#deliveryRecoveryDialog li { padding: 8px 0; }
+
 /* Cart counts share the phone dock and desktop delivery actions. */
 .delivery-action[data-action="carts"] {
   --action-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 5H5v16h14V5h-4M9 3h6v4H9zM8 12l2 2 4-4M8 18h8'/%3E%3C/svg%3E");

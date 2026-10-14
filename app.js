@@ -770,6 +770,9 @@ function lastSyncSummary() {
 const profileUsername = user => user?.email?.split("@")[0] || "";
 function profileMessage(error) {
   const code = error?.message || String(error);
+  if (error?.recoveryRecorded) return 'Save not confirmed. Your attempted stops are kept on this phone. Open Needs confirmation to recover or review them before recording more deliveries.';
+  if (code.includes('RECOVERY_PENDING')) return 'An earlier delivery save needs confirmation. Open Needs confirmation before recording more deliveries or syncing this file.';
+  if (code.includes('RECOVERY_STORAGE')) return 'Delivery not sent. This phone could not store its recovery record. Free device storage and retry; keep the selected stops visible.';
   if (/FILE_DELETED|FILE_NOT_FOUND/.test(code)) return 'This team file is no longer available. It may have been deleted along with all profile copies. Choose another file.';
   if (code.includes('INVALID_DELETE_CONFIRMATION')) return 'Type Confirm and acknowledge that everyone’s work for this file will be deleted.';
   if (code.includes('MAPPING_SETUP_REQUIRED')) return 'Column mapping needs a server update before this file can be uploaded. Ask the app administrator to finish the update.';
@@ -794,16 +797,17 @@ function profileMessage(error) {
   if (code.includes("INVALID_")) return "The changes could not be accepted. Reopen your copy and check the selected records and quantities.";
   return "Could not confirm the request. Check your connection and retry, or reopen your copy to check what saved.";
 }
-async function profileApi(body) {
+async function profileApi(body, expectedOwner = null) {
   const generation = profileState.generation;
   const { data: { session } } = await sb.auth.getSession();
+  if (expectedOwner && (generation !== profileState.generation || profileState.user?.id !== expectedOwner || session?.user?.id !== expectedOwner)) throw new Error('SIGN_IN_REQUIRED');
   const publicRead = ["public-list", "public-original", "public-rows", "public-export-source"].includes(body.action);
   if (!session && !publicRead) throw new Error("SIGN_IN_REQUIRED");
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const response = await fetch(`${SUPABASE_URL}/functions/v1/profile-workbooks`, {
         method: "POST", headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY, ...(!publicRead && session ? { Authorization: `Bearer ${session.access_token}` } : {}) },
-        body: JSON.stringify(body), cache: "no-store"
+        body: JSON.stringify(body), cache: "no-store", ...(body.action === 'save' ? { signal: AbortSignal.timeout(25000) } : {})
       });
       if (publicRead && (response.status === 401 || response.status === 404)) throw new Error("TEAM_VIEW_SETUP_REQUIRED");
       if (response.status === 404) throw new Error("SETUP_REQUIRED");
@@ -821,6 +825,227 @@ async function profileApi(body) {
     }
   }
 }
+// A committed local record always precedes the network request. Its request never changes.
+const deliveryRecovery = (() => {
+  let database, entries = [], busy = false, storageError = false, message = '', timer;
+  let comparison = new Map(), observedOwner = null, comparisonVersion = 0;
+  const shown = new Map();
+  const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('cartdelivery.recovery') : null;
+  const el = id => document.getElementById(id);
+  function open() {
+    if (database) return database;
+    database = new Promise((resolve, reject) => {
+      const request = indexedDB.open('cartdelivery-delivery-recovery', 1);
+      const timeout = setTimeout(() => reject(new Error('RECOVERY_STORAGE')), 5000);
+      request.onupgradeneeded = () => request.result.createObjectStore('saves', { keyPath: 'key' });
+      request.onsuccess = () => { clearTimeout(timeout); request.result.onversionchange = () => { request.result.close(); database = null; }; resolve(request.result); };
+      request.onerror = request.onblocked = () => { clearTimeout(timeout); reject(new Error('RECOVERY_STORAGE')); };
+    }).catch(error => { database = null; throw error; });
+    return database;
+  }
+  async function transact(action, entry) {
+    try {
+      const db = await open();
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction('saves', action === 'list' ? 'readonly' : 'readwrite', { durability: 'strict' });
+        const store = tx.objectStore('saves');
+        let value, reason;
+        tx.oncomplete = () => resolve(value);
+        tx.onabort = tx.onerror = () => reject(new Error(reason || 'RECOVERY_STORAGE'));
+        if (action === 'list') {
+          store.getAll().onsuccess = event => { value = event.target.result; };
+        } else if (action === 'add') {
+          const request = store.add(entry);
+          request.onerror = () => { if (request.error?.name === 'ConstraintError') reason = 'RECOVERY_PENDING'; };
+        } else {
+          store.get(entry.key).onsuccess = event => {
+            if (event.target.result?.request.requestId !== entry.request.requestId) return;
+            if (action === 'remove') store.delete(entry.key);
+            else store.put(entry);
+          };
+        }
+      });
+    } catch (error) { throw new Error(error.message === 'RECOVERY_PENDING' ? 'RECOVERY_PENDING' : 'RECOVERY_STORAGE'); }
+  }
+  async function refresh() {
+    const owner = profileState.user?.id;
+    try {
+      const all = await transact('list');
+      if (owner !== profileState.user?.id) return;
+      entries = all.filter(entry => entry.owner === owner); storageError = false;
+    } catch { entries = []; storageError = true; }
+    render();
+  }
+  function render() {
+    if (!el('deliveryRecoveryBtn')) return;
+    const owner = profileState.user?.id;
+    const visible = entries.filter(entry => entry.owner === owner);
+    const count = visible.reduce((sum, entry) => sum + entry.request.edits.length, 0);
+    const button = el('deliveryRecoveryBtn');
+    button.hidden = !owner || (!count && !storageError);
+    button.textContent = storageError ? 'Delivery recovery unavailable · Check before saving' : `${count} ${count === 1 ? 'stop needs' : 'stops need'} confirmation · Review`;
+    el('deliveryRecoveryStatus').textContent = storageError ? profileMessage(new Error('RECOVERY_STORAGE')) : message;
+    el('retryDeliveryRecoveryBtn').disabled = busy || !owner || deliverySaveInProgress || profileState.busy;
+    const list = el('deliveryRecoveryList');
+    const snapshot = JSON.stringify([owner, storageError, comparisonVersion, visible.map(entry => [entry.request.requestId, entry.state, shown.get(entry.request.requestId)])]);
+    if (list.dataset.snapshot === snapshot) {
+      list.querySelectorAll('button').forEach(button => { button.disabled = busy || deliverySaveInProgress || profileState.busy; });
+      return;
+    }
+    list.dataset.snapshot = snapshot;
+    const expanded = new Set([...list.querySelectorAll('details[open]')].map(item => item.dataset.request));
+    list.replaceChildren();
+    const node = (tag, text) => { const item = document.createElement(tag); item.textContent = text; return item; };
+    for (const entry of visible) {
+      const card = document.createElement('article'); card.className = 'recovery-entry';
+      card.append(node('h3', entry.name), node('p', `${entry.username} · ${new Date(entry.createdAt).toLocaleString()} · ${entry.request.edits.length} stops`));
+      card.append(node('p', entry.state === 'review' ? 'Needs review. Saved records changed; this attempt was not applied.'
+        : entry.state === 'unavailable' ? 'File unavailable. This attempt cannot be recovered automatically. Keep a downloaded record before dismissing it.'
+        : 'Needs confirmation. This phone remembers your attempt; these are not confirmed delivery counts.'));
+      const details = document.createElement('details');
+      details.dataset.request = entry.request.requestId;
+      details.open = expanded.has(entry.request.requestId);
+      details.append(node('summary', 'Stops and attempted counts'));
+      const stops = document.createElement('ol');
+      const limit = shown.get(entry.request.requestId) || 50;
+      entry.stops.slice(0, limit).forEach((stop, i) => {
+        const item = node('li', `${stop.address} · Bin ${stop.bin || '—'} · Route ${stop.route || '—'} / Day ${stop.day || '—'} · Record ${stop.index + 1}`);
+        item.append(node('p', `Before: ${stop.before ?? 'unknown'} carts. Attempted total: ${stop.after ?? 'unknown'} carts · ${stop.status || 'Pending'}.${stop.notes != null ? ` Notes: ${stop.notes}` : ''}`));
+        const saved = comparison.get(entry.request.requestId)?.[i];
+        if (saved) item.append(node('p', `Currently saved: ${saved.count} carts. Notes: ${saved.notes || '—'}`));
+        stops.append(item);
+      });
+      details.append(stops);
+      if (entry.stops.length > limit) {
+        const more = node('button', `Show more stops (${limit} of ${entry.stops.length} shown)`); more.type = 'button';
+        more.onclick = () => { shown.set(entry.request.requestId, limit + 50); render(); };
+        details.append(more);
+      }
+      card.append(details);
+      const action = (label, handler) => {
+        const button = node('button', label); button.type = 'button'; button.disabled = busy || deliverySaveInProgress || profileState.busy;
+        button.onclick = handler; card.append(button);
+      };
+      action('Download attempted stops', () => {
+        try {
+          const workbook = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+            ['Delivery recovery', 'Attempted values only — not proof of saved deliveries'], ['File', entry.name], ['Account', entry.username],
+            ['Attempted at', entry.createdAt], ['Recovery state', entry.state], ['Save ID', entry.request.requestId], ['File ID', entry.request.fileId]
+          ]), 'Read first');
+          XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+            ['Record', 'Address', 'Bin', 'Route', 'Day', 'Previous carts', 'Attempted total carts', 'Attempted status', 'Attempted notes'],
+            ...entry.stops.map(stop => [stop.index + 1, stop.address, stop.bin, stop.route, stop.day, stop.before ?? 'Unknown', stop.after ?? 'Unknown', stop.status || 'Pending', stop.notes ?? ''])
+          ]), 'Attempted stops');
+          XLSX.writeFile(workbook, `Delivery-recovery-${entry.request.requestId}.xlsx`, { compression: true });
+        } catch { message = 'Could not download the attempted stops. The recovery record is still kept on this phone.'; render(); }
+      });
+      if (entry.state === 'review') action('Compare with saved copy', () => compare(entry));
+      if ((entry.state === 'review' && comparison.has(entry.request.requestId)) || entry.state === 'unavailable') {
+        action('Keep saved records · Dismiss this attempt', async () => {
+          if (entry.owner !== profileState.user?.id || !confirm('Dismiss this recovery attempt without applying it? Check every attempted stop first and download the list if you need to record corrections. Saved cloud records will not change.')) return;
+          try { await transact('remove', entry); comparison.delete(entry.request.requestId); message = 'Attempt dismissed. Saved records were kept. Record any corrections from your saved copy.'; }
+          catch { storageError = true; }
+          channel?.postMessage('changed'); await refresh();
+        });
+      }
+      list.append(card);
+    }
+    if (!visible.length && !storageError) list.append(node('p', owner ? 'No delivery saves need confirmation on this phone for this account.' : 'Sign in to see this account’s recovery records.'));
+  }
+  async function assertClear(fileId) {
+    const all = await transact('list');
+    if (all.some(entry => entry.owner === profileState.user?.id && entry.request.fileId === fileId)) throw new Error('RECOVERY_PENDING');
+  }
+  async function prepare(workspace, edits) {
+    const owner = profileState.user.id;
+    const entry = { key: `${owner}:${workspace.fileId}`, owner, username: profileUsername(profileState.user), name: workspace.name,
+      createdAt: new Date().toISOString(), state: 'pending',
+      request: { action: 'save', fileId: workspace.fileId, copyRevision: workspace.copyRevision, edits, requestId: crypto.randomUUID() },
+      stops: edits.map(edit => {
+        const row = window._currentRows[edit.index], next = { ...row, ...edit.values };
+        return { index: edit.index, address: formatStopAddress(row), bin: String(row.BINNO ?? ''), route: rowRoute(row), day: rowDay(row),
+          before: deliveredCartCount(row), after: deliveredCartCount(next), status: next.del_status, notes: edit.values.delivery_notes };
+      }) };
+    await transact('add', entry);
+    channel?.postMessage('changed'); await refresh();
+    return entry;
+  }
+  async function failed(entry, error) {
+    const code = error?.message || '';
+    entry.state = /STALE_VERSION|INVALID_|REQUEST_REUSED/.test(code) ? 'review'
+      : /FILE_DELETED|FILE_NOT_FOUND|COPY_NOT_FOUND/.test(code) ? 'unavailable' : 'pending';
+    try { await transact('update', entry); } catch { storageError = true; }
+    channel?.postMessage('changed'); await refresh();
+  }
+  async function complete(entry) {
+    try { await transact('remove', entry); } catch { storageError = true; }
+    channel?.postMessage('changed'); await refresh();
+  }
+  async function compare(entry) {
+    if (busy || profileState.busy || deliverySaveInProgress || entry.owner !== profileState.user?.id) return;
+    busy = true; profileState.busy = true; renderProfileState(); render();
+    try {
+      const result = await profileApi({ action: 'open', fileId: entry.request.fileId, requestId: crypto.randomUUID() }, entry.owner);
+      await displayProfileWorkbook(result);
+      if (entry.owner !== profileState.user?.id) return;
+      comparison.set(entry.request.requestId, entry.stops.map(stop => ({ count: deliveredCartCount(window._currentRows[stop.index]), notes: window._currentRows[stop.index].delivery_notes })));
+      comparisonVersion++;
+      message = 'Compare each attempted total with the saved count below. Dismissing keeps saved counts; then record any needed corrections.';
+    } catch (error) { message = profileMessage(error); }
+    finally { busy = false; profileState.busy = false; renderProfileState(); render(); }
+  }
+  async function retry(manual = false) {
+    if (busy || deliverySaveInProgress || profileState.busy || resequenceBusy || !profileState.user || (!navigator.onLine && !manual)) return;
+    busy = true; profileState.busy = true;
+    const owner = profileState.user.id, generation = profileState.generation;
+    renderProfileState();
+    try {
+      await refresh();
+      if (entries.some(item => item.owner === owner && item.state === 'pending')) { message = 'Checking unconfirmed saves…'; render(); }
+      for (const entry of entries.filter(item => item.owner === owner && item.state === 'pending')) {
+        if (profileState.user?.id !== owner || generation !== profileState.generation) break;
+        try {
+          const result = await profileApi(entry.request, owner);
+          if (!Number.isSafeInteger(result.copyRevision)) throw new Error('REQUEST_FAILED');
+          if (profileState.workspace?.fileId === entry.request.fileId && profileState.workspace.mode === 'copy') {
+            const current = await profileApi({ action: 'open', fileId: entry.request.fileId, requestId: crypto.randomUUID() }, owner);
+            await displayProfileWorkbook(current);
+            el('cartCountsDialog').close();
+          }
+          if (profileState.user?.id !== owner || generation !== profileState.generation) break;
+          await complete(entry);
+          if (profileState.user?.id !== owner || generation !== profileState.generation) break;
+          message = `Confirmed ${entry.stops.length} stops in ${entry.name}. Your saved copy has the server’s records.`;
+          if (profileState.workspace?.fileId === entry.request.fileId && profileState.workspace.mode === 'copy') setDeliverySaveStatus('saved', message);
+        } catch (error) {
+          await failed(entry, error);
+          if (profileState.user?.id !== owner || generation !== profileState.generation) break;
+          message = entry.state === 'pending' ? 'Still unconfirmed. Your attempted stops remain on this phone. We will retry when connected; you can also tap Check and retry.' : profileMessage(error);
+          if (profileState.workspace?.fileId === entry.request.fileId && profileState.workspace.mode === 'copy') setDeliverySaveStatus('error', message);
+        }
+      }
+    } finally { busy = false; profileState.busy = false; await refresh(); renderProfileState(); }
+  }
+  function schedule() { clearTimeout(timer); timer = setTimeout(() => retry(), 1200); }
+  function setup() {
+    el('deliveryRecoveryBtn').onclick = async () => { await refresh(); el('deliveryRecoveryDialog').showModal(); };
+    el('closeDeliveryRecoveryBtn').onclick = () => el('deliveryRecoveryDialog').close();
+    el('retryDeliveryRecoveryBtn').onclick = () => retry(true);
+    document.addEventListener('loadaccountchanged', () => {
+      if (observedOwner === (profileState.user?.id || null)) return;
+      observedOwner = profileState.user?.id || null;
+      entries = []; comparison.clear(); shown.clear(); message = ''; el('deliveryRecoveryDialog').close(); render(); refresh(); schedule();
+    });
+    window.addEventListener('online', schedule);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); schedule(); } });
+    channel?.addEventListener('message', () => { refresh(); });
+    setInterval(() => { if (!document.hidden) retry(); }, 30000);
+    refresh();
+  }
+  return { prepare, complete, failed, assertClear, setup, retry, refresh };
+})();
+
 function renderProfileState() {
   const { user, workspace, busy } = profileState;
   syncSavedFilesGuide();
@@ -906,7 +1131,7 @@ function renderRouteContext() {
 }
 function setupRouteContext() {
   const template = profileElement("routeContext");
-  document.querySelectorAll("dialog:not(#pocketLock):not(#copyLocationDialog):not(#teamUploadDialog):not(#deleteTeamFileDialog):not(#cartCountsDialog):not(#workAreasDialog):not(#adminDialog):not(#helpDialog):not(#stopDirectionsDialog):not(#recordFieldsDialog), .modal-content").forEach(container => {
+  document.querySelectorAll("dialog:not(#pocketLock):not(#copyLocationDialog):not(#teamUploadDialog):not(#deleteTeamFileDialog):not(#cartCountsDialog):not(#workAreasDialog):not(#adminDialog):not(#helpDialog):not(#stopDirectionsDialog):not(#recordFieldsDialog):not(#deliveryRecoveryDialog), .modal-content").forEach(container => {
     const banner = template.cloneNode(true);
     banner.removeAttribute("id"); banner.removeAttribute("role");
     container.prepend(banner);
@@ -1118,10 +1343,18 @@ async function saveProfileWorkbook(rows, workbook, onProgress) {
     return Object.keys(values).length ? [{ index, values }] : [];
   });
   if (!edits.length) return workbook;
+  const entry = await deliveryRecovery.prepare(workspace, edits);
+  if (generation !== profileState.generation || workspace !== profileState.workspace) throw new Error('SIGN_IN_REQUIRED');
   onProgress("Saving your profile copy");
-  const result = await profileApi({ action: "save", fileId: workspace.fileId, copyRevision: workspace.copyRevision, edits, requestId: crypto.randomUUID() });
+  let result;
+  try {
+    result = await profileApi(entry.request, entry.owner);
+    if (!Number.isSafeInteger(result.copyRevision)) throw new Error('REQUEST_FAILED');
+  } catch (error) { await deliveryRecovery.failed(entry, error); error.recoveryRecorded = true; throw error; }
   if (generation !== profileState.generation || workspace !== profileState.workspace) throw new Error("SIGN_IN_REQUIRED");
   Object.assign(workspace, { copyRevision: result.copyRevision, pending: result.pending });
+  await deliveryRecovery.complete(entry);
+  if (generation !== profileState.generation || workspace !== profileState.workspace) throw new Error('SIGN_IN_REQUIRED');
   renderProfileState();
   return profileViewWorkbook();
 }
@@ -1385,6 +1618,7 @@ function renderProfileSyncImpact(container, preview, resolutions) {
 async function reviewProfileSync() {
   if (!requireProfile() || !profileState.workspace) return;
   await profileTask("profileStatus", async () => {
+    await deliveryRecovery.assertClear(profileState.workspace.fileId);
     const preview = await profileApi({ action: "preview", fileId: profileState.workspace.fileId });
     while (preview.changes.length < preview.pending) {
       const page = await profileApi({ action: "preview", fileId: preview.fileId, offset: preview.changes.length,
@@ -1561,6 +1795,7 @@ async function commitProfileShare() {
   const { preview, request, generation, owner } = confirmation;
   if (generation !== profileState.generation || owner !== profileState.user?.id || preview !== profileState.preview || preview.fileId !== profileState.workspace?.fileId) return;
   await profileTask("profileShareStatus", async () => {
+    await deliveryRecovery.assertClear(preview.fileId);
     profileElement("profileShareStatus").textContent = "Confirming with the server…";
     profileState.syncRequest = request;
     // Retain this request ID after an uncertain response so retry cannot apply it twice.
@@ -6211,6 +6446,7 @@ setupLocationCopy();
 setupLoadLog();
 workAreas = setupWorkAreas();
 setupDeliveryProfiles();
+deliveryRecovery.setup();
 setupPhoneDialogLayout();
 setupRecordFields();
 setupTeamFileDeletion();

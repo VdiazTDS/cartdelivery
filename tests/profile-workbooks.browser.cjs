@@ -560,8 +560,11 @@ const server = http.createServer((req, res) => {
     assert.match(await a.locator('#routeContext').textContent(), /Save not confirmed/);
     assert.equal(await a.evaluate(() => _currentRows[0].del_qty), 0);
     fx.state.failCommit = false;
-    await a.locator('#saveCartCountsBtn').click();
+    await a.locator('#closeCartCountsBtn').click();
+    await a.locator('#deliveryRecoveryBtn').click();
+    await a.locator('#retryDeliveryRecoveryBtn').click();
     await a.waitForFunction(() => !deliverySaveInProgress && _currentRows[0].del_qty === 1);
+    await a.locator('#closeDeliveryRecoveryBtn').click();
     assert.match(await a.locator('#routeContext').textContent(), /1 stop awaiting sync/);
     await a.setViewportSize({ width: 440, height: 956 });
     await a.waitForFunction(() => document.getElementById('recordCartsBtn').parentElement.id === 'deliveryMoreActions');
