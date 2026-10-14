@@ -3467,10 +3467,101 @@ function syncSequenceControls() {
   return { usingOptimo, stopCount, drawable, selectedGroups };
 }
 
+function sequenceNavigationStops(selectedGroups = null) {
+  if (!selectedGroups) {
+    const groups = document.getElementById('sequenceSource').value === 'optimo' ? optimoSequenceGroups : sequenceGroups;
+    const scope = document.getElementById('sequenceRouteSelect').value;
+    selectedGroups = [...groups.entries()].filter(([key]) => scope === 'all' || scope === key).map(([, group]) => group);
+  }
+  const markers = new Map();
+  Object.values(routeDayGroups).forEach(group => group.layers.forEach(marker => markers.set(marker._rowRef, marker)));
+  return selectedGroups.flatMap(group => group.stops.map(stop => {
+    const marker = markers.get(stop.row);
+    return { ...stop, marker, visible: Boolean(stop.latlng && marker && map.hasLayer(marker)) };
+  }));
+}
+
+function sequenceNavigationState(row, stops) {
+  const index = stops.findIndex(stop => stop.row === row);
+  const visible = stops.filter(stop => stop.visible);
+  return { current: stops[index], visible, position: visible.findIndex(stop => stop.row === row),
+    previous: index < 0 ? null : stops.slice(0, index).findLast(stop => stop.visible),
+    next: index < 0 ? null : stops.slice(index + 1).find(stop => stop.visible) };
+}
+
+function updateSequenceStopNavigation(nav, stops) {
+  const state = sequenceNavigationState(nav._row, stops);
+  nav.hidden = !state.current;
+  if (!state.current) return;
+  const source = document.getElementById('sequenceSource').value === 'optimo' ? 'Saved Optimo' : 'Original file';
+  nav.querySelector('.sequence-stop-label').textContent = `${source} · Route ${rowRoute(nav._row)} · ${dayName(Number(rowDay(nav._row)))} · #${state.current.seq}`;
+  nav.querySelector('.sequence-stop-position').textContent = state.position < 0 ? `Hidden · ${state.visible.length} visible` : `${state.position + 1} of ${state.visible.length}`;
+  for (const direction of ['previous', 'next']) {
+    const button = nav.querySelector(`[data-sequence-step="${direction}"]`);
+    button.disabled = !state[direction];
+    button.title = state[direction] ? `Sequence #${state[direction].seq} · ${formatStopAddress(state[direction].row)}`
+      : direction === 'previous' ? 'No previous visible stop' : 'No next visible stop';
+  }
+}
+
+function renderSequenceNavigation(selectedGroups) {
+  const stops = sequenceNavigationStops(selectedGroups);
+  const count = stops.filter(stop => stop.visible).length;
+  const selecting = window.innerWidth <= 900 && mobileStopSelectionMode;
+  document.getElementById('browseSequenceBtn').disabled = !count || selecting;
+  document.getElementById('browseSequenceStatus').textContent = selecting ? 'Finish Select Stops to browse the sequence.'
+    : count ? `${count} visible stops · Hidden stops are skipped.` : 'No visible stops in this sequence. Check the sequence and map filters.';
+  document.querySelectorAll('.sequence-stop-nav').forEach(nav => updateSequenceStopNavigation(nav, stops));
+}
+
+function openSequenceStop(row, direction = null) {
+  if (workAreas?.mapActive || optimoLocationPicker || (window.innerWidth <= 900 && mobileStopSelectionMode)) return;
+  const stops = sequenceNavigationStops();
+  const target = direction ? sequenceNavigationState(row, stops)[direction] : stops.find(stop => stop.visible);
+  if (!target?.visible) return;
+  closeMobileMenu();
+  document.getElementById('mobileStopPicker').hidden = true;
+  map.closePopup();
+  map.setView(target.latlng, Math.max(map.getZoom(), 18), { animate: false });
+  if (window.innerWidth <= 900) {
+    openMobileStopDetails(target.marker, true);
+    document.querySelector('#mobileStopDetails .mobile-stop-content').scrollTop = 0;
+    centerMobileViewedStop();
+  } else target.marker.openPopup();
+  const container = window.innerWidth <= 900 ? document.getElementById('mobileStopDetails') : target.marker.getPopup().getElement();
+  const nav = container?.querySelector('.sequence-stop-nav');
+  const focus = direction && nav?.querySelector(`[data-sequence-step="${direction}"]:not(:disabled)`);
+  (focus || nav?.querySelector('button:not(:disabled)') || nav)?.focus({ preventScroll: true });
+}
+
+function sequenceStopNavigation(row) {
+  const nav = document.createElement('nav');
+  nav.className = 'sequence-stop-nav'; nav._row = row; nav.tabIndex = -1;
+  nav.setAttribute('aria-label', 'Sequence navigation');
+  const label = document.createElement('div'); label.className = 'sequence-stop-label';
+  const controls = document.createElement('div'); controls.className = 'sequence-stop-controls';
+  const position = document.createElement('span'); position.className = 'sequence-stop-position';
+  position.setAttribute('role', 'status');
+  for (const direction of ['previous', 'next']) {
+    const button = document.createElement('button'); button.type = 'button'; button.dataset.sequenceStep = direction;
+    button.textContent = direction === 'previous' ? '← Previous' : 'Next →';
+    button.setAttribute('aria-label', `${direction === 'previous' ? 'Previous' : 'Next'} visible stop in sequence`);
+    button.onclick = event => { event.stopPropagation(); openSequenceStop(row, direction); };
+    controls.append(button);
+    if (direction === 'previous') controls.append(position);
+  }
+  nav.append(label, controls);
+  updateSequenceStopNavigation(nav, sequenceNavigationStops());
+  return nav;
+}
+
+document.getElementById('browseSequenceBtn').onclick = () => openSequenceStop();
+
 function renderSequenceLayer() {
   const toggle = document.getElementById("sequenceLayerToggle");
   const status = document.getElementById("sequenceLayerStatus");
   const { usingOptimo, stopCount, drawable, selectedGroups } = syncSequenceControls();
+  renderSequenceNavigation(selectedGroups);
   const sourceLabel = usingOptimo ? "Saved Optimo" : "Original file";
   const showNumbers = document.getElementById("sequenceNumbersToggle").checked && stopCount > 0;
   const numberStatus = document.getElementById("sequenceNumbersStatus");
@@ -3556,6 +3647,7 @@ document.getElementById("sequenceSource").addEventListener("change", () => {
   document.getElementById("sequenceLayerToggle").checked = true;
   refreshAddressSearch();
   map.closePopup();
+  refreshMobileStopDetails();
   scheduleSequenceRender();
 });
 document.querySelectorAll("[data-sequence-source]").forEach(button => button.addEventListener("click", () => {
@@ -4495,8 +4587,27 @@ function refreshMobileStopDetails() {
   content.querySelector('details').open = Boolean(expanded);
 }
 
-function openMobileStopDetails(marker) {
+function centerMobileViewedStop() {
+  if (!mobileStopMarker || window.innerWidth > 900) return;
+  const mapBox = map.getContainer().getBoundingClientRect();
+  const sheetTop = document.getElementById('mobileStopDetails').getBoundingClientRect().top;
+  const point = map.latLngToContainerPoint(getLayerLatLng(mobileStopMarker));
+  map.panBy([0, point.y - (sheetTop - mapBox.top) / 2], { animate: false });
+}
+
+function setSequenceDetailsExpanded(expanded) {
+  document.getElementById('mobileStopDetails').classList.toggle('sequence-expanded', expanded);
+  const button = document.getElementById('toggleSequenceDetailsBtn');
+  button.textContent = expanded ? 'Less' : 'Details';
+  button.setAttribute('aria-expanded', String(expanded));
+}
+
+function openMobileStopDetails(marker, browsingSequence = false) {
   if (window.innerWidth > 900 || !window._currentRows?.includes(marker._rowRef)) return;
+  const sheet = document.getElementById('mobileStopDetails');
+  sheet.classList.toggle('sequence-browsing', browsingSequence);
+  document.getElementById('toggleSequenceDetailsBtn').hidden = !browsingSequence;
+  setSequenceDetailsExpanded(false);
   mobileStopMarker = marker;
   showViewedStop(marker);
   refreshMobileStopDetails();
@@ -4506,6 +4617,7 @@ function openMobileStopDetails(marker) {
 
 function deliveryStopCard(row, marker = null) {
   const card = document.createElement('div'); card.className = 'delivery-stop-card';
+  card.append(sequenceStopNavigation(row));
   const line = (tag, text, className = '') => {
     const node = document.createElement(tag); node.textContent = text; node.className = className; card.append(node); return node;
   };
@@ -5926,6 +6038,12 @@ setupPhoneDialogLayout();
 setupRecordFields();
 setupTeamFileDeletion();
 document.getElementById('closeMobileStopDetails').onclick = () => closeMobileStopDetails(true);
+document.getElementById('toggleSequenceDetailsBtn').onclick = () => {
+  const sheet = document.getElementById('mobileStopDetails');
+  setSequenceDetailsExpanded(!sheet.classList.contains('sequence-expanded'));
+  sheet.querySelector('.mobile-stop-content').scrollTop = 0;
+  centerMobileViewedStop();
+};
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && mobileStopMarker && !document.querySelector('dialog[open]')) closeMobileStopDetails(true);
 });
@@ -6153,6 +6271,7 @@ const mobileSelBtn = document.getElementById("mobileSelectionBtn");
 if (mobileSelBtn && selectionBox) {
   function setMobileStopSelectionMode(isActive) {
     mobileStopSelectionMode = isActive;
+    scheduleSequenceRender();
     refreshStreetLabels();
     scheduleAddressNumberRefresh();
     document.body.classList.toggle("mobile-stop-selection-mode", isActive);

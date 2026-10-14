@@ -5185,6 +5185,15 @@ a.delivery-stop-address:focus-visible { outline: 3px solid #3688dc; outline-offs
 .delivery-stop-card summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; font-size: 12px; text-decoration: underline; }
 .delivery-stop-card details > div { font-size: 12px; }
 .delivery-stop-card .record-fields-button { min-height: 44px; width: 100%; margin: 0; padding: 10px 12px; border: 1px solid #8198ae; border-radius: 9px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+.sequence-stop-nav { padding: 0 0 8px; border-bottom: 1px solid #8198ae; }
+.sequence-stop-nav[hidden] { display: none; }
+.sequence-stop-label { margin-bottom: 5px; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.sequence-stop-controls { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 6px; }
+.sequence-stop-position { max-width: 90px; font-size: 12px; text-align: center; }
+.delivery-stop-card .sequence-stop-controls button, body .sidebar #browseSequenceBtn { min-height: 44px; margin: 0; padding: 8px; border: 1px solid #8198ae; border-radius: 9px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+.delivery-stop-card .sequence-stop-controls button:disabled, body .sidebar #browseSequenceBtn:disabled { opacity: .45; cursor: default; }
+body .sidebar #browseSequenceBtn { width: 100%; margin-top: 8px; }
+body .sidebar #browseSequenceStatus { font-size: 12px; line-height: 1.4; }
 #recordFieldsIdentity, #recordFieldsCurrent { white-space: pre-wrap; }
 #recordFieldsList { margin: 0; }
 #recordFieldsList > div { padding: 12px 0; border-top: 1px solid var(--profile-border); }
@@ -5671,12 +5680,22 @@ body header #reviewSaveStatusBtn:focus-visible { outline: 3px solid #e6ad22; out
   .mobile-stop-heading { display: flex; justify-content: space-between; align-items: center; padding: 4px 12px 0 18px; flex-shrink: 0; }
   .mobile-stop-heading h2 { margin: 0; font-size: 12px; font-weight: 600; }
   body #closeMobileStopDetails { min-width: 48px; min-height: 48px; padding: 8px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 14px; }
+  body #toggleSequenceDetailsBtn { min-width: 60px; min-height: 44px; margin-left: auto; margin-right: 6px; padding: 8px; border: 1px solid #8198ae; border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 13px; }
+  .mobile-stop-heading button[hidden] { display: none; }
   .mobile-stop-content { padding: 0 18px 12px; overflow-y: auto; overscroll-behavior: contain; }
   #mobileStopDetails .delivery-stop-card { color: inherit; gap: 6px; font-size: 15px; }
+  #mobileStopDetails .sequence-stop-nav { position: sticky; top: 0; z-index: 1; background: #172736; }
+  body.sun-mode #mobileStopDetails .sequence-stop-nav { background: #fff; }
   #mobileStopDetails .delivery-stop-address { padding: 0; font-size: 20px; color: #8ec7ff; }
   body.sun-mode #mobileStopDetails .delivery-stop-address { color: #174e89; }
   #mobileStopDetails .delivery-stop-remaining { color: #8be2b2; }
   body.sun-mode #mobileStopDetails .delivery-stop-remaining { color: #176946; }
+  #mobileStopDetails.sequence-browsing:not(.sequence-expanded) .delivery-stop-card { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; }
+  #mobileStopDetails.sequence-browsing:not(.sequence-expanded) .delivery-stop-card > :not(.sequence-stop-nav):not(.delivery-stop-address):not(.delivery-stop-bin):not(.delivery-stop-remaining) { display: none; }
+  #mobileStopDetails.sequence-browsing:not(.sequence-expanded) :is(.sequence-stop-nav, .delivery-stop-address) { grid-column: 1 / -1; }
+  #mobileStopDetails.sequence-browsing:not(.sequence-expanded) .sequence-stop-nav { padding-bottom: 4px; }
+  #mobileStopDetails.sequence-browsing:not(.sequence-expanded) .delivery-stop-address { font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #mobileStopDetails.sequence-browsing:not(.sequence-expanded) :is(.delivery-stop-bin, .delivery-stop-remaining) { min-width: 0; max-width: 210px; font-size: 12px; font-weight: 500; }
   #mobileStopDetails .stop-delivery-action { order: 1; min-height: 52px; position: sticky; bottom: 0; margin-bottom: 0; flex-shrink: 0; }
   #mobileStopDetails summary { min-height: 48px; font-size: 13px; }
   #mobileStopDetails :focus-visible { outline: 3px solid #e6ad22; outline-offset: -3px; }

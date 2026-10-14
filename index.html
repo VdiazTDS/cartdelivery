@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261014-record-fields-2" />
+  <link rel="stylesheet" href="style.css?v=20261014-sequence-compact" />
 
   <link rel="icon" href="favicon.ico" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -244,6 +244,8 @@
   </label>
   <p id="sequenceNumbersStatus" role="status" aria-live="polite"></p>
   <p id="sequenceLayerStatus" role="status" aria-live="polite">Open a route file to choose a sequence.</p>
+  <button id="browseSequenceBtn" type="button" aria-describedby="browseSequenceStatus" disabled>Browse sequence</button>
+  <p id="browseSequenceStatus">Open a route file to browse its stops.</p>
   <details class="sequence-help"><summary>About the arrows</summary><p>Lines connect stops directly, not along roads. Delivered stops stay in the path. Unscheduled stops have no Optimo number or arrow.</p><div class="sequence-legend"><span><i class="sequence-key-line" aria-hidden="true"></i>Delivery order</span><span><i class="sequence-key-line sequence-key-completed" aria-hidden="true"></i>Both stops delivered</span></div></details>
   <button id="openResequenceBtn" type="button">Plan with OptimoRoute</button>
 </div>
@@ -428,8 +430,8 @@
 </section>
 
 <section id="mobileStopDetails" role="dialog" aria-modal="false" aria-labelledby="mobileStopDetailsTitle" hidden>
-  <div class="mobile-stop-heading"><h2 id="mobileStopDetailsTitle">Viewing this stop</h2><button id="closeMobileStopDetails" type="button" aria-label="Close stop details">Close</button></div>
-  <div class="mobile-stop-content"></div>
+  <div class="mobile-stop-heading"><h2 id="mobileStopDetailsTitle">Viewing this stop</h2><button id="toggleSequenceDetailsBtn" type="button" aria-expanded="false" aria-controls="mobileStopContent" hidden>Details</button><button id="closeMobileStopDetails" type="button" aria-label="Close stop details">Close</button></div>
+  <div id="mobileStopContent" class="mobile-stop-content"></div>
 </section>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -820,7 +822,7 @@
 </dialog>
 
 <script src="profile-field-mapping.js?v=20261012-delivery-ease" defer></script>
-<script src="app.js?v=20261014-record-fields-2" defer></script>
+<script src="app.js?v=20261014-sequence-compact" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">

@@ -143,6 +143,10 @@ The sidebar also has two side-by-side dropdown buttons: **Delivery sequence** an
 
 ### Sequence overlay
 
+On phones, sequence browsing uses a compact panel with Previous/Next, address, bin and carts remaining so the map stays visible. **Details** expands the full stop card, including Record delivery and View all fields; **Less** collapses it. Advancing to another stop returns to the compact view and centers that stop in the unobscured map area. Tapping a map stop directly still opens full details.
+
+**Browse sequence** in Delivery sequence opens the first map-visible stop in the selected **Original file** or **Saved Optimo** sequence. Stop details have **Previous / Next** buttons, the source sequence number, route/day and position among visible stops. Navigation skips stops hidden by map filters, invalid locations and records without a number in the selected source; it includes off-screen stops and centers the chosen record above the phone sheet. Duplicate Excel numbers retain spreadsheet order, while Optimo gaps retain their server numbers. With All routes / days selected, navigation finishes one route/day group before starting the next in dropdown order. End buttons disable without wrapping. Viewing never selects stops or changes delivery data. Finish phone Select Stops mode before browsing. Run `node tests/sequence-navigation.browser.cjs` for both sources, filters, overlap, keyboard and phone/desktop themes with fake services.
+
 Blue lines and arrowheads connect consecutive stop coordinates in numeric `SEQNO` order within each original `ROUTE`/`DAY`. These are straight connections, not road directions. Stops on different routes or days never connect. Duplicate sequence values retain spreadsheet row order.
 
 | Display | Meaning |
