@@ -66,14 +66,14 @@ function updateDeliveryButtons() {
     button.setAttribute("aria-busy", String(deliverySaveInProgress));
     button.title = !count ? "Select undelivered stops on the map first" : perRecord
       ? "Enter the carts delivered this visit for each selected record"
-      : "Add one delivered cart to each selected stop. Use Record carts to specify a different count.";
+      : "Add one delivered cart to each selected stop. Use Enter delivered cart counts to specify a different count.";
   });
   const undoButton = document.getElementById("undoDeliveredBtn");
   if (undoButton) undoButton.disabled = readOnly || deliverySaveInProgress || resequenceBusy;
   const cartButton = document.getElementById("recordCartsBtn");
   if (cartButton) {
     cartButton.disabled = readOnly || deliverySaveInProgress || resequenceBusy || Number(document.getElementById("selectionCount").textContent) === 0;
-    cartButton.textContent = document.getElementById("multipleCartsOnly").checked ? "Record carts · QTY 2+ filter on" : "Record carts";
+    document.getElementById("recordCartsHint").textContent = "Add carts or correct totals at selected stops" + (perRecord ? " · QTY 2+ filter on" : "");
   }
   document.querySelectorAll('.stop-delivery-action').forEach(button => {
     button.disabled = readOnly || deliverySaveInProgress || resequenceBusy || button.dataset.unavailable === 'true';
@@ -1677,6 +1677,7 @@ function setupHelp() {
 function setupProfileAdmin() {
   const el = id => document.getElementById(id), dialog = el('adminDialog');
   let client = null, user = null, busy = false, screen = 'prompt', directory = null, editing = null;
+  let loadProfiles = null;
   const text = (tag, value) => { const node = document.createElement(tag); node.textContent = value; return node; };
   const status = value => { el('adminStatus').textContent = value; };
   const errorMessage = error => {
@@ -1692,12 +1693,15 @@ function setupProfileAdmin() {
     if (/Invalid login credentials/i.test(message)) return 'The admin username or password is incorrect.';
     if (/INVALID_USERNAME/.test(message)) return 'Use 3–30 letters, numbers, underscores or hyphens for the username.';
     if (/INVALID_PROFILE_COLOR/.test(message)) return 'Choose a valid profile color.';
+    if (/INVALID_DELETED_LOAD_PROFILE/.test(message)) return 'That truck count profile was deleted. Use a different name for a new profile.';
+    if (/INVALID_LOAD_NAME/.test(message)) return 'Enter a truck count profile name of up to 80 characters.';
+    if (/INVALID_LOAD_OWNER/.test(message)) return 'Choose an active delivery sign-in account for this truck count profile.';
     return 'Could not confirm the change. Refresh the profiles to check what was saved before trying again.';
   };
   function render() {
     el('adminPrompt').hidden = screen !== 'prompt'; el('adminLoginForm').hidden = screen !== 'login';
     el('adminDashboard').hidden = screen !== 'list'; el('adminEditForm').hidden = screen !== 'edit';
-    dialog.querySelectorAll('button,input').forEach(input => { input.disabled = busy; });
+    dialog.querySelectorAll('button,input,select').forEach(input => { input.disabled = busy; });
     el('adminEditUsername').disabled = busy || Boolean(editing?.isAdmin);
     el('adminEditColor').disabled = busy || !el('adminUseColor').checked;
     el('adminRemoveBtn').disabled = busy || !editing || editing.isAdmin || el('adminRemoveConfirm').value !== editing.username || editing.areas > 0;
@@ -1724,6 +1728,40 @@ function setupProfileAdmin() {
     const events = el('adminEvents'); events.replaceChildren();
     for (const event of directory?.events || []) events.append(text('li',`${event.details.username} · ${event.action}${event.details.passwordChanged ? ' · password set' : ''} · ${new Date(event.created_at).toLocaleString()}`));
     if (!events.children.length) events.append(text('li','No admin changes yet.'));
+    const loads = el('adminLoadProfiles'); loads.replaceChildren();
+    for (const profile of loadProfiles || []) {
+      const card = document.createElement('article'); card.className = 'admin-profile-card';
+      card.append(text('strong', profile.name));
+      const ownerLabel = text('label','Associated sign-in account'); ownerLabel.htmlFor = `loadOwner-${profile.id}`;
+      const owner = document.createElement('select'); owner.id = ownerLabel.htmlFor; owner.disabled = busy;
+      owner.add(new Option('Unassigned — read only',''));
+      for (const account of directory?.profiles || []) {
+        if (!account.disabled || account.id === profile.ownerId) owner.add(new Option(`${account.username}${account.disabled ? ' (disabled)' : ''}`,account.id));
+      }
+      if (profile.ownerId && ![...owner.options].some(option => option.value === profile.ownerId)) owner.add(new Option('Removed account — reassign',profile.ownerId));
+      owner.value = profile.ownerId || '';
+      const assign = text('button','Save association'); assign.type = 'button'; assign.disabled = busy;
+      assign.onclick = () => task(async () => {
+        await api({action:'admin-load-assign',profileId:profile.id,ownerId:owner.value || null});
+        await reloadLoads(); document.dispatchEvent(new Event('loadprofileschanged'));
+        status(`Association saved for ${profile.name}.`);
+      });
+      card.append(ownerLabel,owner,assign);
+      const button = text('button', 'Delete load profile'); button.type = 'button'; button.disabled = busy;
+      button.setAttribute('aria-label', `Delete load profile ${profile.name}`);
+      button.onclick = () => {
+        if (!confirm(`Delete truck count profile "${profile.name}" from all devices? Its recorded load history will be retained. This name cannot be reused.`)) return;
+        task(async () => {
+          await api({ action: 'admin-load-delete', profileId: profile.id, confirmName: profile.name });
+          loadProfiles = loadProfiles.filter(item => item.id !== profile.id);
+          el('adminLoadsStatus').textContent = `${loadProfiles.length} truck count profiles`;
+          document.dispatchEvent(new Event('loadprofileschanged'));
+          status(`Deleted truck count profile ${profile.name}. Recorded history was retained.`);
+        });
+      };
+      card.append(button); loads.append(card);
+    }
+    if (loadProfiles && !loadProfiles.length) loads.append(text('p', 'No truck count profiles.'));
   }
   async function api(body) {
     const { data: session, error } = await client.auth.getSession();
@@ -1734,7 +1772,16 @@ function setupProfileAdmin() {
     const result = await response.json(); if (!response.ok || result.error) throw new Error(result.error || 'REQUEST_FAILED');
     return result;
   }
-  async function reload() { directory = await api({action:'admin-list'}); }
+  async function reload() { directory = await api({action:'admin-list'}); await reloadLoads(); }
+  async function reloadLoads() {
+    try {
+      loadProfiles = (await api({action:'admin-load-list'})).profiles;
+      el('adminLoadsStatus').textContent = `${loadProfiles.length} truck count profiles`;
+    } catch {
+      loadProfiles = null;
+      el('adminLoadsStatus').textContent = 'Could not load truck count profiles. Check your connection and refresh. The updated admin service must be deployed.';
+    }
+  }
   async function task(action) {
     if (busy) return;
     busy = true; status('Working…'); render();
@@ -1780,6 +1827,19 @@ function setupProfileAdmin() {
   };
   el('adminSignOutBtn').onclick = () => task(async()=>{const {error}=await client.auth.signOut({scope:'local'});if(error) throw error;user=null;directory=null;editing=null;screen='prompt';status('Signed out of admin.');});
   el('adminRefreshBtn').onclick = () => task(async()=>{await reload();status('Profiles refreshed.');});
+  el('adminLoadsRefreshBtn').onclick = () => task(async()=>{await reloadLoads();status('');});
+  el('adminLoadCreateForm').onsubmit = event => {
+    event.preventDefault();
+    if (!el('adminLoadCreateForm').reportValidity()) return;
+    const name = el('adminLoadName').value;
+    task(async () => {
+      await api({action:'admin-load-create', name});
+      el('adminLoadName').value = '';
+      await reloadLoads();
+      document.dispatchEvent(new Event('loadprofileschanged'));
+      status('Truck count profile saved.');
+    });
+  };
   el('adminNewBtn').onclick = () => edit();
   el('adminSearch').oninput = render;
   el('adminUseColor').onchange = render;
@@ -1903,6 +1963,7 @@ function setupDeliveryProfiles() {
         ["profileSyncDialog", "profileShareDialog", "profileHistoryDialog"].forEach(id => profileElement(id).close());
       }
       profileState.user = user;
+      document.dispatchEvent(new Event('loadaccountchanged'));
       renderProfileState();
       if (_event === 'INITIAL_SESSION' && user && !profileState.workspace && rememberedDeliveryView()) openProfileFile(rememberedDeliveryView());
     }, 0);
@@ -4902,10 +4963,12 @@ function validateLoadLogEvent(event, name) {
   } else if (event?.kind === "load") {
     valid &&= uuid.test(event.id) && profileId.test(event.profileId) &&
       ["truck", "trailer"].includes(event.vehicleType) && text(event.vehicleName, 60) &&
-      quantity(event.trash) && quantity(event.recycling) && event.trash + event.recycling > 0 &&
+      quantity(event.trash) && quantity(event.recycling) &&
       Number.isFinite(Date.parse(event.unloadedAt));
   } else if (event?.kind === "void") {
     valid &&= uuid.test(event.id);
+  } else if (event?.kind === "deleted") {
+    valid &&= profileId.test(event.id);
   } else valid = false;
   if (!valid || name !== `${event.kind}-${event.id}.json`) throw new Error("Invalid load log record");
   return event;
@@ -4923,20 +4986,8 @@ async function readLoadLogEvent(name) {
 async function writeLoadLogEvent(event) {
   const name = `${event.kind}-${event.id}.json`;
   validateLoadLogEvent(event, name);
-  try {
-    const { error } = await sb.storage.from(BUCKET).upload(`${LOAD_LOG_PREFIX}/${name}`,
-      new Blob([JSON.stringify(event)], { type: "application/json" }),
-      { upsert: false, contentType: "application/json", cacheControl: "0" });
-    if (error) throw error;
-    return event;
-  } catch (error) {
-    // A lost response or a retry must not count the same load twice.
-    try {
-      const existing = await readLoadLogEvent(name);
-      if (event.kind !== "load" || JSON.stringify(existing) === JSON.stringify(event)) return existing;
-    } catch (_) { /* Preserve the original save failure. */ }
-    throw error;
-  }
+  const result = await profileApi({action:"load-write",event});
+  return validateLoadLogEvent(result.event, name);
 }
 
 function setupLoadLog() {
@@ -4944,7 +4995,6 @@ function setupLoadLog() {
   const dialog = el("loadLogDialog");
   const profileSelect = el("loadLogProfile");
   const form = el("loadLogForm");
-  const profileForm = el("loadProfileForm");
   const syncStatus = el("loadLogSyncStatus");
   const saveStatus = el("loadLogSaveStatus");
   let cache = new Map();
@@ -4956,6 +5006,8 @@ function setupLoadLog() {
   let refreshTimer;
   let shown = 30;
   let pendingLoad = null;
+  let editableProfiles = new Set(), permissionUser = null, accessGeneration = 0;
+  let observedUser = profileState.user?.id || null;
   let preferredProfile = "";
   try { preferredProfile = localStorage.getItem("cartdelivery.loadProfile") || ""; } catch (_) { /* Preference only. */ }
   const status = (node, message, state = "ready") => {
@@ -4968,7 +5020,16 @@ function setupLoadLog() {
     if (className) result.className = className;
     return result;
   };
-  const currentProfile = () => events.find(event => event.kind === "profile" && event.id === profileSelect.value);
+  const activeProfiles = () => {
+    const deleted = new Set(events.filter(event => event.kind === "deleted").map(event => event.id));
+    return events.filter(event => event.kind === "profile" && !deleted.has(event.id));
+  };
+  const currentProfile = () => activeProfiles().find(event => event.id === profileSelect.value);
+  const canEdit = id => Boolean(profileState.user && permissionUser === profileState.user.id && editableProfiles.has(id));
+  const saveError = error => /LOAD_OWNER_REQUIRED/.test(error.message) ? 'Only the associated sign-in account can change this truck count profile. Refresh the log to check your access.'
+    : /SIGN_IN_REQUIRED|PROFILE_DISABLED/.test(error.message) ? 'Sign in to the account associated with this truck count profile.'
+    : /DELETED_LOAD_PROFILE/.test(error.message) ? 'This profile was deleted. Choose another profile.'
+    : 'Save not confirmed. Your entry is kept here; retry to confirm it without counting it twice.';
   const profileLoads = profile => events.filter(event => event.kind === "load" && event.profileId === profile?.id &&
     (el("loadLogPeriod").value !== "today" || new Date(event.unloadedAt).toDateString() === new Date().toDateString()))
     .sort((a, b) => b.unloadedAt.localeCompare(a.unloadedAt) || b.createdAt.localeCompare(a.createdAt));
@@ -4981,22 +5042,33 @@ function setupLoadLog() {
     return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   };
   function updateControls() {
-    dialog.dataset.editing = String(!form.hidden || !profileForm.hidden);
+    dialog.dataset.editing = String(!form.hidden);
     profileSelect.disabled = writing || !form.hidden;
-    el("newLoadBtn").disabled = writing || !currentProfile();
-    el("newLoadProfileBtn").disabled = writing || !loaded;
+    el("newLoadBtn").disabled = writing || !currentProfile() || !canEdit(profileSelect.value);
     el("refreshLoadLogBtn").disabled = writing || Boolean(refreshTask);
     el("exportLoadLogBtn").disabled = writing || Boolean(refreshTask) || !loaded || !currentProfile();
-    el("loadLogFields").disabled = writing;
-    [...profileForm.elements].forEach(control => { control.disabled = writing; });
+    el("loadLogFields").disabled = writing || !canEdit(profileSelect.value);
     el("saveLoadBtn").textContent = writing ? "Saving…" : "Save unloaded load";
-    el("loadLogList").querySelectorAll("button").forEach(button => { button.disabled = writing; });
+    el("loadLogList").querySelectorAll("button").forEach(button => { button.disabled = writing || !canEdit(profileSelect.value); });
+    el('loadLogAccess').textContent = !profileState.user ? 'View only. Sign in to add or void loads in your associated truck count profile.'
+      : permissionUser !== profileState.user.id ? 'View only. Refresh the log to check your profile association.'
+      : canEdit(profileSelect.value) ? 'Your truck count profile. You can add loads or void mistakes, then record a corrected replacement.'
+      : editableProfiles.size ? 'View only. Choose your associated truck count profile to add or void loads.'
+      : 'View only. Ask an administrator to associate your sign-in account with a truck count profile.';
   }
   function render() {
-    const profiles = events.filter(event => event.kind === "profile").sort((a, b) => a.name.localeCompare(b.name));
+    const profiles = activeProfiles().sort((a, b) => a.name.localeCompare(b.name));
     const selected = profileSelect.value || preferredProfile;
+    if (loaded && selected && !profiles.some(profile => profile.id === selected)) {
+      if (!form.hidden) status(saveStatus, 'This truck count profile was deleted. Choose another profile.', 'error');
+      form.hidden = true;
+      pendingLoad = null;
+      preferredProfile = '';
+      try { localStorage.removeItem('cartdelivery.loadProfile'); } catch (_) { /* Preference only. */ }
+    }
     profileSelect.replaceChildren(new Option("Choose a profile", ""), ...profiles.map(profile => new Option(profile.name, profile.id)));
-    profileSelect.value = profiles.some(profile => profile.id === selected) ? selected : profiles.length === 1 ? profiles[0].id : "";
+    profileSelect.value = profiles.some(profile => profile.id === selected) ? selected : profiles.find(profile => canEdit(profile.id))?.id || (profiles.length === 1 ? profiles[0].id : "");
+    if (!canEdit(profileSelect.value) && !form.hidden) { form.hidden = true; pendingLoad = null; }
     const profile = currentProfile();
     const loads = profileLoads(profile);
     const voided = new Set(events.filter(event => event.kind === "void").map(event => event.id));
@@ -5011,7 +5083,7 @@ function setupLoadLog() {
     const list = el("loadLogList");
     list.replaceChildren();
     if (!profile || !loads.length) list.append(node("p", !loaded ? "Load the shared log to see counts." : !profile
-      ? profiles.length ? "Choose a profile to see its counts and history." : "Create a profile, such as Burnet, to start counting loads."
+      ? profiles.length ? "Choose a profile to see its counts and history." : "An administrator can create and assign truck count profiles."
       : "No unloaded loads recorded for this profile and period."));
     loads.slice(0, shown).forEach(load => {
       const isVoid = voided.has(load.id);
@@ -5020,7 +5092,7 @@ function setupLoadLog() {
       card.append(node("strong", title), node("p", `Unloaded ${new Date(load.unloadedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`),
         node("p", `Approx. ${load.trash.toLocaleString()} trash · ${load.recycling.toLocaleString()} recycling`));
       if (isVoid) card.append(node("span", "Voided · excluded from totals", "load-log-void-label"));
-      else {
+      else if (canEdit(profile.id)) {
         const button = node("button", "Void entry");
         button.type = "button";
         button.setAttribute("aria-label", `Void ${title}, ${load.trash + load.recycling} carts`);
@@ -5032,11 +5104,17 @@ function setupLoadLog() {
     el("loadLogShowMore").hidden = loads.length <= shown;
     updateControls();
   }
-  async function refresh() {
+  async function refresh(duringSave = false) {
     if (refreshTask) return refreshTask;
-    if (writing) return;
+    if (writing && !duringSave) return;
+    const generation = accessGeneration, account = profileState.user?.id || null;
     status(syncStatus, "Checking shared counts…");
     refreshTask = (async () => {
+      let permissions = null;
+      if (account) {
+        try { permissions = await profileApi({action:'load-permissions'}); }
+        catch { /* Keep shared history readable when access cannot be verified. */ }
+      }
       const names = new Set();
       for (let offset = 0; ; offset += 200) {
         const { data, error } = await sb.storage.from(BUCKET).list(LOAD_LOG_PREFIX, {
@@ -5044,7 +5122,7 @@ function setupLoadLog() {
         });
         if (error) throw error;
         if (!Array.isArray(data)) throw new Error("Could not list load records");
-        data.forEach(file => { if (/^(profile|load|void)-[a-f0-9-]+\.json$/.test(file.name)) names.add(file.name); });
+        data.forEach(file => { if (/^(profile|load|void|deleted)-[a-f0-9-]+\.json$/.test(file.name)) names.add(file.name); });
         if (data.length < 200) break;
       }
       const missing = [...names].filter(name => !cache.has(name));
@@ -5057,28 +5135,45 @@ function setupLoadLog() {
         }
       }));
       // Commit a complete snapshot; never show partial totals after a failed read.
-      cache = new Map([...cache, ...downloaded]);
+      if (generation !== accessGeneration || account !== (profileState.user?.id || null)) return false;
+      if (!account || permissions?.userId === account) {
+        editableProfiles = new Set(permissions?.profileIds || []);
+        permissionUser = account;
+      }
+      cache = new Map([...cache, ...downloaded].filter(([name]) => names.has(name)));
       events = [...cache.values()];
       loaded = true;
       lastRefreshedAt = new Date().toISOString();
       render();
+      if (account && permissions?.userId !== account) {
+        status(syncStatus, 'Counts refreshed, but edit access could not be checked. Refresh before saving.', 'error');
+        return false;
+      }
       status(syncStatus, `Updated ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · Refreshes every 30s while open`);
+      return true;
     })().catch(error => {
       console.error("Load log refresh:", error);
       status(syncStatus, loaded ? "Could not refresh. Showing previously loaded counts; try Refresh log." : "Could not load shared counts. Check your connection and tap Refresh log.", "error");
-    }).finally(() => { refreshTask = null; updateControls(); });
+    }).finally(() => {
+      refreshTask = null; updateControls();
+      if (generation !== accessGeneration && dialog.open && !writing) refresh();
+    });
     updateControls();
     return refreshTask;
   }
   async function saveEvent(event) {
     if (refreshTask) await refreshTask;
+    if (!await refresh(true)) throw new Error('Could not check shared profiles');
+    const profileId = event.profileId || events.find(item => item.kind === 'load' && item.id === event.id)?.profileId;
+    if (events.some(item => item.kind === 'deleted' && item.id === profileId)) throw new Error('DELETED_LOAD_PROFILE');
+    if (!canEdit(profileId)) throw new Error('LOAD_OWNER_REQUIRED');
     const saved = await writeLoadLogEvent(event);
     cache.set(`${saved.kind}-${saved.id}.json`, saved);
     events = [...cache.values()];
     return saved;
   }
   async function voidLoad(load) {
-    if (writing || !confirm("Void this load and remove it from the totals? It will remain in the history. To correct it, record a replacement load.")) return;
+    if (writing || !canEdit(load.profileId) || !confirm("Void this load and remove it from the totals? It will remain in the history. To correct it, record a replacement load.")) return;
     writing = true;
     updateControls();
     status(saveStatus, "Saving correction…");
@@ -5087,41 +5182,17 @@ function setupLoadLog() {
       status(saveStatus, "Saved — load voided on the shared log.", "saved");
     } catch (error) {
       console.error("Void load:", error);
-      status(saveStatus, "Correction not confirmed. Counts are unchanged; try again.", "error");
+      status(saveStatus, saveError(error), "error");
     } finally { writing = false; render(); }
   }
-  profileForm.addEventListener("submit", async event => {
-    event.preventDefault();
-    if (writing || !profileForm.reportValidity()) return;
-    const name = el("loadProfileName").value.trim().replace(/\s+/g, " ");
-    if (!name) return;
-    writing = true;
-    updateControls();
-    status(saveStatus, "Saving profile…");
-    try {
-      const normalized = name.normalize("NFKC").toLowerCase();
-      const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalized));
-      const id = [...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2, "0")).join("");
-      const saved = await saveEvent({ version: 1, kind: "profile", id, name, createdAt: new Date().toISOString() });
-      profileSelect.value = "";
-      preferredProfile = saved.id;
-      profileForm.hidden = true;
-      render();
-      rememberProfile();
-      status(saveStatus, `Saved — ${saved.name} profile is shared across phones.`, "saved");
-    } catch (error) {
-      console.error("Save load profile:", error);
-      status(saveStatus, "Profile save not confirmed. Keep the name and try again.", "error");
-    } finally { writing = false; updateControls(); }
-  });
   form.addEventListener("input", () => { pendingLoad = null; });
   form.addEventListener("submit", async event => {
     event.preventDefault();
-    if (writing || !currentProfile() || !form.reportValidity()) return;
+    if (writing || !canEdit(profileSelect.value) || !currentProfile() || !form.reportValidity()) return;
     const trash = Number(el("loadTrashQuantity").value);
     const recycling = Number(el("loadRecycleQuantity").value);
-    if (!Number.isInteger(trash) || !Number.isInteger(recycling) || trash < 0 || recycling < 0 || trash + recycling === 0) {
-      status(saveStatus, "Enter a whole number of carts for at least one cart type.", "error");
+    if (!Number.isInteger(trash) || !Number.isInteger(recycling) || trash < 0 || recycling < 0 || trash > 100000 || recycling > 100000) {
+      status(saveStatus, "Enter a whole number from 0 to 100000 for each cart type.", "error");
       return;
     }
     writing = true;
@@ -5140,31 +5211,21 @@ function setupLoadLog() {
       status(saveStatus, "Saved — unloaded load added to this profile on all phones.", "saved");
     } catch (error) {
       console.error("Save unloaded load:", error);
-      status(saveStatus, "Save not confirmed. Your entry is kept here; retry to confirm it without counting it twice.", "error");
+      status(saveStatus, saveError(error), "error");
     } finally { writing = false; render(); }
   });
   el("newLoadBtn").addEventListener("click", () => {
-    if (!currentProfile() || writing) return;
+    if (!currentProfile() || !canEdit(profileSelect.value) || writing) return;
     form.reset();
     pendingLoad = null;
     el("loadOccurredAt").value = localDateTime();
     el("loadFormProfile").textContent = `Profile: ${currentProfile().name}`;
-    profileForm.hidden = true;
     form.hidden = false;
     status(saveStatus, "");
     updateControls();
     el("loadVehicleType").focus();
   });
   el("cancelLoadBtn").addEventListener("click", () => { form.hidden = true; pendingLoad = null; updateControls(); });
-  el("newLoadProfileBtn").addEventListener("click", () => {
-    form.hidden = true;
-    profileForm.hidden = false;
-    el("loadProfileName").value = "";
-    status(saveStatus, "");
-    updateControls();
-    el("loadProfileName").focus();
-  });
-  el("cancelLoadProfileBtn").addEventListener("click", () => { profileForm.hidden = true; updateControls(); });
   profileSelect.addEventListener("change", () => { shown = 30; status(saveStatus, ""); rememberProfile(); render(); });
   el("loadLogPeriod").addEventListener("change", () => { shown = 30; render(); });
   el("loadLogShowMore").addEventListener("click", () => { shown += 30; render(); });
@@ -5223,6 +5284,16 @@ function setupLoadLog() {
   });
   el("closeLoadLogBtn").addEventListener("click", () => dialog.close());
   dialog.addEventListener("close", () => clearInterval(refreshTimer));
+  document.addEventListener('loadprofileschanged', () => {
+    accessGeneration++; editableProfiles.clear(); permissionUser = null; render(); if (loaded) refresh();
+  });
+  document.addEventListener('loadaccountchanged', () => {
+    const account = profileState.user?.id || null;
+    if (account === observedUser) return;
+    observedUser = account; accessGeneration++; editableProfiles.clear(); permissionUser = null;
+    form.hidden = true; pendingLoad = null; preferredProfile = ''; profileSelect.value = '';
+    status(saveStatus,''); render(); if (dialog.open) refresh();
+  });
   document.addEventListener("visibilitychange", () => { if (dialog.open && !document.hidden) refresh(); });
   window.addEventListener("online", () => { if (dialog.open) refresh(); });
 }

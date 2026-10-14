@@ -2,10 +2,13 @@ const alias = /^[a-z0-9][a-z0-9_-]{2,29}@profiles\.cartdelivery\.invalid$/;
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 export const isProfileAdmin = user => user?.app_metadata?.cartdelivery_admin === true && !user.app_metadata.cartdelivery_disabled;
 export const profileDisabled = user => user?.app_metadata?.cartdelivery_disabled === true || Boolean(user?.deleted_at) || Date.parse(user?.banned_until || '') > Date.now();
+import { createLoadAdminService } from './load-admin-service.mjs';
 export function createAdminService(db) {
+  const handleLoads = createLoadAdminService(db);
   const unwrap = result => { if (result.error) throw result.error; return result.data; };
   return async (body, actor) => {
     if (!isProfileAdmin(actor) || profileDisabled(actor)) throw new Error('ADMIN_REQUIRED');
+    if (body.action?.startsWith('admin-load-')) return handleLoads(body, actor);
     if (body.action === 'admin-list') return unwrap(await db.rpc('cd_admin_directory', { p_actor: actor.id }));
     if (!['admin-save','admin-status','admin-remove'].includes(body.action)) throw new Error('INVALID_ADMIN_ACTION');
     const creating = body.action === 'admin-save' && !body.userId;
