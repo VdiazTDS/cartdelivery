@@ -648,8 +648,31 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
       await page.locator('#optimoScope').scrollIntoViewIfNeeded();
       assert.equal(await page.evaluate(() => document.getElementById('resequenceDialog').scrollWidth > document.getElementById('resequenceDialog').clientWidth), false);
       await page.screenshot({ path: path.join(root, `local-artifacts/selected-planning-${name}.png`) });
+      await page.locator('#closeResequenceBtn').click();
+      if (name === 'phone') await page.locator('#mobileMenuBtn').click();
+      if (await page.locator('#deliverySequenceDisclosure').getAttribute('aria-expanded') === 'false') await page.locator('#deliverySequenceDisclosure').click();
+      const labels = page.locator('label[for="optimoEndpointLabelsToggle"]');
+      const endpointState = await page.evaluate(() => JSON.stringify({ locations: optimoMapLocations, rows: _currentRows,
+        sequences: _currentRows.map(row => rowSequence(row)), selected: [...selectedVisibleSequenceRows()].map(row => row.UNIQUE).sort() }));
+      if (!(await page.locator('#optimoEndpointLabelsToggle').isChecked())) await labels.click();
+      assert.equal(await page.locator('.optimo-location-icon').count(), 2);
+      assert((await labels.boundingBox()).height >= 44);
+      for (const light of [false, true]) {
+        await page.evaluate(light => document.body.classList.toggle('sun-mode', light), light);
+        await labels.click();
+        assert.equal(await page.locator('.optimo-location-icon').count(), 0);
+        await labels.click();
+        assert.equal(await page.locator('.optimo-location-icon').count(), 2);
+      }
+      await labels.click();
+      assert.equal(await page.evaluate(() => localStorage.getItem(OPTIMO_ENDPOINT_LABELS_KEY)), 'off');
+      assert.equal(await page.evaluate(() => JSON.stringify({ locations: optimoMapLocations, rows: _currentRows,
+        sequences: _currentRows.map(row => rowSequence(row)), selected: [...selectedVisibleSequenceRows()].map(row => row.UNIQUE).sort() })), endpointState);
+      await page.screenshot({ path: path.join(root, `local-artifacts/optimo-endpoint-labels-${name}.png`) });
+      await page.evaluate(() => { closeMobileMenu(); resequenceElement('resequenceDialog').showModal(); });
       if (name === 'desktop') {
         await page.locator('#pickOptimoEnd').click();
+        assert.equal(await page.locator('.optimo-location-icon').count(), 2, 'Hidden endpoints remain available during picking');
         const pickerLayout = await page.evaluate(() => {
           const panel = document.getElementById('optimoLocationPicker');
           return { overflow: panel.scrollWidth > panel.clientWidth, small: [...panel.querySelectorAll('button')].some(button => button.getBoundingClientRect().height < 44) };
@@ -657,6 +680,7 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
         assert.deepEqual(pickerLayout, { overflow: false, small: false });
         await page.screenshot({ path: path.join(root, 'local-artifacts/optimo-map-picker-desktop.png') });
         await page.keyboard.press('Escape');
+        assert.equal(await page.locator('.optimo-location-icon').count(), 0, 'Leaving the picker restores the hidden preference');
         assert.equal(await page.locator('#resequenceDialog').isVisible(), true);
         assert.deepEqual(await page.evaluate(() => optimoMapLocations.end), endBeforeCancel);
       }
@@ -674,6 +698,7 @@ const sample = Array.from({ length: 8 }, (_, i) => ({
     await page.locator('#optimoScope').selectOption('selected');
     await generate(); await page.locator('#saveSequenceBtn').click();
     await page.reload({ waitUntil: 'networkidle' }); await load(selectedSample, 'selected-stops.xlsx');
+    assert.equal(await page.locator('#optimoEndpointLabelsToggle').isChecked(), false, 'Label visibility survives reload and file loading');
     assert.deepEqual(await page.evaluate(() => window._currentRows.map(row => rowSequence(row))), [2, null, 1, null, null, 1, null, null]);
     await open(); await page.locator('#optimoScope').selectOption('selected'); calls.length = 0;
     await generate();

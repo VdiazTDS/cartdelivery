@@ -154,7 +154,7 @@ const server = http.createServer((req, res) => {
     await page.locator('#closeCartCountsBtn').click();
     assert(await page.locator('#mobileStopDetails .delivery-feedback button').isVisible());
     await page.locator('#mobileStopDetails .stop-delivery-action').click();
-    await page.locator('#cartCountEntries input').fill('1');
+    assert.equal(await page.locator('#cartCountEntries input').inputValue(), '1', 'Single-stop delivery defaults to one cart');
     await page.locator('#saveCartCountsBtn').click();
     await page.waitForFunction(() => deliverySaveInProgress);
     await page.evaluate(() => finishSave(false));
@@ -373,7 +373,7 @@ const server = http.createServer((req, res) => {
     await tapOverlap();
     await page.locator('.mobile-stop-choice').filter({ hasText: 'Bin #: 002' }).click();
     await page.locator('#mobileStopDetails .stop-delivery-action').click();
-    await page.locator('#cartCountEntries input').fill('1');
+    assert.equal(await page.locator('#cartCountEntries input').inputValue(), '1', 'Reopening starts with one cart');
     await page.locator('#saveCartCountsBtn').click();
     await page.waitForFunction(() => deliverySaveInProgress);
     assert.deepEqual(await page.evaluate(() => _currentRows.map(row => row.del_qty)), [0, 0, 0, 3]);

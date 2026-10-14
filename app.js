@@ -327,18 +327,26 @@ function setupLocationCopy() {
   const status = document.getElementById("copyLocationStatus");
   const coordinates = document.getElementById("currentCoordinates");
   const accuracy = document.getElementById("currentLocationAccuracy");
-  const addressSelect = document.getElementById("nearbyLocationAddress");
-  const addressHelp = document.getElementById("nearbyLocationHelp");
+  const source = document.getElementById('locationSource');
+  const coordinateLabel = document.getElementById('currentCoordinatesLabel');
+  const centerBtn = document.getElementById('recenterLocationPreviewBtn');
   const copyCoordinatesBtn = document.getElementById("copyCoordinatesBtn");
   const copyMapLinkBtn = document.getElementById("copyMapLinkBtn");
-  const copyAddressBtn = document.getElementById("copyNearbyAddressBtn");
+  const shareBtn = document.getElementById('shareLocationBtn');
+  const preview = document.getElementById('locationPreview');
+  const verifyLink = document.getElementById('verifyLocationLink');
   const updateBtn = document.getElementById("updateCopyLocationBtn");
   const manualCopy = document.getElementById("manualLocationCopy");
   const manualText = document.getElementById("manualLocationText");
   const maxAge = 60000;
   let position = null;
+  let selectedPoint = null;
   let requestId = 0;
   let expiryTimer = null;
+  let movementWatch = null;
+  let previewMap = null, previewDot = null, previewCircle = null;
+  let staleReason = '';
+  let sharing = false;
 
   function showStatus(message, state = "ready") {
     status.textContent = message;
@@ -348,64 +356,130 @@ function setupLocationCopy() {
   function disableCopy() {
     copyCoordinatesBtn.disabled = true;
     copyMapLinkBtn.disabled = true;
-    copyAddressBtn.disabled = true;
-    addressSelect.disabled = true;
+    shareBtn.disabled = true;
+    verifyLink.removeAttribute('href');
+    verifyLink.setAttribute('aria-disabled', 'true');
+    manualCopy.hidden = true;
+    manualText.value = '';
+  }
+
+  function needUpdate(message) {
+    if (selectedPoint) return;
+    staleReason = message;
+    dialog.dataset.locationState = 'stale';
+    disableCopy();
+    showStatus(message, 'error');
   }
 
   function isFresh() {
+    if (selectedPoint) return true;
     if (!position) return false;
+    if (staleReason) { needUpdate(staleReason); return false; }
     if (Date.now() - position.timestamp < maxAge) return true;
-    disableCopy();
-    showStatus("This location is over a minute old. Tap Update Location before copying.", "error");
+    needUpdate('This location is over a minute old. Tap Update Location before sending.');
     return false;
   }
 
-  function populateNearbyAddresses() {
-    addressSelect.replaceChildren(new Option("Choose the address you are at", ""));
-    const candidates = new Map();
-    // A poor GPS fix cannot reliably identify which nearby address the crew is at.
-    if (position.coords.accuracy <= 75) {
-      const here = L.latLng(position.coords.latitude, position.coords.longitude);
-      (window._currentRows || []).forEach(row => {
-        const lat = Number(row.LATITUDE);
-        const lng = Number(row.LONGITUDE);
-        if (!row.CSSTRT || row.LATITUDE == null || row.LONGITUDE == null ||
-            String(row.LATITUDE).trim() === "" || String(row.LONGITUDE).trim() === "" ||
-            !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return;
-        const distance = here.distanceTo([lat, lng]);
-        if (distance > 75) return;
-        const locality = [row.CITY || row.CSCITY, row.STATE || row.CSSTATE, row.ZIP || row.CSZIP]
-          .filter(value => value != null && String(value).trim()).join(" ");
-        const address = [formatStopAddress(row), locality].filter(Boolean).join(", ");
-        if (!candidates.has(address) || distance < candidates.get(address)) candidates.set(address, distance);
+  function stopMovementWatch() {
+    if (movementWatch !== null) navigator.geolocation.clearWatch(movementWatch);
+    movementWatch = null;
+  }
+
+  function locationLink(directions) {
+    const url = new URL(`https://www.google.com/maps/${directions ? 'dir' : 'search'}/`);
+    url.searchParams.set('api', '1');
+    url.searchParams.set(directions ? 'destination' : 'query', coordinates.value.replace(/\s/g, ''));
+    if (directions) { url.searchParams.set('travelmode', 'driving'); url.searchParams.set('dir_action', 'navigate'); }
+    return url.toString();
+  }
+
+  function centerPreview() {
+    if (!position || !previewMap) return;
+    previewMap.invalidateSize();
+    if (selectedPoint) { previewMap.setView(selectedPoint, previewMap.getZoom(), { animate: false }); return; }
+    previewMap.fitBounds(previewCircle.getBounds(), { padding: [20, 20], maxZoom: 18, animate: false });
+  }
+
+  function choosePoint(point) {
+    if (!dialog.open || sharing || !position) return;
+    const wrapped = L.latLng(point).wrap();
+    if (!Number.isFinite(wrapped.lat) || Math.abs(wrapped.lat) > 90 || !Number.isFinite(wrapped.lng)) return;
+    ++requestId;
+    clearTimeout(expiryTimer);
+    stopMovementWatch();
+    selectedPoint = L.latLng(Number(wrapped.lat.toFixed(6)), Number(wrapped.lng.toFixed(6)));
+    staleReason = '';
+    dialog.dataset.locationState = 'manual';
+    source.textContent = 'Using map-selected location · Replaces GPS';
+    coordinateLabel.textContent = 'Map-selected latitude, longitude';
+    coordinates.value = `${selectedPoint.lat.toFixed(6)}, ${selectedPoint.lng.toFixed(6)}`;
+    accuracy.textContent = 'You chose this point. Copy and Share will use these coordinates instead of GPS.';
+    previewDot.setLatLng(selectedPoint).setStyle({ fillColor: '#9b46ca' });
+    previewMap.removeLayer(previewCircle);
+    document.getElementById('locationPreviewHelp').textContent = 'Purple dot: the point you chose. Tap elsewhere to change it. Panning alone keeps this point.';
+    centerBtn.textContent = 'Center point';
+    updateBtn.textContent = 'Use GPS instead';
+    updateBtn.disabled = false;
+    copyCoordinatesBtn.disabled = false;
+    copyMapLinkBtn.disabled = false;
+    shareBtn.disabled = false;
+    verifyLink.href = locationLink(false);
+    verifyLink.removeAttribute('aria-disabled');
+    manualCopy.hidden = true;
+    manualText.value = '';
+    showStatus('Ready to send your chosen point. It stays fixed if you move.');
+  }
+
+  function showPreview() {
+    preview.hidden = false;
+    if (!previewMap) {
+      previewMap = L.map('locationPreviewMap', { scrollWheelZoom: false, attributionControl: true,
+        center: [position.coords.latitude, position.coords.longitude], zoom: 16 });
+      previewMap.attributionControl.setPrefix(false);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      }).addTo(previewMap).on('tileerror', () => {
+        if (dialog.open) document.getElementById('locationPreviewHelp').textContent = 'Map tiles could not load. Use Check this point in Google Maps to verify nearby streets.';
+      });
+      previewCircle = L.circle([0, 0], { color: '#1976d2', fillOpacity: 0.15, weight: 2, interactive: false }).addTo(previewMap);
+      previewDot = L.circleMarker([0, 0], { radius: 7, color: '#fff', weight: 3, fillColor: '#146bd1', fillOpacity: 1, interactive: false }).addTo(previewMap);
+      previewMap.on('click', event => choosePoint(event.latlng));
+      previewMap.getContainer().addEventListener('keydown', event => {
+        if (event.key === 'Enter' && event.target === previewMap.getContainer()) {
+          event.preventDefault(); choosePoint(previewMap.getCenter());
+        }
       });
     }
-    [...candidates].sort((a, b) => a[1] - b[1]).forEach(([address, distance]) => {
-      addressSelect.add(new Option(`${address} · ${Math.round(distance * 3.28084)} ft away`, address));
-    });
-    addressSelect.disabled = candidates.size === 0;
-    addressHelp.textContent = candidates.size
-      ? "Choose your address from the loaded route. These addresses are within about 250 ft of your GPS position."
-      : position.coords.accuracy > 75
-        ? "GPS is too approximate to suggest an address. Update Location for a closer fix, or copy coordinates."
-        : "No nearby address in the loaded route. Copy coordinates or the map link instead.";
+    const point = [position.coords.latitude, position.coords.longitude];
+    previewDot.setLatLng(point).setStyle({ fillColor: '#146bd1' });
+    previewCircle.setLatLng(point).setRadius(Math.max(1, position.coords.accuracy));
+    if (!previewMap.hasLayer(previewCircle)) previewCircle.addTo(previewMap);
+    document.getElementById('locationPreviewHelp').textContent = 'Blue dot: GPS. Circle: accuracy. Tap the map to choose a different point. Keyboard: pan with arrow keys, then press Enter.';
+    requestAnimationFrame(() => { if (dialog.open) centerPreview(); });
   }
 
   function requestLocation() {
     const id = ++requestId;
     clearTimeout(expiryTimer);
+    stopMovementWatch();
+    selectedPoint = null;
+    source.textContent = 'Using GPS location';
+    coordinateLabel.textContent = 'GPS latitude, longitude';
+    centerBtn.textContent = 'Center GPS';
+    updateBtn.textContent = 'Update Location';
+    staleReason = '';
+    dialog.dataset.locationState = 'loading';
+    preview.hidden = true;
     position = null;
     coordinates.value = "";
     coordinates.placeholder = "Getting your location…";
     accuracy.textContent = "";
     manualCopy.hidden = true;
-    addressSelect.replaceChildren(new Option("Waiting for your location", ""));
-    addressHelp.textContent = "Choose the address you are at from the loaded route.";
     disableCopy();
 
     if (!navigator.geolocation) {
       coordinates.placeholder = "Location unavailable";
-      showStatus("Location is unavailable in this browser. Open the app in Safari or Chrome.", "error");
+      needUpdate('Location is unavailable in this browser. Open the app in Safari or Chrome.');
       return;
     }
 
@@ -417,8 +491,8 @@ function setupLocationCopy() {
       const { latitude, longitude, accuracy: meters } = result.coords;
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude) ||
           Math.abs(latitude) > 90 || Math.abs(longitude) > 180 ||
-          !Number.isFinite(meters) || meters < 0) {
-        showStatus("A usable GPS location was not returned. Tap Update Location to retry.", "error");
+          !Number.isFinite(meters) || meters < 0 || !Number.isFinite(result.timestamp) || result.timestamp > Date.now() + 1000) {
+        needUpdate('A usable GPS location was not returned. Tap Update Location to retry.');
         return;
       }
       position = result;
@@ -427,11 +501,25 @@ function setupLocationCopy() {
       accuracy.textContent = `Located at ${time} · GPS accuracy ±${Math.ceil(meters * 3.28084)} ft. Update if you move.`;
       copyCoordinatesBtn.disabled = false;
       copyMapLinkBtn.disabled = false;
-      populateNearbyAddresses();
+      shareBtn.disabled = sharing;
+      verifyLink.href = locationLink(false);
+      verifyLink.removeAttribute('aria-disabled');
+      dialog.dataset.locationState = 'ready';
+      showPreview();
       showStatus(meters > 75
-        ? "GPS is approximate. Check the accuracy below before sending."
-        : "Ready to copy. Paste it into a message to the incoming truck.");
-      if (isFresh()) expiryTimer = setTimeout(isFresh, Math.max(0, maxAge - (Date.now() - result.timestamp)));
+        ? 'GPS is approximate. Check the circle on the map or update for a better fix.'
+        : 'Check the blue dot, then share directions to this point.');
+      if (isFresh()) {
+        expiryTimer = setTimeout(isFresh, Math.max(0, maxAge - (Date.now() - result.timestamp)));
+        movementWatch = navigator.geolocation.watchPosition(next => {
+          if (id !== requestId || !dialog.open || !position || staleReason) return;
+          const c = next.coords;
+          if (!Number.isFinite(c.latitude) || Math.abs(c.latitude) > 90 || !Number.isFinite(c.longitude) || Math.abs(c.longitude) > 180 ||
+              !Number.isFinite(c.accuracy) || c.accuracy < 0 || !Number.isFinite(next.timestamp) || next.timestamp <= position.timestamp) return;
+          const distance = L.latLng(latitude, longitude).distanceTo([c.latitude, c.longitude]);
+          if (distance > Math.max(25, meters + c.accuracy)) needUpdate('GPS detected movement from this point. Tap Update Location before sending.');
+        }, () => {}, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
+      }
     }, error => {
       if (id !== requestId || !dialog.open) return;
       updateBtn.disabled = false;
@@ -441,7 +529,7 @@ function setupLocationCopy() {
         : error.code === 3
           ? "GPS took too long. Move to a clearer area and tap Update Location."
           : "Your location could not be found. Tap Update Location to retry.";
-      showStatus(message, "error");
+      needUpdate(message);
     }, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
   }
 
@@ -453,9 +541,9 @@ function setupLocationCopy() {
     try {
       if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
       await navigator.clipboard.writeText(text);
-      if (id === requestId && dialog.open) showStatus(`${description} copied. Paste it into your message.`, "copied");
+      if (id === requestId && dialog.open && isFresh()) showStatus(`${description} copied. Paste it into your message.`, "copied");
     } catch {
-      if (id !== requestId || !dialog.open) return;
+      if (id !== requestId || !dialog.open || !isFresh()) return;
       manualCopy.hidden = false;
       manualText.value = text;
       manualText.focus();
@@ -472,22 +560,37 @@ function setupLocationCopy() {
   dialog.addEventListener("close", () => {
     ++requestId;
     clearTimeout(expiryTimer);
+    stopMovementWatch();
     position = null;
     updateBtn.disabled = false;
+    selectedPoint = null;
   });
   updateBtn.addEventListener("click", requestLocation);
   coordinates.addEventListener("click", () => coordinates.select());
-  addressSelect.addEventListener("change", () => {
-    copyAddressBtn.disabled = !isFresh() || !addressSelect.value;
-  });
   copyCoordinatesBtn.addEventListener("click", () => copyText(coordinates.value, "Coordinates"));
-  copyMapLinkBtn.addEventListener("click", () => {
-    const url = new URL("https://www.google.com/maps/search/");
-    url.searchParams.set("api", "1");
-    url.searchParams.set("query", coordinates.value);
-    copyText(url.toString(), "Map link");
+  copyMapLinkBtn.addEventListener('click', () => copyText(locationLink(true), 'Directions link'));
+  verifyLink.addEventListener('click', event => { if (!isFresh()) event.preventDefault(); });
+  centerBtn.addEventListener('click', centerPreview);
+  shareBtn.addEventListener('click', async () => {
+    if (sharing || !isFresh()) return;
+    const url = locationLink(true);
+    if (!navigator.share) { await copyText(url, 'Directions link'); return; }
+    const id = requestId;
+    sharing = true; shareBtn.disabled = true;
+    try {
+      await navigator.share({ title: selectedPoint ? 'Directions to my chosen point' : 'Directions to my location', url,
+        text: selectedPoint ? `Meet me at this map-selected point: ${coordinates.value}. I chose this point manually instead of using GPS. It stays fixed if I move.`
+          : `Meet me at this GPS point: ${coordinates.value}. ${accuracy.textContent} This is a location snapshot.` });
+      if (id === requestId && dialog.open && isFresh()) showStatus('Directions passed to your sharing app. This point will not update if you move.');
+    } catch (error) {
+      if (id === requestId && dialog.open && isFresh() && error.name !== 'AbortError') {
+        showStatus('Sharing is unavailable. Use Copy Directions Link and paste it into your message.', 'error');
+      }
+    } finally {
+      sharing = false;
+      if (dialog.open) shareBtn.disabled = !isFresh();
+    }
   });
-  copyAddressBtn.addEventListener("click", () => copyText(addressSelect.value, "Address"));
   document.addEventListener("visibilitychange", () => {
     if (dialog.open && !document.hidden) isFresh();
   });
@@ -722,8 +825,13 @@ function renderProfileState() {
   const { user, workspace, busy } = profileState;
   syncSavedFilesGuide();
   const username = profileUsername(user);
-  profileElement("profileWorkspaceBtn").textContent = user ? 'Profile' : 'Sign in';
-  profileElement('profileWorkspaceBtn').setAttribute('aria-label', user ? `Open delivery profile for ${username}` : 'Sign in to your delivery account');
+  const profileButton = profileElement('profileWorkspaceBtn');
+  profileButton.dataset.signedIn = String(Boolean(user));
+  profileButton.querySelector('.profile-button-state').textContent = user ? 'Signed in' : 'Sign in';
+  profileButton.querySelector('.profile-button-name').textContent = user ? username : '';
+  profileButton.querySelector('.profile-button-name').hidden = !user;
+  profileButton.title = user ? `Signed in as ${username} · Open profile` : 'Sign in to your delivery account';
+  profileButton.setAttribute('aria-label', profileButton.title);
   profileElement("profileTitle").textContent = user ? "My delivery work" : profileState.authMode === "create" ? "Create your account" : "Welcome back";
   profileElement("profileAuthForm").hidden = Boolean(user);
   profileElement("profileSignedIn").hidden = !user;
@@ -780,6 +888,7 @@ function renderRouteContext() {
     banner.querySelector(".route-context-file").textContent = sharing ? preview.name : workspace?.name || "";
     banner.querySelector(".route-context-help").textContent = sharing ? "Check the totals before syncing to team Excel." : main ? "Delivery records are view only. Signed-in profiles can edit shared work areas." : "Delivery saves change your copy. Sync to team Excel when ready.";
     if (banner.id === "routeContext") {
+      banner.querySelector('strong').textContent = main ? 'TEAM EXCEL · VIEW ONLY' : 'EDITING YOUR COPY';
       banner.querySelector(".route-context-help").textContent = main
         ? user ? "Deliveries view only · Shared work areas editable" : "View only · Sign in to manage work areas"
         : copySaveSummary();
@@ -797,7 +906,7 @@ function renderRouteContext() {
 }
 function setupRouteContext() {
   const template = profileElement("routeContext");
-  document.querySelectorAll("dialog:not(#pocketLock):not(#teamUploadDialog):not(#deleteTeamFileDialog):not(#cartCountsDialog):not(#workAreasDialog):not(#adminDialog):not(#helpDialog):not(#stopDirectionsDialog):not(#recordFieldsDialog), .modal-content").forEach(container => {
+  document.querySelectorAll("dialog:not(#pocketLock):not(#copyLocationDialog):not(#teamUploadDialog):not(#deleteTeamFileDialog):not(#cartCountsDialog):not(#workAreasDialog):not(#adminDialog):not(#helpDialog):not(#stopDirectionsDialog):not(#recordFieldsDialog), .modal-content").forEach(container => {
     const banner = template.cloneNode(true);
     banner.removeAttribute("id"); banner.removeAttribute("role");
     container.prepend(banner);
@@ -1055,7 +1164,7 @@ async function listProfileFiles() {
         card.append(heading, detail, retry); list.append(card); return;
       }
       detail.textContent = !profileState.user ? "View the team Excel without signing in. Sign in to work in your own copy." : file.copyId ? file.pending ? `Saved to your account · ${file.pending} ${file.pending === 1 ? "change" : "changes"} waiting to sync` : "Your saved copy is ready to reopen on this device." : "Start your own copy. Your delivery saves stay separate until you sync them.";
-      const open = document.createElement("button"); open.className = "saved-file-btn"; open.textContent = !profileState.user ? "View team Excel (read only)" : file.copyId ? "Continue my work" : "Start my own copy";
+      const open = document.createElement("button"); open.className = "saved-file-btn"; open.textContent = !profileState.user ? "View team Excel (read only)" : file.copyId ? "Open my copy of the team Excel" : "Start my own copy";
       open.onclick = () => openProfileFile(file, profileState.user ? "copy" : "original");
       const actions = document.createElement("div"); actions.className = "saved-file-secondary-actions";
       const original = document.createElement("button"); original.textContent = "View team Excel (read only)"; original.onclick = () => openProfileFile(file, "original");
@@ -2990,6 +3099,14 @@ function attachQuantityBadge(marker, row) {
 
 
 // ================= FILTER CHECKBOX UI =================
+const allowCombinedLayers = document.getElementById("allowCombinedLayers");
+const COMBINED_LAYERS_KEY = "cartdelivery.allowCombinedLayers";
+try { allowCombinedLayers.checked = localStorage.getItem(COMBINED_LAYERS_KEY) === "on"; } catch (_) { /* Preference only. */ }
+allowCombinedLayers.addEventListener("change", () => {
+  try { localStorage.setItem(COMBINED_LAYERS_KEY, allowCombinedLayers.checked ? "on" : "off"); } catch (_) { /* Preference only. */ }
+  applyFilters();
+});
+
 function buildRouteCheckboxes(routes) {
   const c = document.getElementById("routeCheckboxes");
   c.innerHTML = "";
@@ -3091,39 +3208,20 @@ function applyFilters() {
   const routeCheckboxes = [...document.querySelectorAll("#routeCheckboxes input")];
   const dayCheckboxes   = [...document.querySelectorAll("#dayCheckboxes input")];
 
-  let routes = routeCheckboxes.filter(i => i.checked).map(i => i.value);
+  const routes = routeCheckboxes.filter(i => i.checked).map(i => i.value);
   const days = dayCheckboxes.filter(i => i.checked).map(i => i.value);
 
-  // 🔥 PREVENT route + delivered from both being active
-  const activeRoutes = new Set(routes);
-
-  activeRoutes.forEach(route => {
-
-    if (route.endsWith("|Delivered")) {
-
-      const baseRoute = route.replace("|Delivered", "");
-
-      if (activeRoutes.has(baseRoute)) {
-        const baseCheckbox = routeCheckboxes.find(cb => cb.value === baseRoute);
-        if (baseCheckbox) baseCheckbox.checked = false;
-        activeRoutes.delete(baseRoute);
-      }
-
-    } else {
-
-      const deliveredRoute = route + "|Delivered";
-
-      if (activeRoutes.has(deliveredRoute)) {
-        const deliveredCheckbox = routeCheckboxes.find(cb => cb.value === deliveredRoute);
-        if (deliveredCheckbox) deliveredCheckbox.checked = false;
-        activeRoutes.delete(deliveredRoute);
-      }
-
-    }
-
-  });
-
-  routes = Array.from(activeRoutes);
+  // Resolve combined layers when disabling the option or restoring a saved view.
+  if (!allowCombinedLayers.checked) {
+    Object.keys(routeDayGroups).forEach(key => {
+      const [route, type] = key.split("|");
+      if (type === "Delivered" || !(layerVisibilityState[key] ?? true)) return;
+      layerVisibilityState[`${route}|Delivered`] = false;
+    });
+    document.querySelectorAll("#deliveredControls input[data-key]").forEach(input => {
+      input.checked = Boolean(layerVisibilityState[input.dataset.key]);
+    });
+  }
 
   // 🔥 Now apply visibility
   Object.entries(routeDayGroups).forEach(([key, group]) => {
@@ -3221,12 +3319,13 @@ if (layerVisibilityState.hasOwnProperty(key)) {
 
   const [route, type] = key.split("|");
 
-  // 🚫 Prevent Route + Delivered both visible
+  // Only enabling a layer can switch off its counterpart.
   Object.keys(routeDayGroups).forEach(otherKey => {
 
     const [otherRoute, otherType] = otherKey.split("|");
 
     if (
+      checkbox.checked && !allowCombinedLayers.checked &&
       otherRoute === route &&
       otherKey !== key &&
       (
@@ -3670,6 +3769,13 @@ const resequenceElement = id => document.getElementById(id);
 const sequenceGroupKey = row => JSON.stringify([String(rowRoute(row) ?? "").trim(), String(rowDay(row) ?? "").trim()]);
 const optimoMapLocations = { start: null, end: null };
 const optimoEndpointMarkers = L.layerGroup().addTo(map);
+const optimoEndpointLabelsToggle = document.getElementById('optimoEndpointLabelsToggle');
+const OPTIMO_ENDPOINT_LABELS_KEY = 'cartdelivery.optimoEndpointLabels';
+try { optimoEndpointLabelsToggle.checked = localStorage.getItem(OPTIMO_ENDPOINT_LABELS_KEY) !== 'off'; } catch (_) { /* Preference only. */ }
+optimoEndpointLabelsToggle.addEventListener('change', () => {
+  try { localStorage.setItem(OPTIMO_ENDPOINT_LABELS_KEY, optimoEndpointLabelsToggle.checked ? 'on' : 'off'); } catch (_) { /* Preference only. */ }
+  if (!optimoLocationPicker) refreshOptimoLocations();
+});
 
 function validOptimoLocation(location) {
   return location?.type === "custom" && Number.isFinite(location.latitude) && Number.isFinite(location.longitude) &&
@@ -3707,7 +3813,7 @@ function refreshOptimoLocations() {
     resequenceElement(`optimo${kind === "start" ? "Start" : "End"}Point`).textContent = mode === "map"
       ? validOptimoLocation(location) ? `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}` : "Choose a point on the map before generating."
       : "";
-    if (mode === "map" && validOptimoLocation(location))
+    if (mode === "map" && validOptimoLocation(location) && (optimoEndpointLabelsToggle.checked || optimoLocationPicker))
       optimoLocationMarker(kind, [location.latitude, location.longitude]).addTo(optimoEndpointMarkers);
   }
 }
@@ -6987,6 +7093,7 @@ function setupCartCounts() {
       Object.assign(input, { id: label.htmlFor, type: "number", inputMode: "numeric", min: "0", max: String(Math.max(0, (cartTotal(row) || 0) - (deliveredCartCount(row) || 0))), step: "1", required: true });
       input.setAttribute("aria-label", `Carts delivered this visit: ${formatStopAddress(row)}, bin ${String(row.BINNO ?? "not provided")}, record ${index + 1}`);
       input.placeholder = `0–${input.max}`;
+      input.value = cartTotal(row) === null ? '' : String(Math.min(1, Number(input.max)));
       label.append(input);
       const progress = document.createElement("p");
       progress.id = `cartCountEntryProgress${index}`;
