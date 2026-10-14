@@ -5184,6 +5184,13 @@ a.delivery-stop-address:focus-visible { outline: 3px solid #3688dc; outline-offs
 .delivery-stop-card .stop-delivery-action:disabled { opacity: .55; cursor: default; }
 .delivery-stop-card summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; font-size: 12px; text-decoration: underline; }
 .delivery-stop-card details > div { font-size: 12px; }
+.delivery-stop-card .record-fields-button { min-height: 44px; width: 100%; margin: 0; padding: 10px 12px; border: 1px solid #8198ae; border-radius: 9px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+#recordFieldsIdentity, #recordFieldsCurrent { white-space: pre-wrap; }
+#recordFieldsList { margin: 0; }
+#recordFieldsList > div { padding: 12px 0; border-top: 1px solid var(--profile-border); }
+#recordFieldsList dt { font-size: 13px; font-weight: 700; color: var(--profile-muted); overflow-wrap: anywhere; }
+#recordFieldsList dd { margin: 5px 0 0; font-size: 15px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#recordFieldsList .record-field-empty { font-style: italic; color: var(--profile-muted); }
 .delivery-stop-card button:focus-visible, .delivery-stop-card summary:focus-visible { outline: 3px solid #3688dc; outline-offset: 2px; }
 #teamDataCheck { margin-top: 16px; padding: 12px; border: 1px solid var(--profile-border); border-radius: 10px; background: var(--profile-card); overflow-wrap: anywhere; }
 #teamDataCheck h3 { margin-top: 0; }

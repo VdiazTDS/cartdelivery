@@ -797,7 +797,7 @@ function renderRouteContext() {
 }
 function setupRouteContext() {
   const template = profileElement("routeContext");
-  document.querySelectorAll("dialog:not(#pocketLock):not(#teamUploadDialog):not(#deleteTeamFileDialog):not(#cartCountsDialog):not(#workAreasDialog):not(#adminDialog):not(#helpDialog):not(#stopDirectionsDialog), .modal-content").forEach(container => {
+  document.querySelectorAll("dialog:not(#pocketLock):not(#teamUploadDialog):not(#deleteTeamFileDialog):not(#cartCountsDialog):not(#workAreasDialog):not(#adminDialog):not(#helpDialog):not(#stopDirectionsDialog):not(#recordFieldsDialog), .modal-content").forEach(container => {
     const banner = template.cloneNode(true);
     banner.removeAttribute("id"); banner.removeAttribute("role");
     container.prepend(banner);
@@ -1776,6 +1776,7 @@ function setupDeliveryProfiles() {
     setTimeout(() => {
       const user = session?.user || null;
       if (profileState.user?.id !== user?.id) {
+        resetRecordFields();
         teamFileDeletion = null; profileElement('deleteTeamFileDialog').close();
         teamUploadState.result = null; teamUploadState.added = false;
         if (profileState.user) {
@@ -4315,6 +4316,112 @@ function stopDirectionsAddressLink(row) {
   address.onclick = event => { event.preventDefault(); event.stopPropagation(); showStopDirections(row, address); };
   return address;
 }
+let recordFieldsSource = null;
+let recordFieldsView = null;
+function disposeRecordFieldsSource() {
+  const source = recordFieldsSource;
+  recordFieldsSource = null;
+  source?.controller.abort(); source?.worker.terminate();
+  source?.pending.forEach(request => request.reject(new Error('REQUEST_CANCELLED')));
+}
+function resetRecordFields() {
+  recordFieldsView = null;
+  disposeRecordFieldsSource();
+  document.getElementById('recordFieldsDialog').close();
+  document.getElementById('recordFieldsList').replaceChildren();
+}
+async function originalRecordFields(row) {
+  const rows = window._currentRows, workspace = profileState.workspace;
+  const index = rows?.indexOf(row) ?? -1;
+  if (index < 0) throw new Error('ROW_STRUCTURE_CHANGED');
+  if (recordFieldsSource?.rows !== rows || recordFieldsSource?.workspace !== workspace) {
+    disposeRecordFieldsSource();
+    const source = recordFieldsSource = { rows, workspace, pending: new Map(), nextId: 0,
+      controller: new AbortController(), worker: new Worker('record-fields-worker.js?v=20261014-record-fields') };
+    source.request = (data, transfer = []) => new Promise((resolve, reject) => {
+      if (source.error) { reject(source.error); return; }
+      const id = ++source.nextId;
+      const finish = fn => value => { clearTimeout(timer); source.pending.delete(id); fn(value); };
+      const timer = setTimeout(() => source.pending.get(id)?.reject(new Error('SOURCE_TIMEOUT')), 60000);
+      source.pending.set(id, { resolve: finish(resolve), reject: finish(reject) });
+      try { source.worker.postMessage({ ...data, id }, transfer); }
+      catch (error) { source.pending.get(id).reject(error); }
+    });
+    source.worker.onmessage = ({ data }) => {
+      const request = source.pending.get(data.id);
+      if (data.error) request?.reject(new Error(data.error)); else request?.resolve(data);
+    };
+    source.worker.onerror = event => {
+      event.preventDefault();
+      source.error = new Error('SOURCE_READ_FAILED');
+      source.pending.forEach(request => request.reject(source.error));
+    };
+    source.ready = (async () => {
+      if (!workspace?.fileId) return source.request({ workbook: window._currentWorkbook, expectedCount: rows.length });
+      const { url } = await profileApi({ action: workspace.mode === 'original' ? 'public-export-source' : 'export-source', fileId: workspace.fileId });
+      if (source !== recordFieldsSource) throw new Error('REQUEST_CANCELLED');
+      const timeout = setTimeout(() => source.controller.abort(), 60000);
+      try {
+        const response = await fetch(url, { cache: 'no-store', signal: source.controller.signal });
+        if (!response.ok) throw new Error('SOURCE_READ_FAILED');
+        const bytes = await response.arrayBuffer();
+        if (source !== recordFieldsSource) throw new Error('REQUEST_CANCELLED');
+        return await source.request({ bytes, expectedCount: rows.length }, [bytes]);
+      } finally { clearTimeout(timeout); }
+    })();
+  }
+  const source = recordFieldsSource;
+  try {
+    await source.ready;
+    if (source !== recordFieldsSource) throw new Error('REQUEST_CANCELLED');
+    return await source.request({ index });
+  } catch (error) { if (source === recordFieldsSource) disposeRecordFieldsSource(); throw error; }
+}
+async function loadRecordFields(view) {
+  const status = document.getElementById('recordFieldsStatus'), list = document.getElementById('recordFieldsList');
+  list.replaceChildren(); document.getElementById('retryRecordFieldsBtn').hidden = true;
+  status.textContent = 'Loading all original fields…';
+  try {
+    const result = await originalRecordFields(view.row);
+    if (recordFieldsView !== view) return;
+    const fragment = document.createDocumentFragment();
+    for (const field of result.fields) {
+      const item = document.createElement('div'), label = document.createElement('dt'), value = document.createElement('dd');
+      label.textContent = field.name; label.title = `Spreadsheet column ${field.column}`;
+      value.textContent = field.value === '' ? 'Blank' : field.value;
+      value.classList.toggle('record-field-empty', field.value === '');
+      item.append(label, value); fragment.append(item);
+    }
+    list.append(fragment);
+    status.textContent = `${result.fields.length} fields · Spreadsheet row ${result.sheetRow}`;
+  } catch (error) {
+    if (recordFieldsView !== view) return;
+    status.textContent = error.message === 'ROW_STRUCTURE_CHANGED'
+      ? 'The original spreadsheet could not be matched to this record. Reopen the file before trying again.'
+      : 'Could not load the original fields. Check your connection and try again. Your delivery data has not changed.';
+    document.getElementById('retryRecordFieldsBtn').hidden = false;
+  }
+}
+function showRecordFields(row, trigger) {
+  const dialog = document.getElementById('recordFieldsDialog');
+  const view = recordFieldsView = { row, trigger };
+  const workspace = profileState.workspace;
+  document.getElementById('recordFieldsIdentity').textContent = `${formatStopAddress(row) || 'Address not available'} · Bin ${row.BINNO ?? 'Not provided'}\n${workspace?.name || window._currentFilePath || ''}`;
+  document.getElementById('recordFieldsCurrent').textContent = `${workspace?.mode === 'copy' ? `Your copy · ${profileUsername(profileState.user)}` : 'Team view'}\n${profileCountText(row)}\nRoute ${rowRoute(row) ?? 'Not provided'} · ${dayName(Number(rowDay(row))) || 'Day not provided'}`;
+  if (!dialog.open) dialog.showModal();
+  loadRecordFields(view);
+}
+function setupRecordFields() {
+  const dialog = document.getElementById('recordFieldsDialog');
+  document.getElementById('closeRecordFieldsBtn').onclick = () => dialog.close();
+  document.getElementById('retryRecordFieldsBtn').onclick = () => { if (recordFieldsView) loadRecordFields(recordFieldsView); };
+  dialog.addEventListener('close', () => {
+    if (dialog.open) return;
+    const trigger = recordFieldsView?.trigger;
+    recordFieldsView = null;
+    if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+  });
+}
 function clearViewedStop() {
   if (viewedStopIndicator) map.removeLayer(viewedStopIndicator);
   viewedStopIndicator = null;
@@ -4440,10 +4547,14 @@ function deliveryStopCard(row, marker = null) {
   const info = document.createElement('div');
   info.textContent = `Route ${rowRoute(row) ?? '—'} · ${dayName(Number(rowDay(row))) || 'Day not provided'} · Size ${row.SIZE ?? '—'}${rowSequence(row) !== null ? ` · Stop ${rowSequence(row)}` : ''}`;
   details.append(info); card.append(details);
+  const allFields = line('button', 'View all fields', 'record-fields-button');
+  allFields.type = 'button'; allFields.setAttribute('aria-haspopup', 'dialog'); allFields.setAttribute('aria-controls', 'recordFieldsDialog');
+  allFields.onclick = event => { event.stopPropagation(); showRecordFields(row, allFields); };
   return card;
 }
 
 function processExcelBuffer(buffer, parsedWorkbook = null, confirmedRows = null) {
+  resetRecordFields();
   closeMobileStopDetails();
   clearViewedStop();
   deliveryFeedback.clear();
@@ -5743,6 +5854,7 @@ function setupPhoneDialogLayout() {
     ['teamUploadDialog', '.profile-heading', '.profile-actions'],
     ['deleteTeamFileDialog', '.profile-heading', '.profile-actions'],
     ['stopDirectionsDialog', '.profile-heading', null],
+    ['recordFieldsDialog', '.profile-heading', null],
     ['cartCountsDialog', '.load-log-heading', '.cart-count-footer']
   ];
   configs.forEach(([id, headingSelector, footerSelector]) => {
@@ -5811,6 +5923,7 @@ setupLoadLog();
 workAreas = setupWorkAreas();
 setupDeliveryProfiles();
 setupPhoneDialogLayout();
+setupRecordFields();
 setupTeamFileDeletion();
 document.getElementById('closeMobileStopDetails').onclick = () => closeMobileStopDetails(true);
 document.addEventListener('keydown', event => {
@@ -6101,6 +6214,7 @@ const resetBtn = document.getElementById("resetMapBtn");
 
 if (resetBtn) {
   resetBtn.addEventListener("click", () => {
+    resetRecordFields();
     closeMobileStopDetails();
     clearViewedStop();
 

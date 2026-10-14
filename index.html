@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261014-team-delete" />
+  <link rel="stylesheet" href="style.css?v=20261014-record-fields-2" />
 
   <link rel="icon" href="favicon.ico" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -630,6 +630,16 @@
   <div class="optimo-picker-actions"><button id="cancelOptimoLocation" type="button">Cancel</button><button id="useOptimoLocation" type="button" disabled>Confirm location</button></div>
 </section>
 
+<dialog id="recordFieldsDialog" class="profile-dialog" aria-labelledby="recordFieldsTitle">
+  <div class="profile-heading"><div><span class="profile-eyebrow">RECORD DETAILS · READ ONLY</span><h2 id="recordFieldsTitle">All record fields</h2></div><button id="closeRecordFieldsBtn" type="button" autofocus>Close</button></div>
+  <p id="recordFieldsIdentity"></p>
+  <section aria-labelledby="recordFieldsCurrentTitle"><h3 id="recordFieldsCurrentTitle">Current delivery</h3><p id="recordFieldsCurrent"></p></section>
+  <h3>Original spreadsheet fields</h3>
+  <p class="profile-help">Every column from the imported file, including fields that were not mapped. These original values do not change when deliveries are saved.</p>
+  <p id="recordFieldsStatus" role="status" aria-live="polite"></p>
+  <button id="retryRecordFieldsBtn" type="button" hidden>Retry loading fields</button>
+  <dl id="recordFieldsList"></dl>
+</dialog>
 <dialog id="stopDirectionsDialog" class="profile-dialog" aria-labelledby="stopDirectionsTitle">
   <div class="profile-heading"><h2 id="stopDirectionsTitle">Get directions</h2><button id="closeStopDirectionsBtn" type="button">Close</button></div>
   <p id="stopDirectionsRecord"></p>
@@ -810,7 +820,7 @@
 </dialog>
 
 <script src="profile-field-mapping.js?v=20261012-delivery-ease" defer></script>
-<script src="app.js?v=20261014-team-delete-confirm" defer></script>
+<script src="app.js?v=20261014-record-fields-2" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">

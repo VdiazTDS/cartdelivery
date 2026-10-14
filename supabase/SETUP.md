@@ -24,7 +24,7 @@ Deletion preserves profile accounts, unrelated files and the file-independent tr
 
 The database replacement migration and updated function were deployed on October 9, 2026, after the initial memory optimization failed in production. The active function bundles only `index.ts` and `data-service.mjs`, with no Excel parser. Tests passed locally; the user's first production import still needs confirmation. Pre-deployment read-only checks found zero registered originals/copies/syncs, zero managed workbook objects, and all 37 legacy storage objects present. Tests have not changed production workbooks. Both migrations are now installed; do not reapply them.
 
-**Publish `index.html`, `app.js`, and the new `profile-import-worker.js` together**, alongside existing assets. The old frontend API is incompatible with the new backend. Refresh open phones after publication. No frontend build is needed.
+**Publish `index.html`, `app.js`, `style.css`, `profile-field-mapping.js`, `profile-import-worker.js`, and `record-fields-worker.js` together**, alongside existing assets. The old frontend API is incompatible with the new backend. Refresh open phones after publication. No frontend build is needed. The **View all fields** popup uses the existing source-download API; it requires no additional migration or Edge Function deployment.
 
 ## Deploy
 
