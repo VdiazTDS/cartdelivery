@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261013-overlapping-stops" />
+  <link rel="stylesheet" href="style.css?v=20261014-team-delete" />
 
   <link rel="icon" href="favicon.ico" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -459,9 +459,24 @@
     </div>
     <div id="savedFiles" class="file-list" role="tabpanel" aria-labelledby="cartDeliveryFilesTab"></div>
 
-    <p class="saved-files-footer">Cart Delivery is the team's shortcut list. Removing a shortcut does not delete a file or your work.</p>
+    <p class="saved-files-footer">Remove shortcut only hides a file from this tab. Signed-in profiles can delete a team Excel and everyone's associated work permanently.</p>
   </div>
 </div>
+<dialog id="deleteTeamFileDialog" class="profile-dialog" aria-labelledby="deleteTeamFileTitle" aria-describedby="deleteTeamFileWarning">
+  <div class="profile-heading"><div><span class="profile-eyebrow">AFFECTS EVERY PROFILE</span><h2 id="deleteTeamFileTitle">Delete team Excel?</h2></div></div>
+  <div class="team-delete-warning" id="deleteTeamFileWarning">
+    <strong id="deleteTeamFileName"></strong>
+    <p>This permanently deletes the following for everyone:</p>
+    <ul><li>The main Excel and its imported map records</li><li>Every profile's copy, including unsynced deliveries and notes</li><li>Delivery and sync history, saved versions, and shared work areas</li><li>Stored source spreadsheets and this file's Cart Delivery shortcut</li></ul>
+    <p><strong>This cannot be undone.</strong> Profile logins, other team files, and the shared truck/trailer load log stay. Downloads already saved outside the app cannot be removed.</p>
+  </div>
+  <p id="deleteTeamFileSummary"></p>
+  <label for="deleteTeamFileConfirm">Type <strong>Confirm</strong> to delete this file for everyone</label>
+  <input id="deleteTeamFileConfirm" type="text" autocomplete="off" autocapitalize="off" spellcheck="false">
+  <label class="profile-share-check"><input id="deleteTeamFileAcknowledged" type="checkbox">I understand that every profile loses its copy and unsynced work for this file.</label>
+  <p id="deleteTeamFileStatus" role="status" aria-live="polite"></p>
+  <div class="profile-actions"><button id="cancelDeleteTeamFileBtn" type="button">Cancel</button><button id="confirmDeleteTeamFileBtn" class="team-delete-confirm" type="button" disabled>Delete for everyone</button></div>
+</dialog>
 <dialog id="teamUploadDialog" class="profile-dialog" aria-labelledby="teamUploadTitle">
   <div class="profile-heading"><div><span class="profile-eyebrow">CART DELIVERY</span><h2 id="teamUploadTitle">Upload new team Excel</h2></div><button id="closeTeamUploadBtn" type="button">Close</button></div>
   <div id="teamUploadSetup">
@@ -795,7 +810,7 @@
 </dialog>
 
 <script src="profile-field-mapping.js?v=20261012-delivery-ease" defer></script>
-<script src="app.js?v=20261013-overlapping-stops" defer></script>
+<script src="app.js?v=20261014-team-delete-confirm" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">

@@ -40,7 +40,7 @@ Deno.serve(async req => {
     return new Response(JSON.stringify(await (body?.action?.startsWith('admin-') ? handleAdmin(body, actor) : handle(body, actor))), { headers });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'REQUEST_FAILED';
-    const known = message.match(/\b(ADMIN_REQUIRED|ADMIN_PROTECTED|PROFILE_DISABLED|PROFILE_HAS_AREAS|REMOVE_INCOMPLETE|SIGN_IN_REQUIRED|CLIENT_UPDATE_REQUIRED|STALE_VERSION|NAME_EXISTS|REQUEST_REUSED|UNRESOLVED_CONFLICT|INVALID_[A-Z_]+|FILE_NOT_FOUND|COPY_NOT_FOUND|FILE_TOO_LARGE|DUPLICATE_HEADERS|ROW_STRUCTURE_CHANGED)\b/)?.[0]
+    const known = message.match(/\b(ADMIN_REQUIRED|ADMIN_PROTECTED|PROFILE_DISABLED|PROFILE_HAS_AREAS|REMOVE_INCOMPLETE|SIGN_IN_REQUIRED|CLIENT_UPDATE_REQUIRED|STALE_VERSION|NAME_EXISTS|REQUEST_REUSED|UNRESOLVED_CONFLICT|INVALID_[A-Z_]+|FILE_DELETED|FILE_NOT_FOUND|COPY_NOT_FOUND|FILE_TOO_LARGE|DUPLICATE_HEADERS|ROW_STRUCTURE_CHANGED)\b/)?.[0]
       || (/already.*registered|already.*exists|duplicate key/i.test(message) ? 'NAME_EXISTS' : null);
     if (!known) console.error('Profile workbook request failed', message);
     return new Response(JSON.stringify({ error: known || 'REQUEST_FAILED' }), {

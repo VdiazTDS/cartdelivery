@@ -13,10 +13,11 @@ async function fixture({ legacySeed } = {}) {
   await fx.pg.exec(fs.readFileSync(require('node:path').join(__dirname, '../supabase/migrations/202610130001_profile_admin.sql'), 'utf8'));
   await fx.pg.exec(fs.readFileSync(require('node:path').join(__dirname, '../supabase/migrations/202610130002_profile_colors.sql'), 'utf8'));
   await fx.pg.exec(fs.readFileSync(require('node:path').join(__dirname, '../supabase/migrations/202610130003_sync_agreement.sql'), 'utf8'));
+  await fx.pg.exec(fs.readFileSync(require('node:path').join(__dirname, '../supabase/migrations/202610140001_team_file_deletion.sql'), 'utf8'));
   const db = { ...fx.db, rpc: async (name, args) => {
     try {
       if (name === 'cd_data_public_read') return { data: (await fx.pg.query('select public.cd_data_public_read($1) result', [args.p])).rows[0].result };
-      if (!['cd_data_call', 'cd_data_import_mapped', 'cd_work_areas_call'].includes(name)) throw new Error('Unexpected RPC');
+      if (!['cd_data_call', 'cd_data_import_mapped', 'cd_work_areas_call', 'cd_file_delete_call'].includes(name)) throw new Error('Unexpected RPC');
       if (fx.state.beforeCommit) await fx.state.beforeCommit(args);
       if (fx.state.failCommit) throw new Error('Simulated commit failure');
       const { rows } = await fx.pg.query(`select public.${name}($1,$2,$3,$4,$5) result`, [args.p_actor,args.p_username,args.p_request,args.p_hash,args.p]);
@@ -25,6 +26,23 @@ async function fixture({ legacySeed } = {}) {
     } catch (error) { return { error }; }
   }, storage: { from: bucket => ({
     ...fx.db.storage.from(bucket),
+    remove: async names => {
+      if (fx.state.failRemove) return { error: new Error('Simulated storage delete failure') };
+      for (const name of names) {
+        fx.objects.delete(`${bucket}/${name}`);
+        await fx.pg.query('delete from storage.objects where bucket_id=$1 and name=$2', [bucket, name]);
+      }
+      return { data: names };
+    },
+    download: async name => fx.objects.has(`${bucket}/${name}`) ? { data: new Blob([fx.objects.get(`${bucket}/${name}`)]) } : { error: { statusCode: 404, message: 'Missing fixture object' } },
+    upload: async (name, bytes, options) => {
+      if (bucket === 'excel-files' && name === '_cart-delivery-tab.json' && options.upsert === true) {
+        if (fx.state.failShortcutWrite) return { error: new Error('Simulated shortcut failure') };
+        fx.objects.set(`${bucket}/${name}`, new Uint8Array(await bytes.arrayBuffer()));
+        return { data: { path: name } };
+      }
+      return fx.db.storage.from(bucket).upload(name, bytes, options);
+    },
     createSignedUrl: async name => fx.objects.has(`${bucket}/${name}`) ? { data: { signedUrl: `https://fixture.invalid/${bucket}/${name}` } } : { error: new Error('Missing fixture object') },
     createSignedUploadUrl: async name => ({ data: { token: 'fixture-upload', path: name } })
   }) } };

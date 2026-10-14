@@ -5,15 +5,61 @@ export const publicActions = new Set(['public-list', 'public-original', 'public-
 
 export function createDataService(db) {
   const signed = async (bucket, path) => unwrap(await db.storage.from(bucket).createSignedUrl(path, 600)).signedUrl;
+  const deletionList = async (result, signedIn) => {
+    const jobs = [];
+    for (let offset = 0; ; offset += 500) {
+      const page = unwrap(await db.from('cd_file_deletions').select('id,name,source_key,complete').order('id').range(offset, offset + 499));
+      jobs.push(...page);
+      if (page.length < 500) break;
+    }
+    return { ...result, deletedSourceKeys: jobs.map(job => job.source_key).filter(Boolean),
+      ...(signedIn ? { deletions: jobs.filter(job => !job.complete).map(job => ({ deletionId: job.id, name: job.name, sourceKey: job.source_key, deleting: true })) } : {}) };
+  };
   return async (body, actor) => {
     if (publicActions.has(body?.action)) {
       if (body.action !== 'public-list' && !uuid(body.fileId)) throw new Error('INVALID_FILE');
       if (body.action === 'public-rows' && (body.mode !== 'original' || !Number.isSafeInteger(body.offset) || body.offset < 0 || !Number.isSafeInteger(body.masterRevision))) throw new Error('INVALID_PUBLIC_VIEW');
       const result = unwrap(await db.rpc('cd_data_public_read', { p: body }));
+      if (body.action === 'public-list') return deletionList(result, false);
       if (result.sourceBucket) return { url: await signed(result.sourceBucket, result.sourcePath) };
       return result;
     }
     if (!actor?.id || !/^[a-z0-9][a-z0-9_-]{2,29}@profiles\.cartdelivery\.invalid$/.test(actor.email || '')) throw new Error('SIGN_IN_REQUIRED');
+    if (['delete-preview', 'delete-team-file'].includes(body?.action)) {
+      if (body.fileId ? !uuid(body.fileId) : body.deletionId ? !uuid(body.deletionId)
+        : typeof body.sourceKey !== 'string' || body.sourceKey.length > 180 || /[\/\\\x00-\x1f]/.test(body.sourceKey) || !/\.(xlsx|xls|csv)$/i.test(body.sourceKey)) throw new Error('INVALID_FILE');
+      if (body.sourceObjectId != null && !uuid(body.sourceObjectId)) throw new Error('INVALID_FILE');
+      const deleting = body.action === 'delete-team-file';
+      if (deleting && (!uuid(body.requestId) || typeof body.confirmName !== 'string' || body.confirmation !== 'Confirm' || body.acknowledged !== true)) throw new Error('INVALID_DELETE_CONFIRMATION');
+      const rpc = action => db.rpc('cd_file_delete_call', { p_actor: actor.id, p_username: actor.email.split('@')[0],
+        p_request: body.requestId || null, p_hash: null, p: { ...body, action } }).then(unwrap);
+      const job = await rpc(deleting ? 'delete-start' : 'delete-preview');
+      if (deleting && !job.deleted) {
+        try {
+          for (const bucket of ['excel-files', 'profile-workbooks']) {
+            const paths = job.objects.filter(object => object.bucket === bucket).map(object => object.path);
+            for (let offset = 0; offset < paths.length; offset += 100) unwrap(await db.storage.from(bucket).remove(paths.slice(offset, offset + 100)));
+          }
+          const bucket = db.storage.from('excel-files');
+          const shared = await bucket.download('_cart-delivery-tab.json');
+          if (shared.error && ![400, 404].includes(Number(shared.error.statusCode || shared.error.status))) throw shared.error;
+          if (shared.data) {
+            const names = JSON.parse(await shared.data.text());
+            if (!Array.isArray(names)) throw new Error('Invalid shortcut list');
+            const filtered = names.filter(name => name !== job.name && name !== job.sourceKey);
+            if (filtered.length !== names.length) unwrap(await bucket.upload('_cart-delivery-tab.json',
+              new Blob([JSON.stringify(filtered)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' }));
+          }
+          Object.assign(job, unwrap(await db.rpc('cd_file_delete_call', { p_actor: actor.id, p_username: actor.email.split('@')[0],
+            p_request: body.requestId, p_hash: null, p: { action: 'delete-finish', deletionId: job.deletionId, confirmName: job.name, confirmation: 'Confirm', acknowledged: true } })));
+        } catch {
+          // Records are already gone. Keep the tombstone visible so any profile can retry.
+          job.deleted = false;
+        }
+      }
+      delete job.objects;
+      return job;
+    }
     if (!body || !actions.has(body.action)) throw new Error('CLIENT_UPDATE_REQUIRED');
     const mutating = ['import-start', 'import-batch', 'import-finish', 'open', 'save', 'sync', 'work-areas-save'].includes(body.action);
     if (mutating && !uuid(body.requestId)) throw new Error('INVALID_REQUEST_ID');
@@ -43,6 +89,7 @@ export function createDataService(db) {
     const result = unwrap(await db.rpc(rpc, {
       p_actor: actor.id, p_username: actor.email.split('@')[0], p_request: mutating ? body.requestId : null, p_hash: hash, p: input
     }));
+    if (body.action === 'list') return deletionList(result, true);
     if (result.sourceBucket) {
       if (body.action === 'import-start' && !body.sourceKey && !result.ready) {
         // A signed ticket permits only a new immutable object, never overwriting one.

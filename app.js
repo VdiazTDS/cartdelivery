@@ -667,6 +667,8 @@ function lastSyncSummary() {
 const profileUsername = user => user?.email?.split("@")[0] || "";
 function profileMessage(error) {
   const code = error?.message || String(error);
+  if (/FILE_DELETED|FILE_NOT_FOUND/.test(code)) return 'This team file is no longer available. It may have been deleted along with all profile copies. Choose another file.';
+  if (code.includes('INVALID_DELETE_CONFIRMATION')) return 'Type Confirm and acknowledge that everyone’s work for this file will be deleted.';
   if (code.includes('MAPPING_SETUP_REQUIRED')) return 'Column mapping needs a server update before this file can be uploaded. Ask the app administrator to finish the update.';
   if (code.includes('INVALID_MAPPING')) return 'Check your column matches. Latitude and longitude need separate columns, and each column can only be used once.';
   if (code.includes('INVALID_HEADERS')) return 'Use column names under 200 characters and avoid reserved names such as __rowNum__, constructor or prototype.';
@@ -705,7 +707,10 @@ async function profileApi(body) {
       if (response.status === 546) throw new Error("WORKER_RESOURCE_LIMIT");
       if (response.status >= 500 && !attempt) continue;
       const result = await response.json();
-      if (!response.ok || result.error) throw new Error(result.error || "REQUEST_FAILED");
+      if (!response.ok || result.error) {
+        if (generation === profileState.generation && /^(FILE_DELETED|FILE_NOT_FOUND)$/.test(result.error) && body.fileId) forgetDeletedTeamFile({ fileIds: [body.fileId] });
+        throw new Error(result.error || "REQUEST_FAILED");
+      }
       if (generation !== profileState.generation) throw new Error("SIGN_IN_REQUIRED");
       return result;
     } catch (error) {
@@ -792,7 +797,7 @@ function renderRouteContext() {
 }
 function setupRouteContext() {
   const template = profileElement("routeContext");
-  document.querySelectorAll("dialog:not(#pocketLock):not(#teamUploadDialog):not(#cartCountsDialog):not(#workAreasDialog):not(#adminDialog):not(#helpDialog):not(#stopDirectionsDialog), .modal-content").forEach(container => {
+  document.querySelectorAll("dialog:not(#pocketLock):not(#teamUploadDialog):not(#deleteTeamFileDialog):not(#cartCountsDialog):not(#workAreasDialog):not(#adminDialog):not(#helpDialog):not(#stopDirectionsDialog), .modal-content").forEach(container => {
     const banner = template.cloneNode(true);
     banner.removeAttribute("id"); banner.removeAttribute("role");
     container.prepend(banner);
@@ -1031,9 +1036,10 @@ async function listProfileFiles() {
       if (data.length < 100) break;
     }
     if (generation !== profileState.generation) return;
-    const files = [...managed.files];
-    legacy.forEach(file => { if (!files.some(f => f.sourceKey === file.name || f.name === file.name)) files.push({ name: file.name, sourceKey: file.name }); });
-    const visible = files.filter(file => activeSavedFilesTab === "all" || cartDeliveryFileNames.has(file.sourceKey || file.name));
+    const files = [...managed.files, ...(managed.deletions || [])];
+    const removedSources = new Set(managed.deletedSourceKeys || []);
+    legacy.forEach(file => { if (!removedSources.has(file.name) && !files.some(f => f.sourceKey === file.name || f.name === file.name)) files.push({ name: file.name, sourceKey: file.name }); });
+    const visible = files.filter(file => file.deleting || activeSavedFilesTab === "all" || cartDeliveryFileNames.has(file.sourceKey || file.name));
     list.replaceChildren();
     if (!visible.length) { message.textContent = activeSavedFilesTab === "all" ? "No team Excel files yet. Upload a route file from the menu to get started." : "No shortcuts yet. Choose All Files to find a team Excel and open your copy."; list.append(message); }
     visible.forEach(file => {
@@ -1043,6 +1049,11 @@ async function listProfileFiles() {
       const name = document.createElement("span"); name.className = "saved-file-name"; name.textContent = file.name;
       heading.append(icon, name);
       const detail = document.createElement("p"); detail.className = "profile-file-detail";
+      if (file.deleting) {
+        detail.textContent = 'Team records and profile copies have been deleted. Stored file cleanup still needs to finish.';
+        const retry = document.createElement('button'); retry.className = 'saved-file-delete-btn'; retry.textContent = 'Finish deletion'; retry.onclick = () => showDeleteTeamFile(file);
+        card.append(heading, detail, retry); list.append(card); return;
+      }
       detail.textContent = !profileState.user ? "View the team Excel without signing in. Sign in to work in your own copy." : file.copyId ? file.pending ? `Saved to your account · ${file.pending} ${file.pending === 1 ? "change" : "changes"} waiting to sync` : "Your saved copy is ready to reopen on this device." : "Start your own copy. Your delivery saves stay separate until you sync them.";
       const open = document.createElement("button"); open.className = "saved-file-btn"; open.textContent = !profileState.user ? "View team Excel (read only)" : file.copyId ? "Continue my work" : "Start my own copy";
       open.onclick = () => openProfileFile(file, profileState.user ? "copy" : "original");
@@ -1057,11 +1068,121 @@ async function listProfileFiles() {
         try { await saveCartDeliveryFileNames(); } catch (error) { cartDeliveryFileNames = before; alert(profileMessage(error)); }
         await listFiles();
       };
-      if (profileState.user) actions.append(original, organize);
+      if (profileState.user) {
+        actions.append(original, organize);
+        if (activeSavedFilesTab === 'cartDelivery') {
+          const remove = document.createElement('button'); remove.className = 'saved-file-delete-btn'; remove.textContent = 'Delete team Excel for everyone';
+          remove.onclick = () => showDeleteTeamFile(file); actions.append(remove);
+        }
+      }
       else { const signIn = document.createElement("button"); signIn.textContent = "Sign in to make changes in my copy"; signIn.onclick = requireProfile; actions.append(signIn); }
       card.append(heading, detail, open, actions); list.append(card);
     });
   } catch (error) { message.textContent = profileMessage(error); list.replaceChildren(message); }
+}
+let teamFileDeletion = null;
+function forgetDeletedTeamFile(file) {
+  const ids = new Set(file.fileIds || []);
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (!key.startsWith('cartdelivery.resume.')) continue;
+      try { const view = JSON.parse(localStorage.getItem(key)); if (ids.has(view?.fileId) || (file.sourceKey && view?.sourceKey === file.sourceKey)) localStorage.removeItem(key); } catch { /* Device cache only. */ }
+    }
+  } catch { /* Device storage may be unavailable. */ }
+  const workspace = profileState.workspace;
+  if (!workspace || !(ids.has(workspace.fileId) || (file.sourceKey && workspace.sourceKey === file.sourceKey))) return;
+  try { if (phoneSequenceKey) localStorage.removeItem(phoneSequenceKey); } catch { /* Device cache only. */ }
+  deliveryFeedback.clear();
+  profileState.workspace = null; profileState.preview = null; profileState.syncRequest = null; profileState.shareConfirmation = null;
+  profileElement('resetMapBtn').click();
+  window._currentRows = null; window._currentWorkbook = null; window._currentFilePath = null;
+  ['profileSyncDialog', 'profileShareDialog', 'profileHistoryDialog', 'cartCountsDialog'].forEach(id => profileElement(id)?.close());
+  updateSelectionCount(); updateUndoButtonState(); renderProfileState();
+}
+function renderTeamFileDeletion() {
+  const state = teamFileDeletion;
+  const busy = Boolean(state?.busy);
+  profileElement('deleteTeamFileDialog').setAttribute('aria-busy', String(busy));
+  profileElement('cancelDeleteTeamFileBtn').disabled = busy;
+  profileElement('cancelDeleteTeamFileBtn').textContent = state?.started || state?.request ? 'Close' : 'Cancel';
+  profileElement('deleteTeamFileConfirm').disabled = busy;
+  profileElement('deleteTeamFileAcknowledged').disabled = busy;
+  const confirm = profileElement('confirmDeleteTeamFileBtn');
+  confirm.textContent = busy ? 'Please wait…' : state?.started ? 'Finish deletion' : state?.request ? 'Retry deletion' : 'Delete for everyone';
+  confirm.disabled = busy || !state?.preview || !profileState.user || profileElement('deleteTeamFileConfirm').value !== 'Confirm' || !profileElement('deleteTeamFileAcknowledged').checked;
+}
+async function showDeleteTeamFile(file) {
+  if (!profileState.user) return requireProfile();
+  if (profileState.busy || deliverySaveInProgress || resequenceBusy) return;
+  const state = teamFileDeletion = { busy: true, generation: profileState.generation, started: Boolean(file.deleting) };
+  profileElement('deleteTeamFileName').textContent = file.name;
+  profileElement('deleteTeamFileConfirm').value = '';
+  profileElement('deleteTeamFileAcknowledged').checked = false;
+  profileElement('deleteTeamFileSummary').textContent = '';
+  profileElement('deleteTeamFileStatus').textContent = 'Checking this team file…';
+  renderTeamFileDeletion(); profileElement('deleteTeamFileDialog').showModal();
+  try {
+    const target = file.deletionId ? { deletionId: file.deletionId } : file.fileId ? { fileId: file.fileId } : { sourceKey: file.sourceKey };
+    const preview = await profileApi({ action: 'delete-preview', ...target });
+    if (state !== teamFileDeletion) return;
+    state.preview = preview; state.started = Boolean(preview.deleting);
+    profileElement('deleteTeamFileName').textContent = preview.name;
+    profileElement('deleteTeamFileSummary').textContent = preview.deleting ? 'Deletion has already started. Finish removing stored files; the deleted work cannot be restored.'
+      : `${preview.rowCount} ${preview.rowCount === 1 ? 'record' : 'records'} · ${preview.copyCount} profile ${preview.copyCount === 1 ? 'copy' : 'copies'} · ${preview.pendingCount} unsynced stop ${preview.pendingCount === 1 ? 'change' : 'changes'} · ${preview.historyCount} sync ${preview.historyCount === 1 ? 'event' : 'events'} · ${preview.areaCount} work ${preview.areaCount === 1 ? 'area' : 'areas'}. Includes any work saved before you confirm.`;
+    profileElement('deleteTeamFileStatus').textContent = '';
+  } catch (error) { if (state === teamFileDeletion) profileElement('deleteTeamFileStatus').textContent = profileMessage(error); }
+  finally { if (state === teamFileDeletion) { state.busy = false; renderTeamFileDeletion(); } }
+}
+function setupTeamFileDeletion() {
+  ['deleteTeamFileConfirm', 'deleteTeamFileAcknowledged'].forEach(id => profileElement(id).addEventListener('input', renderTeamFileDeletion));
+  const close = () => { if (!teamFileDeletion?.busy) { teamFileDeletion = null; profileElement('deleteTeamFileDialog').close(); listFiles(); } };
+  profileElement('cancelDeleteTeamFileBtn').onclick = close;
+  profileElement('deleteTeamFileDialog').addEventListener('cancel', event => { event.preventDefault(); close(); });
+  profileElement('confirmDeleteTeamFileBtn').onclick = async () => {
+    const state = teamFileDeletion;
+    if (!state?.preview || state.busy || profileElement('confirmDeleteTeamFileBtn').disabled || state.generation !== profileState.generation) return;
+    state.busy = true; profileState.busy = true; renderProfileState(); renderTeamFileDeletion();
+    profileElement('deleteTeamFileStatus').textContent = 'Deleting for everyone. Keep this screen open…';
+    const p = state.preview;
+    state.request ||= { action: 'delete-team-file', requestId: crypto.randomUUID(), confirmName: p.name, confirmation: profileElement('deleteTeamFileConfirm').value, acknowledged: true,
+      ...(p.deletionId ? { deletionId: p.deletionId } : p.fileId ? { fileId: p.fileId } : { sourceKey: p.sourceKey, sourceObjectId: p.sourceObjectId }) };
+    try {
+      const result = await profileApi(state.request);
+      if (state !== teamFileDeletion) return;
+      state.started = true;
+      forgetDeletedTeamFile(result);
+      if (!result.deleted) {
+        profileElement('deleteTeamFileStatus').textContent = 'The records and every profile’s copy are deleted. Stored file cleanup is not complete. Check your connection, then tap Finish deletion. You can also finish later from Cart Delivery.';
+        return;
+      }
+      cartDeliveryFileNames.delete(result.sourceKey || result.name);
+      try { localStorage.setItem(CART_DELIVERY_FILES_KEY, JSON.stringify([...cartDeliveryFileNames])); } catch { /* Device cache only. */ }
+      profileElement('deleteTeamFileDialog').close(); teamFileDeletion = null;
+      await listFiles();
+    } catch (error) {
+      if (state === teamFileDeletion) profileElement('deleteTeamFileStatus').textContent = `Deletion could not be confirmed. It may already have started. Retry to check and finish the same deletion. ${profileMessage(error)}`;
+    } finally {
+      profileState.busy = false;
+      if (state === teamFileDeletion) { state.busy = false; renderTeamFileDeletion(); }
+      renderProfileState();
+    }
+  };
+  const checkCurrent = async () => {
+    const workspace = profileState.workspace;
+    if (!workspace || document.hidden || profileState.busy || deliverySaveInProgress) return;
+    try {
+      if (workspace.fileId) await profileApi({ action: 'public-original', fileId: workspace.fileId });
+      else if (workspace.sourceKey) {
+        const list = await profileApi({ action: 'public-list' });
+        if (list.deletedSourceKeys?.includes(workspace.sourceKey)) forgetDeletedTeamFile({ sourceKey: workspace.sourceKey });
+      }
+    } catch { /* Offline views stay until deletion is confirmed. */ }
+  };
+  window.addEventListener('focus', checkCurrent);
+  window.addEventListener('online', checkCurrent);
+  document.addEventListener('visibilitychange', checkCurrent);
+  setInterval(checkCurrent, 60000);
 }
 function profileCountText(row) {
   return `${deliveredCartCount(row)} of ${cartTotal(row) ?? "?"} carts delivered${row.delivery_notes ? ` · ${row.delivery_notes}` : ""}`;
@@ -1655,6 +1776,7 @@ function setupDeliveryProfiles() {
     setTimeout(() => {
       const user = session?.user || null;
       if (profileState.user?.id !== user?.id) {
+        teamFileDeletion = null; profileElement('deleteTeamFileDialog').close();
         teamUploadState.result = null; teamUploadState.added = false;
         if (profileState.user) {
           resetTeamMapping();
@@ -5619,6 +5741,7 @@ function setupPhoneDialogLayout() {
     ['profileShareDialog', '.profile-heading', '.profile-actions'],
     ['profileHistoryDialog', '.profile-heading', '#moreProfileHistoryBtn'],
     ['teamUploadDialog', '.profile-heading', '.profile-actions'],
+    ['deleteTeamFileDialog', '.profile-heading', '.profile-actions'],
     ['stopDirectionsDialog', '.profile-heading', null],
     ['cartCountsDialog', '.load-log-heading', '.cart-count-footer']
   ];
@@ -5688,6 +5811,7 @@ setupLoadLog();
 workAreas = setupWorkAreas();
 setupDeliveryProfiles();
 setupPhoneDialogLayout();
+setupTeamFileDeletion();
 document.getElementById('closeMobileStopDetails').onclick = () => closeMobileStopDetails(true);
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && mobileStopMarker && !document.querySelector('dialog[open]')) closeMobileStopDetails(true);
