@@ -3449,7 +3449,16 @@ header p {
 }
 .mobile-stop-choice { box-sizing: border-box; overflow-wrap: anywhere; }
 :is(.mobile-stop-choice, #mobileStopPickerClose):focus-visible { outline: 3px solid #e6ad22; outline-offset: -3px; }
-body .choose-overlapping-stop, body .select-overlapping-stop { min-height: 44px; padding: 8px 10px; border: 1px solid #873bdb; border-radius: 8px; background: #f4eaff; color: #59218e; font: 600 13px/1.4 system-ui, sans-serif; cursor: pointer; }
+body .select-overlapping-stop { min-height: 44px; padding: 8px 10px; border: 1px solid #873bdb; border-radius: 8px; background: #f4eaff; color: #59218e; font: 600 13px/1.4 system-ui, sans-serif; cursor: pointer; }
+body #browseMapRecordsBtn, body .choose-overlapping-stop {
+  box-sizing: border-box; width: 100%; min-height: 48px; padding: 10px 12px;
+  border: 2px solid #ff9dd4; border-radius: 10px;
+  background: #ff1493; color: #210013; font: 800 14px/1.4 system-ui, sans-serif;
+  cursor: pointer; touch-action: manipulation;
+}
+body #browseMapRecordsBtn { margin: 0 0 8px; }
+body :is(#browseMapRecordsBtn, .choose-overlapping-stop):hover { background: #ff4eae; }
+body :is(#browseMapRecordsBtn, .choose-overlapping-stop):focus-visible { outline: 3px solid #fff; outline-offset: -5px; }
 body.sun-mode .mobile-stop-choice-state { color: #205c99; }
 
 /* Delivery actions share the same count and cloud-save feedback on all screens. */
