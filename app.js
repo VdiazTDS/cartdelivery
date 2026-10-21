@@ -2911,6 +2911,19 @@ function formatStopAddress(row) {
   ].join(" ").replace(/\s+/g, " ").trim() || "Address not available";
 }
 
+function formatStopNames(row) {
+  const service = String(row.CSNAME ?? '').trim(), billing = String(row.CBNAME ?? '').trim();
+  if (service && service === billing) return `CSNAME / CBNAME: ${service}`;
+  return [service && `CSNAME: ${service}`, billing && `CBNAME: ${billing}`].filter(Boolean).join('\n');
+}
+
+function stopCustomerNames(row) {
+  const names = document.createElement('div');
+  names.className = 'stop-customer-names'; names.textContent = formatStopNames(row);
+  names.hidden = !names.textContent;
+  return names;
+}
+
 const ADDRESS_SEARCH_ALIASES = {
   n: "north", s: "south", e: "east", w: "west", ne: "northeast", nw: "northwest", se: "southeast", sw: "southwest",
   st: "street", rd: "road", dr: "drive", ave: "avenue", av: "avenue", blvd: "boulevard", ln: "lane", ct: "court",
@@ -2988,7 +3001,6 @@ function showNearbyStopPicker(stops, mode = 'select') {
   const list = document.getElementById("mobileStopPickerList");
   const message = document.getElementById("mobileStopPickerMessage");
   list.replaceChildren();
-  list.scrollTop = 0;
   picker.dataset.mode = mode;
   message.textContent = mode === 'browse' ? (stops.length
     ? `${stops.length} records in this map area, nearest the center first. Choose one, then View all fields. Zoom in for a shorter list.`
@@ -3028,7 +3040,7 @@ function showNearbyStopPicker(stops, mode = 'select') {
     const progress = document.createElement("span");
     progress.className = "mobile-stop-choice-detail";
     progress.textContent = cartProgressText(row);
-    button.append(address, binNumber, detail, progress, selectionState);
+    button.append(address, stopCustomerNames(row), binNumber, detail, progress, selectionState);
     button.addEventListener("click", () => {
       picker.hidden = true;
       if (!window._currentRows?.includes(row) || !map.hasLayer(marker)) return;
@@ -3065,6 +3077,7 @@ function showNearbyStopPicker(stops, mode = 'select') {
   renderPage();
 
   picker.hidden = false;
+  list.scrollTop = 0;
   (list.querySelector('button') || document.getElementById('mobileStopPickerClose')).focus({ preventScroll: true });
 }
 
@@ -4944,7 +4957,10 @@ function showRecordFields(row, trigger) {
   const dialog = document.getElementById('recordFieldsDialog');
   const view = recordFieldsView = { row, trigger };
   const workspace = profileState.workspace;
-  document.getElementById('recordFieldsIdentity').textContent = `${formatStopAddress(row) || 'Address not available'} · Bin ${row.BINNO ?? 'Not provided'}\n${workspace?.name || window._currentFilePath || ''}`;
+  document.getElementById('recordFieldsIdentity').textContent = [
+    `${formatStopAddress(row) || 'Address not available'} · Bin ${row.BINNO ?? 'Not provided'}`,
+    formatStopNames(row), workspace?.name || window._currentFilePath || ''
+  ].filter(Boolean).join('\n');
   document.getElementById('recordFieldsCurrent').textContent = `${workspace?.mode === 'copy' ? `Your copy · ${profileUsername(profileState.user)}` : 'Team view'}\n${profileCountText(row)}\nRoute ${rowRoute(row) ?? 'Not provided'} · ${dayName(Number(rowDay(row))) || 'Day not provided'}`;
   if (!dialog.open) dialog.showModal();
   loadRecordFields(view);
@@ -5068,6 +5084,7 @@ function deliveryStopCard(row, marker = null) {
     const node = document.createElement(tag); node.textContent = text; node.className = className; card.append(node); return node;
   };
   card.append(stopDirectionsAddressLink(row));
+  card.append(stopCustomerNames(row));
   line('div', `Bin #: ${String(row.BINNO ?? '').trim() || 'Not provided'}`, 'delivery-stop-bin');
   const total = cartTotal(row), delivered = deliveredCartCount(row);
   const remaining = total === null ? null : Math.max(0, total - delivered);
@@ -7168,6 +7185,7 @@ resetAddressSearch = () => {
 function searchStopPopup(row) {
   const popup = document.createElement("div");
   popup.append(stopDirectionsAddressLink(row));
+  popup.append(stopCustomerNames(row));
   const delivered = isDeliveredRow(row);
   const details = [`Route ${rowRoute(row)} · ${dayName(Number(rowDay(row))) || `Day ${rowDay(row)}`}`,
     delivered ? "Delivered" : "Pending", cartProgressText(row), `Quantity: ${row.QTY ?? "—"}`, `Container size: ${row.SIZE ?? "—"}`];
@@ -7266,7 +7284,7 @@ function renderAddressSearch() {
     const progress = document.createElement("span");
     progress.className = "search-result-detail";
     progress.textContent = cartProgressText(row);
-    button.append(title, detail, state, progress);
+    button.append(title, stopCustomerNames(row), detail, state, progress);
     button.addEventListener("click", () => showSearchStop(marker));
     resultsList.append(button);
   });

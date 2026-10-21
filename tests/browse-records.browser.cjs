@@ -39,7 +39,7 @@ const server = http.createServer((req, res) => {
         window.loadBrowseFixture = () => {
           const rows = Array.from({ length: 55 }, (_, i) => ({ LATITUDE: 30.75, LONGITUDE: -98.23,
             ROUTE: 'A', DAY: 1, NEWROUTE: 'Wrong', NEWDAY: 7, QTY: 2, BINNO: `BIN-${i + 1}`,
-            'CSADR#': 100, CSSTRT: 'Oak', 'Unique field': `Customer ${i + 1}` }));
+            'CSADR#': 100, CSSTRT: 'Oak', CSNAME: `Service customer ${i + 1}`, CBNAME: i === 1 ? '' : `Billing customer ${i + 1}`, 'Unique field': `Customer ${i + 1}` }));
           rows.push({ ...rows[0], LATITUDE: 31.75, BINNO: 'OFFSCREEN' });
           rows.push({ ...rows[0], BINNO: 'HIDDEN', del_status: 'Delivered' });
           const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Stops');
@@ -60,6 +60,7 @@ const server = http.createServer((req, res) => {
         await browse.click();
         assert.match(await page.locator('#mobileStopPickerMessage').textContent(), /^55 records/);
         assert.equal(await page.locator('.mobile-stop-choice-bin').count(), 50);
+        assert.match(await page.locator('.mobile-stop-choice .stop-customer-names').first().textContent(), /CSNAME: Service customer 1\nCBNAME: Billing customer 1/);
         assert.match(await page.locator('.mobile-stop-choice-detail').first().textContent(), /Route A.*Monday/);
         assert.equal(await page.locator('#mobileStopPickerList').getByText('Bin #: OFFSCREEN', { exact: true }).count(), 0);
         assert.equal(await page.locator('#mobileStopPickerList').getByText('Bin #: HIDDEN', { exact: true }).count(), 0);
@@ -75,6 +76,7 @@ const server = http.createServer((req, res) => {
         await page.locator('.mobile-stop-choice').filter({ has: page.getByText('Bin #: BIN-55', { exact: true }) }).click();
         await page.waitForFunction(selector => document.querySelectorAll(selector).length === 1, `${card} .record-fields-button`);
         assert.match(await page.locator(`${card} .delivery-stop-bin`).textContent(), /BIN-55/);
+        assert.match(await page.locator(`${card} .stop-customer-names`).textContent(), /CSNAME: Service customer 55\nCBNAME: Billing customer 55/);
         await page.locator(`${card} .record-fields-button`).click();
         await page.waitForFunction(() => document.querySelector('#recordFieldsList').textContent.includes('Customer 55'));
         assert.match(await page.locator('#recordFieldsIdentity').textContent(), /BIN-55/);
@@ -83,6 +85,7 @@ const server = http.createServer((req, res) => {
         assert.match(await page.locator('#mobileStopPickerMessage').textContent(), /^55 records/);
         await page.locator('.mobile-stop-choice').filter({ has: page.getByText('Bin #: BIN-2', { exact: true }) }).click();
         await page.waitForFunction(selector => document.querySelectorAll(selector).length === 1, `${card} .record-fields-button`);
+        assert.equal(await page.locator(`${card} .stop-customer-names`).textContent(), 'CSNAME: Service customer 2');
         await page.locator(`${card} .record-fields-button`).click();
         await page.waitForFunction(() => document.querySelector('#recordFieldsList').textContent.includes('Customer 2'));
         assert.match(await page.locator('#recordFieldsIdentity').textContent(), /BIN-2/);

@@ -5223,6 +5223,8 @@ a.delivery-stop-address:focus-visible { outline: 3px solid #3688dc; outline-offs
 .delivery-stop-card summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; font-size: 12px; text-decoration: underline; }
 .delivery-stop-card details > div { font-size: 12px; }
 .delivery-stop-card .record-fields-button { min-height: 44px; width: 100%; margin: 0; padding: 10px 12px; border: 1px solid #8198ae; border-radius: 9px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+.stop-customer-names { white-space: pre-wrap; overflow-wrap: anywhere; font: 600 13px/1.4 system-ui, sans-serif; }
+.stop-customer-names[hidden] { display: none !important; }
 .sequence-stop-nav { padding: 0 0 8px; border-bottom: 1px solid #8198ae; }
 .sequence-stop-nav[hidden] { display: none; }
 .sequence-stop-label { margin-bottom: 5px; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
@@ -5775,7 +5777,8 @@ body header #reviewSaveStatusBtn:focus-visible { outline: 3px solid #e6ad22; out
   #mobileStopDetails .delivery-stop-remaining { color: #8be2b2; }
   body.sun-mode #mobileStopDetails .delivery-stop-remaining { color: #176946; }
   #mobileStopDetails.sequence-browsing:not(.sequence-expanded) .delivery-stop-card { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; }
-  #mobileStopDetails.sequence-browsing:not(.sequence-expanded) .delivery-stop-card > :not(.sequence-stop-nav):not(.delivery-stop-address):not(.delivery-stop-bin):not(.delivery-stop-remaining) { display: none; }
+  #mobileStopDetails.sequence-browsing:not(.sequence-expanded) .delivery-stop-card > :not(.sequence-stop-nav):not(.delivery-stop-address):not(.stop-customer-names):not(.delivery-stop-bin):not(.delivery-stop-remaining) { display: none; }
+  #mobileStopDetails.sequence-browsing:not(.sequence-expanded) .stop-customer-names { grid-column: 1 / -1; }
   #mobileStopDetails.sequence-browsing:not(.sequence-expanded) :is(.sequence-stop-nav, .delivery-stop-address) { grid-column: 1 / -1; }
   #mobileStopDetails.sequence-browsing:not(.sequence-expanded) .sequence-stop-nav { padding-bottom: 4px; }
   #mobileStopDetails.sequence-browsing:not(.sequence-expanded) .delivery-stop-address { font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
