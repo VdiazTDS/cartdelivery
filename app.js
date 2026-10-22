@@ -236,7 +236,7 @@ function locateUser() {
       const lon = pos.coords.longitude;
 
       // Center map on user
-      map.setView([lat, lon], 14);
+      map.panTo([lat, lon], { animate: false });
     },
     err => {
       console.warn("Location permission denied or unavailable");
@@ -289,7 +289,7 @@ watchId = navigator.geolocation.watchPosition(
     }
 
     // Smooth follow
-    if (!optimoLocationPicker && !workAreas?.mapActive) map.flyTo(latlng, Math.max(map.getZoom(), 16), { duration: 1.2 });
+    if (!optimoLocationPicker && !workAreas?.mapActive) map.panTo(latlng, { animate: false });
 
    
 
