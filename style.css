@@ -5888,3 +5888,39 @@ body.sun-mode header .header-workspace > #routeContext[data-mode="copy"] strong 
   }
   body header #reviewSaveStatusBtn:not(:disabled)::after { line-height: 16px; }
 }
+
+
+/* Compact map-record browser: keep the map visible while scrolling records. */
+@media (max-width: 900px) {
+  .mobile-stop-picker[data-mode="browse"],
+  .mobile-stop-picker[data-mode="selected-browse"] {
+    max-height: min(25dvh, 260px, calc(100dvh - var(--mobile-header-height, 60px) - var(--mobile-controls-height, 120px) - 24px));
+  }
+  .mobile-stop-picker[data-mode="browse"] .mobile-stop-picker-header,
+  .mobile-stop-picker[data-mode="selected-browse"] .mobile-stop-picker-header {
+    flex-shrink: 0;
+    align-items: center;
+    padding: 7px 12px;
+  }
+  .mobile-stop-picker[data-mode="browse"] .mobile-stop-picker-list,
+  .mobile-stop-picker[data-mode="selected-browse"] .mobile-stop-picker-list {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 4px 9px 7px;
+    touch-action: pan-y;
+  }
+  .mobile-stop-picker[data-mode="browse"] .mobile-stop-choice,
+  .mobile-stop-picker[data-mode="selected-browse"] .mobile-stop-choice {
+    min-height: 56px;
+    gap: 2px;
+    padding: 7px 10px;
+    margin: 3px 0;
+  }
+  .mobile-stop-picker[data-mode="browse"] .mobile-stop-choice-bin,
+  .mobile-stop-picker[data-mode="selected-browse"] .mobile-stop-choice-bin,
+  .mobile-stop-picker[data-mode="browse"] .mobile-stop-choice > .mobile-stop-choice-detail:last-of-type,
+  .mobile-stop-picker[data-mode="selected-browse"] .mobile-stop-choice > .mobile-stop-choice-detail:last-of-type {
+    display: none;
+  }
+}
