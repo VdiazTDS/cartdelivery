@@ -2994,14 +2994,19 @@ function browseChoicesForStop(marker) {
 
 function browseMapRecords() {
   const bounds = map.getBounds(), center = map.latLngToContainerPoint(map.getCenter());
-  mapBrowseStops = [];
+  const selectionTester = createSelectionTester();
+  const visibleStops = [];
+  const selectedStops = [];
   Object.entries(routeDayGroups).forEach(([key, group]) => group.layers.forEach(marker => {
     const latlng = getLayerLatLng(marker);
-    if (!map.hasLayer(marker) || !latlng || !bounds.contains(latlng)) return;
-    mapBrowseStops.push({ marker, key, distance: center.distanceTo(map.latLngToContainerPoint(latlng)) });
+    if (!map.hasLayer(marker) || !latlng) return;
+    const stop = { marker, key, distance: center.distanceTo(map.latLngToContainerPoint(latlng)) };
+    if (isStopSelected(marker, selectionTester)) selectedStops.push(stop);
+    if (bounds.contains(latlng)) visibleStops.push(stop);
   }));
+  mapBrowseStops = selectedStops.length ? selectedStops : visibleStops;
   mapBrowseStops.sort((a, b) => a.distance - b.distance);
-  showNearbyStopPicker(mapBrowseStops, 'browse');
+  showNearbyStopPicker(mapBrowseStops, selectedStops.length ? 'selected-browse' : 'browse');
 }
 
 function showNearbyStopPicker(stops, mode = 'select') {
@@ -3013,7 +3018,9 @@ function showNearbyStopPicker(stops, mode = 'select') {
   const message = document.getElementById("mobileStopPickerMessage");
   list.replaceChildren();
   picker.dataset.mode = mode;
-  message.textContent = mode === 'browse' ? (stops.length
+  message.textContent = mode === 'selected-browse'
+    ? `${stops.length} selected records. Choose one to view all fields.`
+    : mode === 'browse' ? (stops.length
     ? `${stops.length} records in this map area, nearest the center first. Choose one, then View all fields. Zoom in for a shorter list.`
     : 'No records in this map area. Open a file, check Map filters, or move the map, then tap Browse map records again.')
     : viewing ? `${stops.length} overlapping map records. Choose a record to view; this does not select it for delivery.`
