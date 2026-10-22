@@ -2986,6 +2986,7 @@ function overlappingStops(marker) {
 }
 
 let mapBrowseStops = [];
+let selectedBrowseNavigation = null; // Snapshot of selected records opened from the pink browser.
 
 function browseChoicesForStop(marker) {
   const stops = mapBrowseStops.filter(stop => map.hasLayer(stop.marker));
@@ -3067,6 +3068,7 @@ function showNearbyStopPicker(stops, mode = 'select') {
       picker.hidden = true;
       if (!window._currentRows?.includes(row) || !map.hasLayer(marker)) return;
       if (viewing) {
+        selectedBrowseNavigation = mode === 'selected-browse' ? stops.map(stop => stop.marker).filter(m => map.hasLayer(m)) : null;
         if (window.innerWidth <= 900) openMobileStopDetails(marker);
         else marker.openPopup();
         return;
@@ -3964,6 +3966,23 @@ function sequenceNavigationState(row, stops) {
 }
 
 function updateSequenceStopNavigation(nav, stops) {
+  const selectedIndex = selectedBrowseNavigation?.findIndex(marker => marker._rowRef === nav._row) ?? -1;
+  if (selectedIndex >= 0) {
+    const valid = selectedBrowseNavigation.filter(marker => map.hasLayer(marker) && window._currentRows?.includes(marker._rowRef));
+    const index = valid.findIndex(marker => marker._rowRef === nav._row);
+    if (index >= 0) {
+      nav.hidden = false;
+      nav.querySelector('.sequence-stop-label').textContent = 'Selected records';
+      nav.querySelector('.sequence-stop-position').textContent = `${index + 1} of ${valid.length}`;
+      for (const direction of ['previous', 'next']) {
+        const button = nav.querySelector(`[data-sequence-step="${direction}"]`);
+        const target = valid[index + (direction === 'next' ? 1 : -1)];
+        button.disabled = !target;
+        button.title = target ? formatStopAddress(target._rowRef) : `No ${direction} selected record`;
+      }
+      return;
+    }
+  }
   const state = sequenceNavigationState(nav._row, stops);
   nav.hidden = !state.current;
   if (!state.current) return;
@@ -3990,6 +4009,20 @@ function renderSequenceNavigation(selectedGroups) {
 
 function openSequenceStop(row, direction = null) {
   if (workAreas?.mapActive || optimoLocationPicker || (window.innerWidth <= 900 && mobileStopSelectionMode)) return;
+  if (direction && selectedBrowseNavigation?.some(marker => marker._rowRef === row)) {
+    const visible = selectedBrowseNavigation.filter(marker => map.hasLayer(marker) && window._currentRows?.includes(marker._rowRef));
+    const index = visible.findIndex(marker => marker._rowRef === row);
+    const marker = visible[index + (direction === 'next' ? 1 : -1)];
+    if (!marker) return;
+    const location = getLayerLatLng(marker);
+    if (location) map.setView(location, Math.max(map.getZoom(), 18), { animate: false });
+    if (window.innerWidth <= 900) {
+      openMobileStopDetails(marker, true);
+      document.querySelector('#mobileStopDetails .mobile-stop-content').scrollTop = 0;
+      centerMobileViewedStop();
+    } else marker.openPopup();
+    return;
+  }
   const stops = sequenceNavigationStops();
   const target = direction ? sequenceNavigationState(row, stops)[direction] : stops.find(stop => stop.visible);
   if (!target?.visible) return;
@@ -5022,6 +5055,7 @@ function closeMobileStopDetails(restoreFocus = false) {
   document.getElementById('mobileStopPicker').hidden = true;
   if (mobileStopMarker) clearViewedStop();
   mobileStopMarker = null;
+  selectedBrowseNavigation = null;
   sheet.querySelector('.mobile-stop-content').replaceChildren();
   if (restoreFocus) document.getElementById('map').focus({ preventScroll: true });
 }
@@ -5089,8 +5123,9 @@ function setSequenceDetailsExpanded(expanded) {
 function openMobileStopDetails(marker, browsingSequence = false) {
   if (window.innerWidth > 900 || !window._currentRows?.includes(marker._rowRef)) return;
   const sheet = document.getElementById('mobileStopDetails');
-  sheet.classList.toggle('sequence-browsing', browsingSequence);
-  document.getElementById('toggleSequenceDetailsBtn').hidden = !browsingSequence;
+  const showingNavigation = browsingSequence || Boolean(selectedBrowseNavigation?.includes(marker));
+  sheet.classList.toggle('sequence-browsing', showingNavigation);
+  document.getElementById('toggleSequenceDetailsBtn').hidden = !showingNavigation;
   setSequenceDetailsExpanded(false);
   mobileStopMarker = marker;
   showViewedStop(marker);
