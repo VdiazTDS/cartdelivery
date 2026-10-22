@@ -2924,6 +2924,17 @@ function stopCustomerNames(row) {
   return names;
 }
 
+function stopApartmentNumbers(row) {
+  const apartments = document.createElement('div');
+  apartments.className = 'stop-apartment-numbers';
+  apartments.textContent = ['CSAPT#', 'RS_APT#'].map(field => {
+    const value = String(row[field] ?? '').trim();
+    return value ? `${field}: ${value}` : '';
+  }).filter(Boolean).join('\n');
+  apartments.hidden = !apartments.textContent;
+  return apartments;
+}
+
 const ADDRESS_SEARCH_ALIASES = {
   n: "north", s: "south", e: "east", w: "west", ne: "northeast", nw: "northwest", se: "southeast", sw: "southwest",
   st: "street", rd: "road", dr: "drive", ave: "avenue", av: "avenue", blvd: "boulevard", ln: "lane", ct: "court",
@@ -5085,6 +5096,7 @@ function deliveryStopCard(row, marker = null) {
   };
   card.append(stopDirectionsAddressLink(row));
   card.append(stopCustomerNames(row));
+  card.append(stopApartmentNumbers(row));
   line('div', `Bin #: ${String(row.BINNO ?? '').trim() || 'Not provided'}`, 'delivery-stop-bin');
   const total = cartTotal(row), delivered = deliveredCartCount(row);
   const remaining = total === null ? null : Math.max(0, total - delivered);
@@ -7186,6 +7198,7 @@ function searchStopPopup(row) {
   const popup = document.createElement("div");
   popup.append(stopDirectionsAddressLink(row));
   popup.append(stopCustomerNames(row));
+  popup.append(stopApartmentNumbers(row));
   const delivered = isDeliveredRow(row);
   const details = [`Route ${rowRoute(row)} · ${dayName(Number(rowDay(row))) || `Day ${rowDay(row)}`}`,
     delivered ? "Delivered" : "Pending", cartProgressText(row), `Quantity: ${row.QTY ?? "—"}`, `Container size: ${row.SIZE ?? "—"}`];
