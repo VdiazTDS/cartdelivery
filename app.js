@@ -3004,9 +3004,13 @@ function browseMapRecords() {
     if (isStopSelected(marker, selectionTester)) selectedStops.push(stop);
     if (bounds.contains(latlng)) visibleStops.push(stop);
   }));
-  mapBrowseStops = selectedStops.length ? selectedStops : visibleStops;
+  // The selection badge is the visible source of truth for browse mode.
+  // Never fall back to all map records while a selection is active.
+  const selectionCount = Number(document.getElementById("selectionCount")?.textContent || 0);
+  const hasSelection = selectedStops.length > 0 || selectionCount > 0;
+  mapBrowseStops = hasSelection ? selectedStops : visibleStops;
   mapBrowseStops.sort((a, b) => a.distance - b.distance);
-  showNearbyStopPicker(mapBrowseStops, selectedStops.length ? 'selected-browse' : 'browse');
+  showNearbyStopPicker(mapBrowseStops, hasSelection ? 'selected-browse' : 'browse');
 }
 
 function showNearbyStopPicker(stops, mode = 'select') {
@@ -3019,7 +3023,7 @@ function showNearbyStopPicker(stops, mode = 'select') {
   list.replaceChildren();
   picker.dataset.mode = mode;
   message.textContent = mode === 'selected-browse'
-    ? `${stops.length} selected records. Choose one to view all fields.`
+    ? (stops.length ? `${stops.length} selected records. Choose one to view all fields.` : 'Selected records could not be loaded. Refresh the app and try again.')
     : mode === 'browse' ? (stops.length
     ? `${stops.length} records in this map area, nearest the center first. Choose one, then View all fields. Zoom in for a shorter list.`
     : 'No records in this map area. Open a file, check Map filters, or move the map, then tap Browse map records again.')
