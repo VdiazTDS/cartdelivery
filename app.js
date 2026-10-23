@@ -6941,7 +6941,25 @@ if (locateBtn) {
   }
   function beaconIcon() {
     // The rotated map adds its bearing to compass heading in screen coordinates.
-    const rotation = norm((heading ?? 0) + (typeof map.getBearing === "function" ? map.getBearing() : 0));
+    let rotation = heading ?? 0;
+    if (heading !== null && beacon) {
+      // Project a geographic point in the compass direction onto the actual
+      // rotated map; this avoids guessing Leaflet's bearing sign.
+      const origin = beacon.getLatLng();
+      const radians = heading * Math.PI / 180;
+      const distance = 400; // metres, far enough for stable screen projection
+      const targetLat = origin.lat + distance * Math.cos(radians) / 111320;
+      const targetLng = origin.lng + distance * Math.sin(radians) /
+        (111320 * Math.max(0.05, Math.cos(origin.lat * Math.PI / 180)));
+      const screenOrigin = map.latLngToContainerPoint(origin);
+      const screenTarget = map.latLngToContainerPoint([targetLat, targetLng]);
+      const dx = screenTarget.x - screenOrigin.x, dy = screenTarget.y - screenOrigin.y;
+      if (Math.hypot(dx, dy) > 0.15) {
+        rotation = norm(Math.atan2(dx, -dy) * 180 / Math.PI);
+      } else {
+        rotation = norm(heading + (typeof map.getBearing === "function" ? map.getBearing() : 0));
+      }
+    }
     return L.divIcon({
       className:"temporary-gps-beacon", iconSize:[76,76], iconAnchor:[38,38],
       html:'<span class="gps-beacon-ripple"></span><span class="gps-beacon-dot"></span>' +
