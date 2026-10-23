@@ -7018,7 +7018,9 @@ if (locateBtn) {
       alert("Unable to determine your location. Check Safari location access.");
     }, { enableHighAccuracy:true, maximumAge:5000, timeout:12000 });
   }
-  locateBtn.textContent = "Locate";
+  // No selectable text node: Safari may select text despite user-select:none.
+  locateBtn.textContent = "";
+  locateBtn.classList.add("locate-no-select");
   locateBtn.setAttribute("aria-label","Tap for location and phone heading; hold to center without zoom");
   locateBtn.setAttribute("aria-pressed","false");
   locateBtn.title = "Tap: show location · Hold: center without zoom";
