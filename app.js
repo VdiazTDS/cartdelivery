@@ -2232,7 +2232,7 @@ syncSavedFilesGuide();
 
 // ================= MAP SETUP =================
 // Create Leaflet map
-const map = L.map("map", { rotate: true, touchRotate: false, dragRotate: false }).setView([0, 0], 2);
+const map = L.map("map", { rotate: true, touchRotate: true, dragRotate: false }).setView([0, 0], 2);
 window.cartDeliveryMap = map;
 map.attributionControl.setPrefix(false);
 function placeMapCredits() {
@@ -6919,40 +6919,103 @@ if (resetBtn) {
 }
 
 
-// ===== LIVE GPS BUTTON =====
+// ===== LOCATE: QUICK BEACON / HOLD TO CENTER (NO ZOOM) =====
 const locateBtn = document.getElementById("locateMeBtn");
-
 if (locateBtn) {
-  let tracking = false;
-
-  locateBtn.addEventListener("click", () => {
-    if (!tracking) {
-      startLiveTracking();
-      locateBtn.textContent = "Stop GPS";
-      locateBtn.setAttribute("aria-pressed", "true");
-      locateBtn.setAttribute("aria-label", "Stop following my position");
-      locateBtn.classList.add("tracking");   // 🔴 turns button red
-      tracking = true;
-    } else {
-      if (watchId !== null) {
-        navigator.geolocation.clearWatch(watchId);
-        watchId = null;
-      }
-      if (headingMarker) {
-  map.removeLayer(headingMarker);
-  headingMarker = null;
-}
-
-window.removeEventListener("deviceorientation", updateHeading);
-
-
-      locateBtn.textContent = "Locate";
-      locateBtn.setAttribute("aria-pressed", "false");
-      locateBtn.setAttribute("aria-label", "Locate me and follow my position");
-      locateBtn.classList.remove("tracking"); // 🔵 back to blue
-      tracking = false;
+  const HOLD_MS = 550;
+  const BEACON_MS = 8000;
+  let timer, beaconTimer, beacon, compassHandler;
+  let longPressed = false;
+  let suppressClick = false;
+  let requestId = 0;
+  function clearBeacon() {
+    clearTimeout(beaconTimer);
+    if (compassHandler) {
+      window.removeEventListener("deviceorientation", compassHandler, true);
+      window.removeEventListener("deviceorientationabsolute", compassHandler, true);
+      compassHandler = null;
     }
+    if (beacon) { map.removeLayer(beacon); beacon = null; }
+  }
+  function showLocation(center) {
+    if (!navigator.geolocation) { alert("GPS is not available on this device."); return; }
+    const id = ++requestId;
+    clearBeacon();
+    // Motion permission must be requested in a direct tap/hold gesture on iOS.
+    let motionPermission = Promise.resolve(false);
+    if (typeof DeviceOrientationEvent !== "undefined") {
+      if (typeof DeviceOrientationEvent.requestPermission === "function") {
+        motionPermission = DeviceOrientationEvent.requestPermission()
+          .then(result => result === "granted").catch(() => false);
+      } else motionPermission = Promise.resolve(true);
+    }
+    navigator.geolocation.getCurrentPosition(async position => {
+      if (id !== requestId) return;
+      const latlng = [position.coords.latitude, position.coords.longitude];
+      if (center && !optimoLocationPicker && !workAreas?.mapActive) map.panTo(latlng, {animate:true, duration:0.35});
+      const headingIcon = heading => L.divIcon({
+        className: "temporary-gps-beacon",
+        iconSize: [76,76], iconAnchor: [38,38],
+        html: '<span class="gps-beacon-ripple"></span><span class="gps-beacon-dot"></span>' +
+          (heading == null ? '' : '<span class="gps-beacon-arrow" style="transform:translate(-50%,-100%) rotate(' + heading + 'deg)"></span>')
+      });
+      beacon = L.marker(latlng, {icon: headingIcon(null), interactive:false, keyboard:false, zIndexOffset:1800}).addTo(map);
+      const setHeading = heading => {
+        if (!beacon || !Number.isFinite(heading)) return;
+        const bearing = typeof map.getBearing === "function" ? map.getBearing() : 0;
+        beacon.setIcon(headingIcon(((heading - bearing) % 360 + 360) % 360));
+      };
+      if (Number.isFinite(position.coords.heading)) setHeading(position.coords.heading);
+      if (await motionPermission && id === requestId && beacon) {
+        compassHandler = event => {
+          const heading = Number.isFinite(event.webkitCompassHeading) && event.webkitCompassAccuracy !== -1
+            ? event.webkitCompassHeading
+            : event.absolute && Number.isFinite(event.alpha) ? 360 - event.alpha : null;
+          if (heading != null) setHeading(heading);
+        };
+        window.addEventListener("deviceorientation", compassHandler, true);
+        window.addEventListener("deviceorientationabsolute", compassHandler, true);
+      }
+      beaconTimer = setTimeout(clearBeacon, BEACON_MS);
+    }, error => {
+      if (id !== requestId) return;
+      clearBeacon();
+      console.warn("GPS error", error);
+      alert("Unable to determine your location. Check Safari location access.");
+    }, {enableHighAccuracy:true, maximumAge:5000, timeout:12000});
+  }
+  locateBtn.textContent = "Locate";
+  locateBtn.setAttribute("aria-label", "Tap to show location and heading. Hold to center map without zoom.");
+  locateBtn.setAttribute("aria-pressed", "false");
+  locateBtn.title = "Tap: beacon • Hold: center (same zoom)";
+  locateBtn.classList.remove("tracking");
+  locateBtn.addEventListener("pointerdown", e => {
+    if (e.button !== 0 || !e.isPrimary) return;
+    clearTimeout(timer); longPressed = false; suppressClick = true;
+    timer = setTimeout(() => {
+      longPressed = true;
+      locateBtn.classList.add("locate-holding");
+      showLocation(true);
+    }, HOLD_MS);
   });
+  locateBtn.addEventListener("pointerup", () => {
+    clearTimeout(timer);
+    locateBtn.classList.remove("locate-holding");
+    if (!longPressed) showLocation(false);
+  });
+  locateBtn.addEventListener("pointercancel", () => {
+    clearTimeout(timer); longPressed = true;
+    locateBtn.classList.remove("locate-holding");
+  });
+  locateBtn.addEventListener("pointerleave", e => {
+    if (e.buttons) { clearTimeout(timer); longPressed = true; locateBtn.classList.remove("locate-holding"); }
+  });
+  locateBtn.addEventListener("click", e => {
+    if (suppressClick) { suppressClick = false; e.preventDefault(); return; }
+    showLocation(false); // keyboard / assistive technology
+  });
+  locateBtn.addEventListener("contextmenu", e => e.preventDefault());
+  window.addEventListener("pagehide", () => { ++requestId; clearTimeout(timer); clearBeacon(); });
 }
 
 // ================= FILE MANAGER MODAL =================
