@@ -5945,3 +5945,6 @@ body.sun-mode header .header-workspace > #routeContext[data-mode="copy"] strong 
 .gps-beacon-arrow {position:absolute;left:50%;top:28px;width:0;height:0;border-left:11px solid transparent;border-right:11px solid transparent;border-bottom:23px solid #0b86ed;transform-origin:50% 38px;filter:drop-shadow(0 1px 2px #0008);}
 @keyframes gps-beacon-pulse {0%{transform:scale(.55);opacity:.95}100%{transform:scale(1.25);opacity:0}}
 @media (prefers-reduced-motion:reduce){.gps-beacon-ripple{animation:none;}}
+
+/* GPS accuracy readout accompanying Locate */
+.locate-accuracy-status:not([hidden]) { display:inline-flex; align-items:center; padding:5px 9px; background:rgba(14,48,53,.93);color:#fff;border-radius:9px;font-size:12px;line-height:1.35;max-width:180px; }
