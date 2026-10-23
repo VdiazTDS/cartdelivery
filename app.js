@@ -2232,7 +2232,8 @@ syncSavedFilesGuide();
 
 // ================= MAP SETUP =================
 // Create Leaflet map
-const map = L.map("map").setView([0, 0], 2);
+const map = L.map("map", { rotate: true, touchRotate: false, dragRotate: false }).setView([0, 0], 2);
+window.cartDeliveryMap = map;
 map.attributionControl.setPrefix(false);
 function placeMapCredits() {
   const position = window.innerWidth <= 900 ? "topright" : "bottomleft";
