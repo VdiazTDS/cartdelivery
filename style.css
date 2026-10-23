@@ -5932,3 +5932,16 @@ body.sun-mode header .header-workspace > #routeContext[data-mode="copy"] strong 
 #headingUpMapBtn.active { background:#0b8569; color:#fff; border-color:#fff; box-shadow:0 0 0 3px #0b856944,0 4px 12px #0003; }
 #headingUpMapBtn:focus-visible { outline:3px solid #f39c12; outline-offset:2px; }
 #headingUpMapStatus:not([hidden]) { pointer-events:none; background:rgba(19,46,43,.9); color:white; border-radius:8px; padding:7px 10px; font-size:12px; max-width:200px; }
+
+/* Phone GPS beacon & two-finger rotation north reset */
+#northUpMapBtn { pointer-events:auto; width:44px; height:44px; flex:0 0 44px; position:relative; border:2px solid #bdd3ce; background:#fff; color:#0b6d61; border-radius:14px; font-size:23px; font-weight:700; box-shadow:0 3px 12px #0003; cursor:pointer; transform:none; }
+#northUpMapBtn[hidden] { display:none !important; }
+#northUpMapBtn small { position:absolute; top:3px; right:6px; font-size:9px; }
+#northUpMapBtn:focus-visible {outline:3px solid #f39c12;outline-offset:2px;}
+#locateMeBtn.locate-holding {filter:brightness(.85);}
+.temporary-gps-beacon {background:transparent;border:0;}
+.gps-beacon-ripple {position:absolute;width:58px;height:58px;left:9px;top:9px;box-sizing:border-box;border-radius:50%;border:2px solid #18a9ff;background:rgba(27,161,250,.1);animation:gps-beacon-pulse 1.8s ease-out infinite;}
+.gps-beacon-dot {position:absolute;left:29px;top:29px;width:18px;height:18px;border-radius:50%;background:#168cff;border:3px solid white;box-sizing:border-box;box-shadow:0 0 0 2px #1188e9,0 2px 6px #0006;}
+.gps-beacon-arrow {position:absolute;left:50%;top:28px;width:0;height:0;border-left:11px solid transparent;border-right:11px solid transparent;border-bottom:23px solid #0b86ed;transform-origin:50% 38px;filter:drop-shadow(0 1px 2px #0008);}
+@keyframes gps-beacon-pulse {0%{transform:scale(.55);opacity:.95}100%{transform:scale(1.25);opacity:0}}
+@media (prefers-reduced-motion:reduce){.gps-beacon-ripple{animation:none;}}
