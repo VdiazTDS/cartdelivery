@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- Your CSS -->
-  <link rel="stylesheet" href="style.css?v=20261022-compact-record-browser" />
+  <link rel="stylesheet" href="style.css?v=20261023-phone-compass" />
 
   <link rel="icon" href="favicon.ico" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -375,6 +375,7 @@
 
    <main class="map-container">
     <div id="map"></div>
+    <div class="map-heading-control"><button id="headingUpMapBtn" type="button" aria-label="Orient map to phone heading" aria-pressed="false" title="Orient map to phone">➤</button><span id="headingUpMapStatus" role="status" hidden></span></div>
     <button id="mapScopeChip" type="button" aria-controls="mapFiltersSection" hidden></button>
   </main>
 
@@ -447,6 +448,7 @@
 </section>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"></script>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet-draw/dist/leaflet.draw.css" />
 <script src="https://unpkg.com/leaflet-draw/dist/leaflet.draw.js"></script>
@@ -853,7 +855,8 @@
 </dialog>
 
 <script src="profile-field-mapping.js?v=20261012-delivery-ease" defer></script>
-<script src="app.js?v=20261022-gps-pan-nozoom" defer></script>
+<script src="app.js?v=20261023-phone-compass" defer></script>
+<script src="compass-map.js?v=20261023-phone-compass" defer></script>
 
 <section id="mobileStopPicker" class="mobile-stop-picker" aria-labelledby="mobileStopPickerTitle" hidden>
   <div class="mobile-stop-picker-header">
