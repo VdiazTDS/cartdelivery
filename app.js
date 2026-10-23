@@ -6922,36 +6922,22 @@ if (resetBtn) {
 // ===== LOCATE: SHORT TAP = ACCURACY BEACON; HOLD = CENTER WITHOUT ZOOM =====
 const locateBtn = document.getElementById("locateMeBtn");
 if (locateBtn) {
-  const HOLD_MS = 550, BEACON_MS = 8500, GPS_ACQUIRE_MS = 10000;
-  let holdTimer = null, beaconTimer = null, gpsWatch = null;
-  let beacon = null, accuracyCircle = null, compassHandler = null;
+  const HOLD_MS = 550, BEACON_MS = 8000;
+  let holdTimer = null, beaconTimer = null;
+  let beacon = null, compassHandler = null;
   let pressedAt = 0, suppressClick = false, gestureCanceled = false, requestId = 0;
-  let bestFix = null, heading = null, compassGranted = false, headingReceived = false;
+  let heading = null;
   let lastHeadingTime = 0;
   const norm = x => ((x % 360) + 360) % 360;
-  const status = document.createElement("span");
-  status.className = "locate-accuracy-status";
-  status.setAttribute("role", "status");
-  status.hidden = true;
-  locateBtn.insertAdjacentElement("afterend", status);
-  function message(msg) {
-    status.textContent = msg;
-    status.hidden = !msg;
-  }
-  function stopWatch() {
-    if (gpsWatch !== null) { navigator.geolocation.clearWatch(gpsWatch); gpsWatch = null; }
-  }
   function cleanup() {
     clearTimeout(beaconTimer);
-    stopWatch();
     if (compassHandler) {
       window.removeEventListener("deviceorientation", compassHandler, true);
       window.removeEventListener("deviceorientationabsolute", compassHandler, true);
       compassHandler = null;
     }
     if (beacon) map.removeLayer(beacon);
-    if (accuracyCircle) map.removeLayer(accuracyCircle);
-    beacon = null; accuracyCircle = null;
+    beacon = null;
   }
   function beaconIcon() {
     // The rotated map adds its bearing to compass heading in screen coordinates.
@@ -6967,26 +6953,16 @@ if (locateBtn) {
     if (!beacon) {
       beacon = L.marker(latlng, {icon:beaconIcon(), interactive:false, keyboard:false, zIndexOffset:1800}).addTo(map);
     } else beacon.setLatLng(latlng).setIcon(beaconIcon());
-    const accuracy = fix.coords.accuracy;
-    if (Number.isFinite(accuracy) && accuracy > 0) {
-      if (!accuracyCircle) accuracyCircle = L.circle(latlng,{
-        radius:accuracy, color:"#168cff", weight:1.5, fillColor:"#168cff",
-        fillOpacity:.10, interactive:false
-      }).addTo(map);
-      else accuracyCircle.setLatLng(latlng).setRadius(accuracy);
-    }
     if (center && !optimoLocationPicker && !workAreas?.mapActive) {
       map.panTo(latlng, {animate:true, duration:.35}); // Retains exact existing zoom.
     }
-    message(Number.isFinite(accuracy) ? "GPS ±" + Math.round(accuracy) + " m" +
-      (accuracy > 35 ? " · Low accuracy" : "") : "Location accuracy unavailable");
   }
   function beginLocate(center) {
     if (!navigator.geolocation || !window.isSecureContext) {
-      message("Location requires HTTPS and GPS access."); return;
+      alert("Location requires HTTPS and GPS access."); return;
     }
     const id = ++requestId;
-    cleanup(); bestFix = null; heading = null; headingReceived = false;
+    cleanup(); heading = null;
     // iOS orientation permission MUST be requested synchronously in pointerup/click.
     let motionPermission = Promise.resolve(typeof DeviceOrientationEvent !== "undefined");
     if (typeof DeviceOrientationEvent !== "undefined" &&
@@ -6997,7 +6973,6 @@ if (locateBtn) {
     }
     motionPermission.then(granted => {
       if (id !== requestId || !granted) return;
-      compassGranted = true;
       compassHandler = ev => {
         let next = Number.isFinite(ev.webkitCompassHeading) && ev.webkitCompassAccuracy !== -1
           ? ev.webkitCompassHeading
@@ -7007,43 +6982,26 @@ if (locateBtn) {
         if (now - lastHeadingTime < 90) return;
         lastHeadingTime = now;
         heading = norm(next);
-        headingReceived = true;
         if (beacon) beacon.setIcon(beaconIcon());
       };
       window.addEventListener("deviceorientation", compassHandler, true);
       window.addEventListener("deviceorientationabsolute", compassHandler, true);
     });
-    message("Finding precise GPS position…");
-    // Watch briefly to let the GPS converge, rather than using an older cached fix.
-    let centered = false;
-    gpsWatch = navigator.geolocation.watchPosition(fix => {
+    navigator.geolocation.getCurrentPosition(fix => {
       if (id !== requestId) return;
-      if (!bestFix || fix.coords.accuracy < bestFix.coords.accuracy ||
-          (fix.timestamp > bestFix.timestamp + 3000 &&
-           fix.coords.accuracy <= bestFix.coords.accuracy * 1.25)) {
-        bestFix = fix;
-        if (!headingReceived && fix.coords.speed > 1.5 && Number.isFinite(fix.coords.heading)) {
-          // GPS course only helps while moving. Do not label it phone pointing direction.
-          heading = null;
-        }
-        paintFix(fix, center && !centered);
-        centered = centered || center;
-      }
-      if (fix.coords.accuracy <= 8) stopWatch();
+      paintFix(fix, center);
+      beaconTimer = setTimeout(() => {
+        if (id === requestId) cleanup();
+      }, BEACON_MS);
     }, err => {
       if (id !== requestId) return;
-      if (!bestFix) message(err.code === 1 ? "Location denied in Safari settings." : "GPS unavailable. Try outdoors.");
-      stopWatch();
-    }, {enableHighAccuracy:true, maximumAge:0, timeout:GPS_ACQUIRE_MS});
-    setTimeout(() => { if (id === requestId) { stopWatch(); if (!bestFix) message("Could not get a GPS fix. Try outdoors."); } }, GPS_ACQUIRE_MS);
-    beaconTimer = setTimeout(() => {
-      if (id !== requestId) return;
       cleanup();
-      message("");
-    }, BEACON_MS + 2000);
+      console.warn("Location unavailable", err);
+      alert("Unable to determine your location. Check Safari location access.");
+    }, { enableHighAccuracy:true, maximumAge:5000, timeout:12000 });
   }
   locateBtn.textContent = "Locate";
-  locateBtn.setAttribute("aria-label","Tap for an accuracy beacon and phone heading; hold to center without zoom");
+  locateBtn.setAttribute("aria-label","Tap for location and phone heading; hold to center without zoom");
   locateBtn.setAttribute("aria-pressed","false");
   locateBtn.title = "Tap: show location · Hold: center without zoom";
   locateBtn.classList.remove("tracking");
