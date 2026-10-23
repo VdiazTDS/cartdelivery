@@ -6924,13 +6924,15 @@ const locateBtn = document.getElementById("locateMeBtn");
 if (locateBtn) {
   const HOLD_MS = 550, BEACON_MS = 8000;
   let holdTimer = null, beaconTimer = null;
-  let beacon = null, compassHandler = null;
+  let beacon = null, compassHandler = null, locateWatch = null, refineTimer = null;
   let pressedAt = 0, suppressClick = false, gestureCanceled = false, requestId = 0;
   let heading = null;
   let lastHeadingTime = 0;
   const norm = x => ((x % 360) + 360) % 360;
   function cleanup() {
     clearTimeout(beaconTimer);
+    clearTimeout(refineTimer);
+    if (locateWatch !== null) { navigator.geolocation.clearWatch(locateWatch); locateWatch = null; }
     if (compassHandler) {
       window.removeEventListener("deviceorientation", compassHandler, true);
       window.removeEventListener("deviceorientationabsolute", compassHandler, true);
@@ -7005,18 +7007,42 @@ if (locateBtn) {
       window.addEventListener("deviceorientation", compassHandler, true);
       window.addEventListener("deviceorientationabsolute", compassHandler, true);
     });
-    navigator.geolocation.getCurrentPosition(fix => {
+    // First fresh fix appears promptly; briefly refine it with better readings.
+    // A GPS fix's reported accuracy is an estimate, not exact precision.
+    let bestFix = null, centered = false;
+    const acceptFix = fix => {
+      if (id !== requestId || !Number.isFinite(fix.coords.latitude) || !Number.isFinite(fix.coords.longitude)) return;
+      const accuracy = Number.isFinite(fix.coords.accuracy) ? fix.coords.accuracy : Infinity;
+      const bestAccuracy = bestFix && Number.isFinite(bestFix.coords.accuracy) ? bestFix.coords.accuracy : Infinity;
+      if (bestFix && accuracy >= bestAccuracy * 0.9) return; // Avoid jitter from minor changes.
+      bestFix = fix;
+      paintFix(fix, center && !centered);
+      centered = true;
+      if (beaconTimer) clearTimeout(beaconTimer);
+      beaconTimer = setTimeout(() => { if (id === requestId) cleanup(); }, BEACON_MS);
+      if (accuracy <= 5 && locateWatch !== null) {
+        navigator.geolocation.clearWatch(locateWatch);
+        locateWatch = null;
+      }
+    };
+    locateWatch = navigator.geolocation.watchPosition(acceptFix, err => {
       if (id !== requestId) return;
-      paintFix(fix, center);
-      beaconTimer = setTimeout(() => {
-        if (id === requestId) cleanup();
-      }, BEACON_MS);
-    }, err => {
+      if (!bestFix) {
+        console.warn("Location unavailable", err);
+        alert("Unable to determine your location. Check Safari location access.");
+        cleanup();
+      } else if (locateWatch !== null) {
+        navigator.geolocation.clearWatch(locateWatch);
+        locateWatch = null;
+      }
+    }, {enableHighAccuracy:true, maximumAge:0, timeout:12000});
+    refineTimer = setTimeout(() => {
       if (id !== requestId) return;
-      cleanup();
-      console.warn("Location unavailable", err);
-      alert("Unable to determine your location. Check Safari location access.");
-    }, { enableHighAccuracy:true, maximumAge:5000, timeout:12000 });
+      if (locateWatch !== null) {
+        navigator.geolocation.clearWatch(locateWatch);
+        locateWatch = null;
+      }
+    }, 7000);
   }
   // No selectable text node: Safari may select text despite user-select:none.
   locateBtn.textContent = "";
