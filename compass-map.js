@@ -3,6 +3,7 @@
   const map = window.cartDeliveryMap;
   const button = document.getElementById('headingUpMapBtn');
   const status = document.getElementById('headingUpMapStatus');
+  const northButton = document.getElementById('northUpMapBtn');
   if (!map || !button) return;
   let enabled = false;
   let lastHeading = null;
@@ -57,6 +58,22 @@
       message('Compass access was blocked. Check Safari motion permissions.');
     }
   });
+  // Offer north-up reset whenever the map has been rotated manually or by compass.
+  function updateNorthButton() {
+    const bearing = typeof map.getBearing === 'function' ? map.getBearing() : 0;
+    if (!northButton) return;
+    northButton.hidden = Math.abs(((bearing + 180) % 360 + 360) % 360 - 180) < 1;
+    northButton.style.setProperty('--north-bearing', (-bearing) + 'deg');
+  }
+  if (northButton) northButton.addEventListener('click', () => {
+    if (enabled) stop();
+    if (typeof map.setBearing === 'function') map.setBearing(0);
+    updateNorthButton();
+    message('North up');
+  });
+  map.on('rotate', updateNorthButton);
+  map.on('rotateend', updateNorthButton);
+  updateNorthButton();
   window.addEventListener('pagehide', () => {
     window.removeEventListener('deviceorientation', onOrientation, true);
     window.removeEventListener('deviceorientationabsolute', onOrientation, true);
