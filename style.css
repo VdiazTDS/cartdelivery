@@ -5924,3 +5924,11 @@ body.sun-mode header .header-workspace > #routeContext[data-mode="copy"] strong 
     display: none;
   }
 }
+
+/* Small compass control floating above the cart delivery map */
+.map-container { position: relative; }
+.map-heading-control { position:absolute; z-index:850; top: max(80px, calc(env(safe-area-inset-top) + 72px)); right:12px; display:flex; align-items:center; gap:7px; max-width:calc(100% - 24px); pointer-events:none; }
+#headingUpMapBtn { pointer-events:auto; width:46px; height:46px; flex:0 0 46px; border:2px solid rgba(15,49,45,.14); border-radius:14px; background:#fff; color:#176f63; box-shadow:0 3px 12px #0003; font-size:26px; font-weight:700; cursor:pointer; transform:none; }
+#headingUpMapBtn.active { background:#0b8569; color:#fff; border-color:#fff; box-shadow:0 0 0 3px #0b856944,0 4px 12px #0003; }
+#headingUpMapBtn:focus-visible { outline:3px solid #f39c12; outline-offset:2px; }
+#headingUpMapStatus:not([hidden]) { pointer-events:none; background:rgba(19,46,43,.9); color:white; border-radius:8px; padding:7px 10px; font-size:12px; max-width:200px; }
