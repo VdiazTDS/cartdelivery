@@ -6962,7 +6962,7 @@ if (locateBtn) {
       alert("Location requires HTTPS and GPS access."); return;
     }
     const id = ++requestId;
-    cleanup(); heading = null;
+    cleanup(); heading = null; lastHeadingTime = 0;
     // iOS orientation permission MUST be requested synchronously in pointerup/click.
     let motionPermission = Promise.resolve(typeof DeviceOrientationEvent !== "undefined");
     if (typeof DeviceOrientationEvent !== "undefined" &&
@@ -7015,7 +7015,9 @@ if (locateBtn) {
   locateBtn.addEventListener("pointerup", ev => {
     if (!ev.isPrimary || gestureCanceled) return;
     clearTimeout(holdTimer);
+    if (!pressedAt) return;
     const longHold = performance.now() - pressedAt >= HOLD_MS;
+    pressedAt = 0;
     locateBtn.classList.remove("locate-holding");
     beginLocate(longHold);
   });
@@ -7034,6 +7036,22 @@ if (locateBtn) {
     beginLocate(false); // Keyboard or accessibility activation.
   });
   locateBtn.addEventListener("contextmenu", ev => ev.preventDefault());
+  locateBtn.addEventListener("selectstart", ev => ev.preventDefault());
+  locateBtn.addEventListener("dragstart", ev => ev.preventDefault());
+  // WebKit may turn long touch into text selection instead of pointerup.
+  locateBtn.addEventListener("touchstart", ev => {
+    if (ev.touches.length === 1) ev.preventDefault();
+  }, { passive:false });
+  locateBtn.addEventListener("touchend", ev => {
+    if (pressedAt && !gestureCanceled) {
+      clearTimeout(holdTimer);
+      const longHold = performance.now() - pressedAt >= HOLD_MS;
+      pressedAt = 0;
+      locateBtn.classList.remove("locate-holding");
+      beginLocate(longHold);
+    }
+    ev.preventDefault();
+  }, { passive:false });
   map.on("rotate", () => { if (beacon) beacon.setIcon(beaconIcon()); });
   window.addEventListener("pagehide", () => {
     ++requestId; clearTimeout(holdTimer); cleanup();
