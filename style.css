@@ -5959,3 +5959,6 @@ body.sun-mode header .header-workspace > #routeContext[data-mode="copy"] strong 
  border-right:10px solid transparent; border-bottom:23px solid #0b86ed;
  filter:drop-shadow(0 1px 2px #0008);
 }
+
+/* Safari: no text selection or touch callout on Locate long press. */
+#locateMeBtn, #locateMeBtn * { -webkit-user-select:none !important; user-select:none !important; -webkit-touch-callout:none !important; -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
