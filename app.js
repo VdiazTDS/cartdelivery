@@ -6954,12 +6954,12 @@ if (locateBtn) {
     beacon = null; accuracyCircle = null;
   }
   function beaconIcon() {
-    // Heading is clockwise from true north. Subtract map rotation for screen direction.
-    const rotation = norm((heading ?? 0) - (typeof map.getBearing === "function" ? map.getBearing() : 0));
+    // The rotated map adds its bearing to compass heading in screen coordinates.
+    const rotation = norm((heading ?? 0) + (typeof map.getBearing === "function" ? map.getBearing() : 0));
     return L.divIcon({
       className:"temporary-gps-beacon", iconSize:[76,76], iconAnchor:[38,38],
       html:'<span class="gps-beacon-ripple"></span><span class="gps-beacon-dot"></span>' +
-        (heading === null ? '' : '<span class="gps-beacon-arrow" style="transform:translate(-50%,-100%) rotate(' + rotation + 'deg)"></span>')
+        (heading === null ? '' : '<span class="gps-beacon-arrow" style="transform:translate(-50%,-50%) rotate(' + rotation + 'deg)"></span>')
     });
   }
   function paintFix(fix, center) {
